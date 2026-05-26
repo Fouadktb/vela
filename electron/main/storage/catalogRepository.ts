@@ -77,6 +77,7 @@ export function createCatalogRepository(db: SqliteDatabase) {
           ON favorites.item_id = live_channels.id
           AND favorites.item_type = 'live'
         WHERE live_channels.id = ?
+          AND stale = 0
       `).get(itemId) as LiveChannelRow | undefined;
 
       return row ? toLiveChannel(row) : null;

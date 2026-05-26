@@ -16,7 +16,8 @@
     "build": "pnpm typecheck && pnpm test && pnpm build:renderer && pnpm build:main",
     "build:mac": "pnpm build && electron-builder --mac",
     "build:win": "pnpm build && electron-builder --win",
-    "check:mpv": "node scripts/check-mpv.js"
+    "check:mpv": "node scripts/check-mpv.js",
+    "rebuild:native": "electron-builder install-app-deps"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.0",

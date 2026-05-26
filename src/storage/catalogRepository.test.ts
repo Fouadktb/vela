@@ -51,4 +51,16 @@ describe("catalogRepository", () => {
       isFavorite: true
     });
   });
+
+  it("does not return stale live channels by id or list", () => {
+    const db = new Database(":memory:");
+    createSchema(db);
+    const repo = createCatalogRepository(db);
+
+    repo.upsertLiveChannels([channel()]);
+    db.prepare("UPDATE live_channels SET stale = 1 WHERE id = ?").run("provider-1:live:bbc-one");
+
+    expect(repo.getLiveChannel("provider-1:live:bbc-one")).toBeNull();
+    expect(repo.listLiveChannels("", null)).toHaveLength(0);
+  });
 });
