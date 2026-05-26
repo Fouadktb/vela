@@ -1,6 +1,7 @@
 import { ipcMain } from "electron";
 import { toLiveChannelView } from "../../../src/shared/catalog/types.js";
 import { ipcChannels } from "../../../src/shared/ipc/types.js";
+import type { PlayRequest, SeekRequest } from "../../../src/shared/playback/types.js";
 import { toProviderSummary, type CreateM3uProviderInput } from "../../../src/shared/providers/types.js";
 import type { importM3uProvider } from "../imports/importM3uProvider.js";
 import type { openInExternalPlayer } from "../playback/externalPlayer.js";
@@ -52,4 +53,34 @@ export function registerIpcHandlers(deps: RegisterIpcHandlersDeps): void {
   ipcMain.handle(ipcChannels.catalogToggleFavorite, (_event, input: { itemId: string; itemType: "live" }) => {
     deps.catalogRepository.toggleFavorite(input.itemId, input.itemType);
   });
+
+  ipcMain.handle(ipcChannels.playbackPlay, async (_event, request: PlayRequest) => {
+    await deps.mpvController.play(request);
+    emitPlaybackState(deps);
+  });
+
+  ipcMain.handle(ipcChannels.playbackPause, async () => {
+    await deps.mpvController.pause();
+    emitPlaybackState(deps);
+  });
+
+  ipcMain.handle(ipcChannels.playbackStop, async () => {
+    await deps.mpvController.stop();
+    emitPlaybackState(deps);
+  });
+
+  ipcMain.handle(ipcChannels.playbackSeek, async (_event, request: SeekRequest) => {
+    await deps.mpvController.seek(request);
+    emitPlaybackState(deps);
+  });
+
+  ipcMain.handle(ipcChannels.playbackOpenExternal, async (_event, request: PlayRequest) => {
+    await deps.openInExternalPlayer(request, deps.catalogRepository);
+  });
+
+  ipcMain.handle(ipcChannels.playbackGetState, () => deps.mpvController.getState());
+}
+
+function emitPlaybackState(deps: RegisterIpcHandlersDeps): void {
+  deps.emitToRenderer(ipcChannels.playbackState, deps.mpvController.getState());
 }

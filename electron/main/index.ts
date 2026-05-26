@@ -3,6 +3,7 @@ import { importM3uProvider } from "./imports/importM3uProvider.js";
 import { registerIpcHandlers } from "./ipc/registerIpcHandlers.js";
 import { openInExternalPlayer } from "./playback/externalPlayer.js";
 import { createMpvController } from "./playback/mpvController.js";
+import { ipcChannels } from "../../src/shared/ipc/types.js";
 import { createCatalogRepository } from "./storage/catalogRepository.js";
 import { openAppDatabase } from "./storage/database.js";
 import { createProviderRepository } from "./storage/providerRepository.js";
@@ -16,12 +17,6 @@ async function boot(): Promise<void> {
   const db = openAppDatabase();
   const providerRepository = createProviderRepository(db);
   const catalogRepository = createCatalogRepository(db);
-  const mpvController = createMpvController({
-    catalogRepository,
-    onStateChange: () => undefined
-  });
-
-  createMainWindow();
   const emitToRenderer = (channel: string, payload: unknown) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
@@ -29,6 +24,12 @@ async function boot(): Promise<void> {
       }
     }
   };
+  const mpvController = createMpvController({
+    catalogRepository,
+    onStateChange: (state) => emitToRenderer(ipcChannels.playbackState, state)
+  });
+
+  createMainWindow();
 
   registerIpcHandlers({
     emitToRenderer,
