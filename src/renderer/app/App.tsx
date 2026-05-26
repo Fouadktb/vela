@@ -2,6 +2,7 @@ import { Sidebar } from "../components/Sidebar";
 import { SearchBar } from "../components/SearchBar";
 import { LiveCatalog } from "../features/live/LiveCatalog";
 import { LiveDetailPane } from "../features/live/LiveDetailPane";
+import { PlayerControls } from "../features/playback/PlayerControls";
 import { ProviderSetup } from "../features/providers/ProviderSetup";
 import { iptvApi } from "./api";
 import { useAppData } from "./useAppData";
@@ -73,6 +74,7 @@ export function App() {
           />
         </div>
       </section>
+      <PlayerControls />
     </main>
   );
 }
