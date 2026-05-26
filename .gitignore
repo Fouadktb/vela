@@ -1,0 +1,12 @@
+.superpowers/
+node_modules/
+dist/
+dist-electron/
+out/
+release/
+coverage/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
