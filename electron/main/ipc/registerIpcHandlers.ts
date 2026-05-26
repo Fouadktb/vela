@@ -27,7 +27,8 @@ export function registerIpcHandlers(deps: RegisterIpcHandlersDeps): void {
       catalogRepository: deps.catalogRepository,
       emitProgress: (progress) => deps.emitToRenderer(ipcChannels.providersImportProgress, progress)
     });
-    return toProviderSummary(provider);
+    const refreshedProvider = deps.providerRepository.get(provider.id);
+    return toProviderSummary(refreshedProvider ?? provider);
   });
 
   ipcMain.handle(ipcChannels.providersRefresh, async (_event, providerId: string) => {
