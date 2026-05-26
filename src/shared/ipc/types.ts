@@ -1,4 +1,4 @@
-import type { LiveChannel } from "../catalog/types.js";
+import type { LiveChannelView } from "../catalog/types.js";
 import type { PlayRequest, PlaybackState, SeekRequest } from "../playback/types.js";
 import type { CreateM3uProviderInput, ImportProgress, ProviderSummary } from "../providers/types.js";
 
@@ -10,7 +10,7 @@ export interface IptvApi {
     onImportProgress(callback: (progress: ImportProgress) => void): () => void;
   };
   catalog: {
-    listLiveChannels(query: string, category: string | null): Promise<LiveChannel[]>;
+    listLiveChannels(query: string, category: string | null): Promise<LiveChannelView[]>;
     toggleFavorite(itemId: string, itemType: "live"): Promise<void>;
   };
   playback: {

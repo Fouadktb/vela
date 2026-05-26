@@ -21,6 +21,13 @@ export interface LiveChannel {
   isFavorite: boolean;
 }
 
+export type LiveChannelView = Omit<LiveChannel, "stream">;
+
+export function toLiveChannelView(channel: LiveChannel): LiveChannelView {
+  const { stream: _stream, ...view } = channel;
+  return view;
+}
+
 export interface Movie {
   type: "movie";
   id: string;

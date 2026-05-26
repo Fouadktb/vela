@@ -539,6 +539,13 @@ export interface LiveChannel {
   isFavorite: boolean;
 }
 
+export type LiveChannelView = Omit<LiveChannel, "stream">;
+
+export function toLiveChannelView(channel: LiveChannel): LiveChannelView {
+  const { stream: _stream, ...view } = channel;
+  return view;
+}
+
 export interface Movie {
   type: "movie";
   id: string;
@@ -699,7 +706,7 @@ export function createAppError(
 Create `src/shared/ipc/types.ts`:
 
 ```ts
-import type { LiveChannel } from "../catalog/types";
+import type { LiveChannelView } from "../catalog/types";
 import type { PlayRequest, PlaybackState, SeekRequest } from "../playback/types";
 import type { CreateM3uProviderInput, ImportProgress, ProviderSummary } from "../providers/types";
 
@@ -711,7 +718,7 @@ export interface IptvApi {
     onImportProgress(callback: (progress: ImportProgress) => void): () => void;
   };
   catalog: {
-    listLiveChannels(query: string, category: string | null): Promise<LiveChannel[]>;
+    listLiveChannels(query: string, category: string | null): Promise<LiveChannelView[]>;
     toggleFavorite(itemId: string, itemType: "live"): Promise<void>;
   };
   playback: {
@@ -1540,6 +1547,7 @@ Create `electron/main/ipc/registerIpcHandlers.ts`:
 ```ts
 import type { BrowserWindow } from "electron";
 import { ipcMain } from "electron";
+import { toLiveChannelView } from "../../../src/shared/catalog/types.js";
 import { ipcChannels } from "../../../src/shared/ipc/types.js";
 import { toProviderSummary, type CreateM3uProviderInput } from "../../../src/shared/providers/types.js";
 import type { createCatalogRepository } from "../storage/catalogRepository.js";
@@ -1585,7 +1593,7 @@ export function registerIpcHandlers(deps: RegisterIpcHandlersDeps): void {
   });
 
   ipcMain.handle(ipcChannels.catalogListLiveChannels, (_event, input: { query: string; category: string | null }) =>
-    deps.catalogRepository.listLiveChannels(input.query, input.category)
+    deps.catalogRepository.listLiveChannels(input.query, input.category).map(toLiveChannelView)
   );
 
   ipcMain.handle(ipcChannels.catalogToggleFavorite, (_event, input: { itemId: string; itemType: "live" }) => {
@@ -1740,13 +1748,13 @@ Create `src/renderer/app/useAppData.ts`:
 
 ```ts
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { LiveChannel } from "../../shared/catalog/types";
+import type { LiveChannelView } from "../../shared/catalog/types";
 import type { ProviderSummary } from "../../shared/providers/types";
 import { iptvApi } from "./api";
 
 export function useAppData() {
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
-  const [channels, setChannels] = useState<LiveChannel[]>([]);
+  const [channels, setChannels] = useState<LiveChannelView[]>([]);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
@@ -1933,10 +1941,10 @@ export function ProviderSetup({ onCreated }: ProviderSetupProps) {
 Create `src/renderer/features/live/LiveCatalog.tsx`:
 
 ```tsx
-import type { LiveChannel } from "../../../shared/catalog/types";
+import type { LiveChannelView } from "../../../shared/catalog/types";
 
 interface LiveCatalogProps {
-  channels: LiveChannel[];
+  channels: LiveChannelView[];
   selectedChannelId: string | null;
   onSelect(channelId: string): void;
 }
@@ -1973,12 +1981,12 @@ Create `src/renderer/features/live/LiveDetailPane.tsx`:
 
 ```tsx
 import { Heart, Play, RefreshCw } from "lucide-react";
-import type { LiveChannel } from "../../../shared/catalog/types";
+import type { LiveChannelView } from "../../../shared/catalog/types";
 
 interface LiveDetailPaneProps {
-  channel: LiveChannel | null;
-  onPlay(channel: LiveChannel): void;
-  onToggleFavorite(channel: LiveChannel): void;
+  channel: LiveChannelView | null;
+  onPlay(channel: LiveChannelView): void;
+  onToggleFavorite(channel: LiveChannelView): void;
   onRefresh(): void;
 }
 
