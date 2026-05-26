@@ -101,7 +101,7 @@ describe("PlayerControls", () => {
     expect(mockApi.playback.seek).not.toHaveBeenCalled();
   });
 
-  it("does not seek when touch taps use different pointer ids", async () => {
+  it("seeks when touch double taps use different pointer ids", async () => {
     render(<PlayerControls />);
 
     const controls = await screen.findByRole("toolbar", { name: "Playback controls" });
@@ -120,7 +120,7 @@ describe("PlayerControls", () => {
     firePointerUp(controls, { clientX: 150, pointerId: 1, pointerType: "touch" });
     firePointerUp(controls, { clientX: 150, pointerId: 2, pointerType: "touch" });
 
-    expect(mockApi.playback.seek).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockApi.playback.seek).toHaveBeenCalledWith({ offsetSeconds: 10 }));
   });
 
   it("seeks from window ArrowRight while controls are mounted", async () => {

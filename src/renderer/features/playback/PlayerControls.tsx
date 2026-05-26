@@ -11,7 +11,6 @@ const DOUBLE_TAP_MAX_X_DISTANCE = 48;
 interface TapSnapshot {
   clientX: number;
   half: "left" | "right";
-  pointerId: number;
   pointerType: string;
   timeStamp: number;
 }
@@ -104,7 +103,6 @@ export function PlayerControls() {
     const nextTap: TapSnapshot = {
       clientX: event.clientX,
       half: getTapHalf(event.clientX, bounds.left, bounds.width),
-      pointerId: event.pointerId,
       pointerType: event.pointerType,
       timeStamp: event.timeStamp
     };
@@ -207,7 +205,7 @@ function isDoubleTapMatch(previousTap: TapSnapshot, nextTap: TapSnapshot): boole
     return false;
   }
 
-  if (previousTap.pointerId !== nextTap.pointerId || previousTap.pointerType !== nextTap.pointerType) {
+  if (previousTap.pointerType !== nextTap.pointerType) {
     return false;
   }
 
