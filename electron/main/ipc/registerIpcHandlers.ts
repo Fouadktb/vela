@@ -2,7 +2,7 @@ import { ipcMain } from "electron";
 import { toLiveChannelView } from "../../../src/shared/catalog/types.js";
 import { ipcChannels } from "../../../src/shared/ipc/types.js";
 import type { PlayRequest, SeekRequest } from "../../../src/shared/playback/types.js";
-import { toProviderSummary, type CreateM3uProviderInput } from "../../../src/shared/providers/types.js";
+import { toProviderSummary, validateCreateM3uProviderInput } from "../../../src/shared/providers/types.js";
 import type { importM3uProvider } from "../imports/importM3uProvider.js";
 import type { openInExternalPlayer } from "../playback/externalPlayer.js";
 import type { createMpvController } from "../playback/mpvController.js";
@@ -21,13 +21,19 @@ interface RegisterIpcHandlersDeps {
 export function registerIpcHandlers(deps: RegisterIpcHandlersDeps): void {
   ipcMain.handle(ipcChannels.providersList, () => deps.providerRepository.list().map(toProviderSummary));
 
-  ipcMain.handle(ipcChannels.providersCreateM3u, async (_event, input: CreateM3uProviderInput) => {
+  ipcMain.handle(ipcChannels.providersCreateM3u, async (_event, rawInput: unknown) => {
+    const input = validateCreateM3uProviderInput(rawInput);
     const provider = deps.providerRepository.createM3u(input);
-    await deps.importM3uProvider(provider, {
-      providerRepository: deps.providerRepository,
-      catalogRepository: deps.catalogRepository,
-      emitProgress: (progress) => deps.emitToRenderer(ipcChannels.providersImportProgress, progress)
-    });
+    try {
+      await deps.importM3uProvider(provider, {
+        providerRepository: deps.providerRepository,
+        catalogRepository: deps.catalogRepository,
+        emitProgress: (progress) => deps.emitToRenderer(ipcChannels.providersImportProgress, progress)
+      });
+    } catch (error) {
+      deps.providerRepository.delete(provider.id);
+      throw error;
+    }
     const refreshedProvider = deps.providerRepository.get(provider.id);
     return toProviderSummary(refreshedProvider ?? provider);
   });

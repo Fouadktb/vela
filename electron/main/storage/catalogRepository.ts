@@ -14,37 +14,55 @@ interface LiveChannelRow {
 }
 
 export function createCatalogRepository(db: SqliteDatabase) {
+  const upsertLiveChannelStatement = db.prepare(`
+    INSERT INTO live_channels (
+      id, provider_id, name, logo_url, category, stream_json, epg_channel_id, last_seen_at, stale
+    ) VALUES (
+      @id, @providerId, @name, @logoUrl, @category, @streamJson, @epgChannelId, @lastSeenAt, 0
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      logo_url = excluded.logo_url,
+      category = excluded.category,
+      stream_json = excluded.stream_json,
+      epg_channel_id = excluded.epg_channel_id,
+      last_seen_at = excluded.last_seen_at,
+      stale = 0
+  `);
+
+  const runLiveChannelUpserts = (channels: LiveChannel[]) => {
+    for (const item of channels) {
+      upsertLiveChannelStatement.run({
+        id: item.id,
+        providerId: item.providerId,
+        name: item.name,
+        logoUrl: item.logoUrl,
+        category: item.category,
+        streamJson: JSON.stringify(item.stream),
+        epgChannelId: item.epgChannelId,
+        lastSeenAt: item.lastSeenAt
+      });
+    }
+  };
+
   return {
     upsertLiveChannels(channels: LiveChannel[]): void {
-      const statement = db.prepare(`
-        INSERT INTO live_channels (
-          id, provider_id, name, logo_url, category, stream_json, epg_channel_id, last_seen_at, stale
-        ) VALUES (
-          @id, @providerId, @name, @logoUrl, @category, @streamJson, @epgChannelId, @lastSeenAt, 0
-        )
-        ON CONFLICT(id) DO UPDATE SET
-          name = excluded.name,
-          logo_url = excluded.logo_url,
-          category = excluded.category,
-          stream_json = excluded.stream_json,
-          epg_channel_id = excluded.epg_channel_id,
-          last_seen_at = excluded.last_seen_at,
-          stale = 0
-      `);
+      const transaction = db.transaction((items: LiveChannel[]) => {
+        runLiveChannelUpserts(items);
+      });
 
+      transaction(channels);
+    },
+    replaceLiveChannelsForProvider(providerId: string, channels: LiveChannel[]): void {
       const transaction = db.transaction((items: LiveChannel[]) => {
         for (const item of items) {
-          statement.run({
-            id: item.id,
-            providerId: item.providerId,
-            name: item.name,
-            logoUrl: item.logoUrl,
-            category: item.category,
-            streamJson: JSON.stringify(item.stream),
-            epgChannelId: item.epgChannelId,
-            lastSeenAt: item.lastSeenAt
-          });
+          if (item.providerId !== providerId) {
+            throw new Error("Cannot replace live channels across providers");
+          }
         }
+
+        db.prepare("UPDATE live_channels SET stale = 1 WHERE provider_id = ?").run(providerId);
+        runLiveChannelUpserts(items);
       });
 
       transaction(channels);

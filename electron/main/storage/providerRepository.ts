@@ -48,6 +48,23 @@ export function createProviderRepository(db: SqliteDatabase) {
     get(providerId: string): Provider | null {
       const row = db.prepare("SELECT * FROM providers WHERE id = ?").get(providerId) as ProviderRow | undefined;
       return row ? toProvider(row) : null;
+    },
+    delete(providerId: string): void {
+      const transaction = db.transaction(() => {
+        const liveChannelIds = db.prepare("SELECT id FROM live_channels WHERE provider_id = ?").all(providerId) as Array<{
+          id: string;
+        }>;
+
+        for (const { id } of liveChannelIds) {
+          db.prepare("DELETE FROM favorites WHERE item_id = ? AND item_type = 'live'").run(id);
+          db.prepare("DELETE FROM recently_watched WHERE item_id = ? AND item_type = 'live'").run(id);
+        }
+
+        db.prepare("DELETE FROM live_channels WHERE provider_id = ?").run(providerId);
+        db.prepare("DELETE FROM providers WHERE id = ?").run(providerId);
+      });
+
+      transaction();
     }
   };
 }

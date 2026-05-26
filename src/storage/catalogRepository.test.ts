@@ -63,4 +63,37 @@ describe("catalogRepository", () => {
     expect(repo.getLiveChannel("provider-1:live:bbc-one")).toBeNull();
     expect(repo.listLiveChannels("", null)).toHaveLength(0);
   });
+
+  it("stales missing provider channels when replacing a refreshed playlist", () => {
+    const db = new Database(":memory:");
+    createSchema(db);
+    const repo = createCatalogRepository(db);
+
+    repo.upsertLiveChannels([
+      channel(),
+      channel({
+        id: "provider-1:live:bbc-two",
+        name: "BBC Two",
+        stream: {
+          providerType: "m3u",
+          url: "https://stream.test/bbc-two.m3u8"
+        }
+      }),
+      channel({
+        id: "provider-2:live:world-news",
+        providerId: "provider-2",
+        name: "World News",
+        stream: {
+          providerType: "m3u",
+          url: "https://stream.test/world-news.m3u8"
+        }
+      })
+    ]);
+
+    repo.replaceLiveChannelsForProvider("provider-1", [channel({ name: "BBC One HD" })]);
+
+    expect(repo.getLiveChannel("provider-1:live:bbc-one")?.name).toBe("BBC One HD");
+    expect(repo.getLiveChannel("provider-1:live:bbc-two")).toBeNull();
+    expect(repo.getLiveChannel("provider-2:live:world-news")?.name).toBe("World News");
+  });
 });

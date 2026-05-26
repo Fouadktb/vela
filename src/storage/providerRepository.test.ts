@@ -75,4 +75,34 @@ describe("providerRepository", () => {
     expect(refreshed?.updatedAt).toEqual(refreshed?.lastRefreshAt);
     expect(refreshed?.updatedAt).not.toBe("2026-05-26T09:00:00.000Z");
   });
+
+  it("deletes a provider and its live catalog rows", () => {
+    const { db, repo } = createTestRepository();
+    const provider = repo.createM3u({
+      name: "Main playlist",
+      source: "https://example.test/playlist.m3u",
+      sourceKind: "url"
+    });
+    db.prepare(`
+      INSERT INTO live_channels (
+        id, provider_id, name, logo_url, category, stream_json, epg_channel_id, last_seen_at, stale
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `).run(
+      `${provider.id}:live:news`,
+      provider.id,
+      "News",
+      null,
+      "News",
+      JSON.stringify({ providerType: "m3u", url: "https://stream.test/news.m3u8" }),
+      null,
+      "2026-05-26T09:00:00.000Z"
+    );
+
+    repo.delete(provider.id);
+
+    expect(repo.get(provider.id)).toBeNull();
+    expect(db.prepare("SELECT COUNT(*) AS count FROM live_channels WHERE provider_id = ?").get(provider.id)).toEqual({
+      count: 0
+    });
+  });
 });
