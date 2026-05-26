@@ -3,12 +3,12 @@ import type { LiveChannelView } from "../../../shared/catalog/types";
 
 interface LiveDetailPaneProps {
   channel: LiveChannelView | null;
-  onPlay(channel: LiveChannelView): void;
-  onToggleFavorite(channel: LiveChannelView): void;
-  onRefresh(): void;
+  onPlay(channelId: string): void;
+  onToggleFavorite(channelId: string): void;
+  onRefreshProvider(): void;
 }
 
-export function LiveDetailPane({ channel, onPlay, onToggleFavorite, onRefresh }: LiveDetailPaneProps) {
+export function LiveDetailPane({ channel, onPlay, onToggleFavorite, onRefreshProvider }: LiveDetailPaneProps) {
   if (!channel) {
     return (
       <aside className="detail-pane">
@@ -26,15 +26,15 @@ export function LiveDetailPane({ channel, onPlay, onToggleFavorite, onRefresh }:
       <h2 title={channel.name}>{channel.name}</h2>
       <p className="detail-category">{channel.category || "Uncategorized"}</p>
       <div className="detail-actions">
-        <button type="button" onClick={() => onPlay(channel)}>
+        <button type="button" onClick={() => onPlay(channel.id)}>
           <Play size={17} aria-hidden="true" />
           <span>Play</span>
         </button>
-        <button type="button" onClick={() => onToggleFavorite(channel)} aria-pressed={channel.isFavorite}>
+        <button type="button" onClick={() => onToggleFavorite(channel.id)} aria-pressed={channel.isFavorite}>
           <Heart size={17} fill={channel.isFavorite ? "currentColor" : "none"} aria-hidden="true" />
           <span>{channel.isFavorite ? "Favorited" : "Favorite"}</span>
         </button>
-        <button type="button" onClick={onRefresh}>
+        <button type="button" onClick={onRefreshProvider}>
           <RefreshCw size={17} aria-hidden="true" />
           <span>Refresh</span>
         </button>

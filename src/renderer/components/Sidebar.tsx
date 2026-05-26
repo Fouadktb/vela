@@ -4,7 +4,7 @@ const disabledSections = [
   { label: "Movies", icon: Video },
   { label: "Series", icon: MonitorPlay },
   { label: "Favorites", icon: Heart },
-  { label: "Recent", icon: Clock },
+  { label: "Recently Watched", icon: Clock },
   { label: "Settings", icon: Settings }
 ] as const;
 

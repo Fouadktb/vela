@@ -59,12 +59,12 @@ export function App() {
           />
           <LiveDetailPane
             channel={data.selectedChannel}
-            onPlay={(channel) => iptvApi.playback.play({ itemType: "live", itemId: channel.id })}
-            onToggleFavorite={async (channel) => {
-              await iptvApi.catalog.toggleFavorite(channel.id, "live");
+            onPlay={(channelId) => iptvApi.playback.play({ itemType: "live", itemId: channelId })}
+            onToggleFavorite={async (channelId) => {
+              await iptvApi.catalog.toggleFavorite(channelId, "live");
               await data.reloadChannels();
             }}
-            onRefresh={async () => {
+            onRefreshProvider={async () => {
               const provider = data.providers[0];
               if (provider) {
                 await iptvApi.providers.refresh(provider.id);
