@@ -1,4 +1,3 @@
-import type { BrowserWindow } from "electron";
 import { ipcMain } from "electron";
 import { toLiveChannelView } from "../../../src/shared/catalog/types.js";
 import { ipcChannels } from "../../../src/shared/ipc/types.js";
@@ -10,7 +9,7 @@ import type { createCatalogRepository } from "../storage/catalogRepository.js";
 import type { createProviderRepository } from "../storage/providerRepository.js";
 
 interface RegisterIpcHandlersDeps {
-  mainWindow: BrowserWindow;
+  emitToRenderer(channel: string, payload: unknown): void;
   providerRepository: ReturnType<typeof createProviderRepository>;
   catalogRepository: ReturnType<typeof createCatalogRepository>;
   importM3uProvider: typeof importM3uProvider;
@@ -26,7 +25,7 @@ export function registerIpcHandlers(deps: RegisterIpcHandlersDeps): void {
     await deps.importM3uProvider(provider, {
       providerRepository: deps.providerRepository,
       catalogRepository: deps.catalogRepository,
-      emitProgress: (progress) => deps.mainWindow.webContents.send(ipcChannels.providersImportProgress, progress)
+      emitProgress: (progress) => deps.emitToRenderer(ipcChannels.providersImportProgress, progress)
     });
     return toProviderSummary(provider);
   });
@@ -40,7 +39,7 @@ export function registerIpcHandlers(deps: RegisterIpcHandlersDeps): void {
       await deps.importM3uProvider(provider, {
         providerRepository: deps.providerRepository,
         catalogRepository: deps.catalogRepository,
-        emitProgress: (progress) => deps.mainWindow.webContents.send(ipcChannels.providersImportProgress, progress)
+        emitProgress: (progress) => deps.emitToRenderer(ipcChannels.providersImportProgress, progress)
       });
     }
   });

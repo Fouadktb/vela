@@ -21,9 +21,17 @@ async function boot(): Promise<void> {
     onStateChange: () => undefined
   });
 
-  const mainWindow = createMainWindow();
+  createMainWindow();
+  const emitToRenderer = (channel: string, payload: unknown) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+        window.webContents.send(channel, payload);
+      }
+    }
+  };
+
   registerIpcHandlers({
-    mainWindow,
+    emitToRenderer,
     providerRepository,
     catalogRepository,
     importM3uProvider,
