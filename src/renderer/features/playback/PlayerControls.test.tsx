@@ -62,8 +62,8 @@ describe("PlayerControls", () => {
       toJSON: () => ({})
     });
 
-    fireEvent.pointerUp(controls, { clientX: 150, pointerType: "touch" });
-    fireEvent.pointerUp(controls, { clientX: 150, pointerType: "touch" });
+    firePointerUp(controls, { clientX: 150, pointerId: 1, pointerType: "touch" });
+    firePointerUp(controls, { clientX: 150, pointerId: 1, pointerType: "touch" });
 
     await waitFor(() => expect(mockApi.playback.seek).toHaveBeenCalledWith({ offsetSeconds: 10 }));
   });
@@ -73,8 +73,52 @@ describe("PlayerControls", () => {
 
     const button = await screen.findByRole("button", { name: "Pause playback" });
 
-    fireEvent.pointerUp(button, { clientX: 150, pointerType: "touch" });
-    fireEvent.pointerUp(button, { clientX: 150, pointerType: "touch" });
+    firePointerUp(button, { clientX: 150, pointerId: 1, pointerType: "touch" });
+    firePointerUp(button, { clientX: 150, pointerId: 1, pointerType: "touch" });
+
+    expect(mockApi.playback.seek).not.toHaveBeenCalled();
+  });
+
+  it("does not seek when touch taps move between halves", async () => {
+    render(<PlayerControls />);
+
+    const controls = await screen.findByRole("toolbar", { name: "Playback controls" });
+    vi.spyOn(controls, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 80,
+      top: 0,
+      right: 200,
+      bottom: 80,
+      left: 0,
+      toJSON: () => ({})
+    });
+
+    firePointerUp(controls, { clientX: 40, pointerId: 1, pointerType: "touch" });
+    firePointerUp(controls, { clientX: 160, pointerId: 1, pointerType: "touch" });
+
+    expect(mockApi.playback.seek).not.toHaveBeenCalled();
+  });
+
+  it("does not seek when touch taps use different pointer ids", async () => {
+    render(<PlayerControls />);
+
+    const controls = await screen.findByRole("toolbar", { name: "Playback controls" });
+    vi.spyOn(controls, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 80,
+      top: 0,
+      right: 200,
+      bottom: 80,
+      left: 0,
+      toJSON: () => ({})
+    });
+
+    firePointerUp(controls, { clientX: 150, pointerId: 1, pointerType: "touch" });
+    firePointerUp(controls, { clientX: 150, pointerId: 2, pointerType: "touch" });
 
     expect(mockApi.playback.seek).not.toHaveBeenCalled();
   });
@@ -113,6 +157,36 @@ describe("PlayerControls", () => {
     expect(mockApi.playback.seek).not.toHaveBeenCalled();
   });
 
+  it("does not enable seek buttons for a seekable error state", async () => {
+    mockApi.playback.getState.mockResolvedValue({
+      ...playingState,
+      status: "error",
+      isSeekable: true,
+      errorMessage: "Playback failed."
+    });
+    render(<PlayerControls />);
+
+    expect((await screen.findByRole<HTMLButtonElement>("button", { name: "Seek back 10 seconds" })).disabled).toBe(
+      true
+    );
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Seek forward 10 seconds" }).disabled).toBe(true);
+  });
+
+  it("does not seek from window arrow keys for a seekable error state", async () => {
+    mockApi.playback.getState.mockResolvedValue({
+      ...playingState,
+      status: "error",
+      isSeekable: true,
+      errorMessage: "Playback failed."
+    });
+    render(<PlayerControls />);
+    await screen.findByRole("toolbar", { name: "Playback controls" });
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+
+    expect(mockApi.playback.seek).not.toHaveBeenCalled();
+  });
+
   it("updates keyboard seeking when playback state changes", async () => {
     mockApi.playback.getState.mockResolvedValue({ ...playingState, isSeekable: false });
     render(<PlayerControls />);
@@ -130,3 +204,21 @@ describe("PlayerControls", () => {
     expect(mockApi.playback.seek).toHaveBeenCalledWith({ offsetSeconds: -10 });
   });
 });
+
+function firePointerUp(
+  element: Element,
+  init: {
+    clientX: number;
+    pointerId: number;
+    pointerType: string;
+  }
+): void {
+  const event = new Event("pointerup", { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    clientX: { value: init.clientX },
+    pointerId: { value: init.pointerId },
+    pointerType: { value: init.pointerType }
+  });
+
+  fireEvent(element, event);
+}

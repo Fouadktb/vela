@@ -6,10 +6,19 @@ import type { PlaybackState } from "../../../shared/playback/types";
 import { getSeekSecondsForDoubleClick } from "./playerGestures";
 
 const DOUBLE_TAP_MAX_MS = 350;
+const DOUBLE_TAP_MAX_X_DISTANCE = 48;
+
+interface TapSnapshot {
+  clientX: number;
+  half: "left" | "right";
+  pointerId: number;
+  pointerType: string;
+  timeStamp: number;
+}
 
 export function PlayerControls() {
   const [state, setState] = useState<PlaybackState | null>(null);
-  const lastTapTimeRef = useRef<number | null>(null);
+  const lastTapRef = useRef<TapSnapshot | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -31,7 +40,7 @@ export function PlayerControls() {
   }, []);
 
   useEffect(() => {
-    if (!state || state.status === "idle" || !state.isSeekable) {
+    if (!state || !canSeekPlayback(state)) {
       return;
     }
 
@@ -63,7 +72,7 @@ export function PlayerControls() {
   }
 
   const seekBy = (offsetSeconds: -10 | 10) => {
-    if (state.isSeekable) {
+    if (canSeekPlayback(state)) {
       void iptvApi.playback.seek({ offsetSeconds });
     }
   };
@@ -78,7 +87,7 @@ export function PlayerControls() {
       clientX: event.clientX,
       left: bounds.left,
       width: bounds.width,
-      isSeekable: state.isSeekable
+      isSeekable: canSeekPlayback(state)
     });
 
     if (offsetSeconds !== 0) {
@@ -91,20 +100,27 @@ export function PlayerControls() {
       return;
     }
 
-    const previousTapTime = lastTapTimeRef.current;
-    lastTapTimeRef.current = event.timeStamp;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const nextTap: TapSnapshot = {
+      clientX: event.clientX,
+      half: getTapHalf(event.clientX, bounds.left, bounds.width),
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      timeStamp: event.timeStamp
+    };
+    const previousTap = lastTapRef.current;
+    lastTapRef.current = nextTap;
 
-    if (previousTapTime === null || event.timeStamp - previousTapTime > DOUBLE_TAP_MAX_MS) {
+    if (!previousTap || !isDoubleTapMatch(previousTap, nextTap)) {
       return;
     }
 
-    lastTapTimeRef.current = null;
-    const bounds = event.currentTarget.getBoundingClientRect();
+    lastTapRef.current = null;
     const offsetSeconds = getSeekSecondsForDoubleClick({
       clientX: event.clientX,
       left: bounds.left,
       width: bounds.width,
-      isSeekable: state.isSeekable
+      isSeekable: canSeekPlayback(state)
     });
 
     if (offsetSeconds !== 0) {
@@ -114,6 +130,7 @@ export function PlayerControls() {
 
   const isPlaying = state.status === "playing";
   const canTogglePlayPause = state.status === "playing" || state.status === "paused";
+  const canSeek = canSeekPlayback(state);
   const playPauseLabel = isPlaying ? "Pause playback" : "Resume playback";
 
   return (
@@ -136,7 +153,7 @@ export function PlayerControls() {
         <button
           aria-label="Seek back 10 seconds"
           className="icon-button"
-          disabled={!state.isSeekable}
+          disabled={!canSeek}
           title="Seek back 10 seconds"
           type="button"
           onClick={() => seekBy(-10)}
@@ -165,7 +182,7 @@ export function PlayerControls() {
         <button
           aria-label="Seek forward 10 seconds"
           className="icon-button"
-          disabled={!state.isSeekable}
+          disabled={!canSeek}
           title="Seek forward 10 seconds"
           type="button"
           onClick={() => seekBy(10)}
@@ -175,6 +192,26 @@ export function PlayerControls() {
       </div>
     </div>
   );
+}
+
+function canSeekPlayback(state: PlaybackState): boolean {
+  return state.isSeekable && (state.status === "playing" || state.status === "paused");
+}
+
+function getTapHalf(clientX: number, left: number, width: number): "left" | "right" {
+  return clientX < left + width / 2 ? "left" : "right";
+}
+
+function isDoubleTapMatch(previousTap: TapSnapshot, nextTap: TapSnapshot): boolean {
+  if (nextTap.timeStamp - previousTap.timeStamp > DOUBLE_TAP_MAX_MS) {
+    return false;
+  }
+
+  if (previousTap.pointerId !== nextTap.pointerId || previousTap.pointerType !== nextTap.pointerType) {
+    return false;
+  }
+
+  return previousTap.half === nextTap.half || Math.abs(previousTap.clientX - nextTap.clientX) <= DOUBLE_TAP_MAX_X_DISTANCE;
 }
 
 function isButtonEventTarget(target: EventTarget): boolean {
