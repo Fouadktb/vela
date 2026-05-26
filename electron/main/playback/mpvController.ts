@@ -16,6 +16,7 @@ interface BuildMpvArgsInput {
   ipcPath: string;
   url: string;
   title: string;
+  platform?: NodeJS.Platform;
 }
 
 interface ResolveMpvExecutablePathOptions {
@@ -49,8 +50,64 @@ const secretQueryKeys = [
   "refresh_token"
 ];
 
-export function buildMpvArgs({ ipcPath, url, title }: BuildMpvArgsInput): string[] {
-  return ["--force-window=yes", "--idle=no", `--input-ipc-server=${ipcPath}`, `--title=${title}`, url];
+export function buildMpvArgs({ ipcPath, url, title, platform = process.platform }: BuildMpvArgsInput): string[] {
+  return [
+    "--no-config",
+    "--player-operation-mode=pseudo-gui",
+    "--force-window=immediate",
+    "--idle=no",
+    "--keep-open=no",
+    "--terminal=no",
+    "--term-osd=no",
+    "--input-terminal=no",
+    "--cursor-autohide=700",
+    "--cursor-autohide-fs-only=no",
+    "--force-window-position=yes",
+    "--geometry=82%x82%",
+    "--autofit-larger=92%x92%",
+    "--background=color",
+    "--background-color=#FF0D0C0A",
+    "--border=no",
+    "--snap-window=yes",
+    "--stop-screensaver=always",
+    "--hwdec=auto-safe",
+    "--profile=fast",
+    "--cache=yes",
+    "--cache-pause=no",
+    "--cache-pause-initial=no",
+    "--demuxer-readahead-secs=8",
+    "--demuxer-max-bytes=256MiB",
+    "--network-timeout=15",
+    "--hls-bitrate=max",
+    "--audio-display=no",
+    "--osc=yes",
+    `--script-opts=${buildOscScriptOptions()}`,
+    "--osd-level=1",
+    "--osd-on-seek=msg-bar",
+    "--osd-duration=850",
+    "--osd-bar-align-y=0.92",
+    "--osd-bar-w=88",
+    "--osd-bar-h=2.2",
+    "--osd-bar-outline-size=0",
+    "--osd-font=sans-serif",
+    "--osd-font-size=28",
+    "--osd-color=#FFF4ECD7",
+    "--osd-selected-color=#FFD8F271",
+    "--osd-outline-color=#E0000000",
+    "--osd-outline-size=1.1",
+    "--osd-back-color=#B414120F",
+    "--osd-shadow-offset=0",
+    "--sub-font=sans-serif",
+    "--sub-font-size=42",
+    "--sub-color=#FFF9F2DF",
+    "--sub-outline-color=#E0000000",
+    "--sub-outline-size=2.2",
+    "--sub-shadow-offset=0",
+    ...buildPlatformMpvArgs(platform),
+    `--input-ipc-server=${ipcPath}`,
+    `--title=${title}`,
+    url
+  ];
 }
 
 export function resolveMpvExecutablePath(options: ResolveMpvExecutablePathOptions): string | null {
@@ -215,7 +272,7 @@ export function createMpvController(options: CreateMpvControllerOptions) {
     }
 
     const ipcPath = buildMpvIpcPath();
-    const mpvProcess = spawn(mpvPath, buildMpvArgs({ ipcPath, url, title }));
+    const mpvProcess = spawn(mpvPath, buildMpvArgs({ ipcPath, url, title, platform: process.platform }));
     processRef = mpvProcess;
     currentIpcPath = ipcPath;
 
@@ -292,6 +349,35 @@ export function createMpvController(options: CreateMpvControllerOptions) {
 
     return options.catalogRepository.getEpisode(itemId);
   }
+}
+
+function buildOscScriptOptions(): string {
+  return [
+    "osc-layout=bottombar",
+    "osc-seekbarstyle=bar",
+    "osc-deadzonesize=0",
+    "osc-minmousemove=3",
+    "osc-hidetimeout=1200",
+    "osc-fadeduration=220",
+    "osc-boxalpha=70",
+    "osc-barmargin=6",
+    "osc-scalewindowed=1.08",
+    "osc-scalefullscreen=1.18"
+  ].join(",");
+}
+
+function buildPlatformMpvArgs(platform: NodeJS.Platform): string[] {
+  if (platform !== "darwin") {
+    return [];
+  }
+
+  return [
+    "--macos-title-bar-appearance=vibrantDark",
+    "--macos-title-bar-material=hudWindow",
+    "--macos-title-bar-color=#2212100D",
+    "--macos-fs-animation-duration=160",
+    "--macos-geometry-calculation=visible"
+  ];
 }
 
 function getBundledMpvCandidates(resourcesPath: string, platform: NodeJS.Platform): string[] {

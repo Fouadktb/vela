@@ -14,19 +14,61 @@ import {
 
 describe("mpv playback helpers", () => {
   it("builds mpv launch arguments for a stream", () => {
-    expect(
-      buildMpvArgs({
-        ipcPath: "/tmp/iptv-player-mpv.sock",
-        url: "https://example.test/live.m3u8",
-        title: "BBC One"
-      })
-    ).toEqual([
-      "--force-window=yes",
-      "--idle=no",
-      "--input-ipc-server=/tmp/iptv-player-mpv.sock",
-      "--title=BBC One",
-      "https://example.test/live.m3u8"
-    ]);
+    const args = buildMpvArgs({
+      ipcPath: "/tmp/iptv-player-mpv.sock",
+      url: "https://example.test/live.m3u8",
+      title: "BBC One",
+      platform: "linux"
+    });
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--no-config",
+        "--player-operation-mode=pseudo-gui",
+        "--force-window=immediate",
+        "--border=no",
+        "--geometry=82%x82%",
+        "--hwdec=auto-safe",
+        "--osc=yes",
+        "--osd-on-seek=msg-bar",
+        "--input-ipc-server=/tmp/iptv-player-mpv.sock",
+        "--title=BBC One"
+      ])
+    );
+    expect(args.at(-1)).toBe("https://example.test/live.m3u8");
+  });
+
+  it("styles mpv's OSC and OSD for the app player", () => {
+    const args = buildMpvArgs({
+      ipcPath: "/tmp/iptv-player-mpv.sock",
+      url: "https://example.test/live.m3u8",
+      title: "BBC One",
+      platform: "linux"
+    });
+
+    expect(args).toContain(
+      "--script-opts=osc-layout=bottombar,osc-seekbarstyle=bar,osc-deadzonesize=0,osc-minmousemove=3,osc-hidetimeout=1200,osc-fadeduration=220,osc-boxalpha=70,osc-barmargin=6,osc-scalewindowed=1.08,osc-scalefullscreen=1.18"
+    );
+    expect(args).toContain("--osd-selected-color=#FFD8F271");
+    expect(args).toContain("--osd-bar-align-y=0.92");
+  });
+
+  it("adds macOS player-window material options only on macOS", () => {
+    const macArgs = buildMpvArgs({
+      ipcPath: "/tmp/iptv-player-mpv.sock",
+      url: "https://example.test/live.m3u8",
+      title: "BBC One",
+      platform: "darwin"
+    });
+    const windowsArgs = buildMpvArgs({
+      ipcPath: "\\\\.\\pipe\\iptv-player-mpv-1",
+      url: "https://example.test/live.m3u8",
+      title: "BBC One",
+      platform: "win32"
+    });
+
+    expect(macArgs).toContain("--macos-title-bar-material=hudWindow");
+    expect(windowsArgs.some((arg) => arg.startsWith("--macos-"))).toBe(false);
   });
 
   it("prefers an explicit mpv path before PATH lookup", () => {
