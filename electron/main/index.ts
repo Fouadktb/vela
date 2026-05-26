@@ -40,6 +40,10 @@ async function boot(): Promise<void> {
     openInExternalPlayer
   });
 
+  app.on("before-quit", () => {
+    void mpvController.stop();
+  });
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createMainWindow();

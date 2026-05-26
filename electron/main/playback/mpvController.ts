@@ -19,7 +19,27 @@ interface BuildMpvArgsInput {
 
 type MpvIpcCommand = [string, ...Array<string | number | boolean>];
 
-const maxStderrMessageLength = 500;
+const maxDiagnosticLength = 300;
+const mpvIpcCommandTimeoutMs = 1_500;
+const secretQueryKeys = [
+  "password",
+  "pass",
+  "username",
+  "user",
+  "token",
+  "auth",
+  "key",
+  "signature",
+  "sig",
+  "expires",
+  "session",
+  "sessionid",
+  "session_id",
+  "apikey",
+  "api_key",
+  "access_token",
+  "refresh_token"
+];
 
 export function buildMpvArgs({ ipcPath, url, title }: BuildMpvArgsInput): string[] {
   return ["--force-window=yes", "--idle=no", `--input-ipc-server=${ipcPath}`, `--title=${title}`, url];
@@ -27,6 +47,27 @@ export function buildMpvArgs({ ipcPath, url, title }: BuildMpvArgsInput): string
 
 export function buildMpvIpcCommand(command: MpvIpcCommand): string {
   return `${JSON.stringify({ command })}\n`;
+}
+
+export function buildMpvIpcPath(platform: NodeJS.Platform = process.platform, id: string = randomUUID()): string {
+  if (platform === "win32") {
+    return `\\\\.\\pipe\\iptv-player-mpv-${id}`;
+  }
+
+  return join(tmpdir(), `iptv-player-mpv-${id}.sock`);
+}
+
+export function sanitizePlaybackDiagnostic(message: string): string {
+  const secretPattern = new RegExp(`([?&](${secretQueryKeys.join("|")})=)[^&\\s]+`, "gi");
+  const bareSecretPattern = new RegExp(`\\b(${secretQueryKeys.join("|")})=([^&\\s]+)`, "gi");
+
+  return message
+    .replace(secretPattern, "$1REDACTED")
+    .replace(bareSecretPattern, "$1=REDACTED")
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s]+/gi, "[URL REDACTED]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxDiagnosticLength);
 }
 
 export function createMpvController(options: CreateMpvControllerOptions) {
@@ -45,14 +86,29 @@ export function createMpvController(options: CreateMpvControllerOptions) {
     }
 
     const ipcPath = currentIpcPath;
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const socket = createConnection(ipcPath);
-      socket.once("connect", () => {
-        socket.end(buildMpvIpcCommand(command), resolve);
-      });
-      socket.once("error", () => {
+      const timeout = setTimeout(() => {
         socket.destroy();
+        reject(new Error("mpv IPC command timed out"));
+      }, mpvIpcCommandTimeoutMs);
+
+      const finish = (error?: Error) => {
+        clearTimeout(timeout);
+        socket.removeAllListeners();
+        if (error) {
+          reject(new Error("mpv IPC command failed"));
+          return;
+        }
         resolve();
+      };
+
+      socket.once("connect", () => {
+        socket.end(buildMpvIpcCommand(command), () => finish());
+      });
+      socket.once("error", (error) => {
+        socket.destroy();
+        finish(error);
       });
     });
   };
@@ -60,6 +116,7 @@ export function createMpvController(options: CreateMpvControllerOptions) {
   const terminateProcess = (): void => {
     if (!process || process.killed) {
       process = null;
+      currentIpcPath = null;
       return;
     }
     process.removeAllListeners();
@@ -95,15 +152,15 @@ export function createMpvController(options: CreateMpvControllerOptions) {
       errorMessage: null
     });
 
-    const ipcPath = join(tmpdir(), `iptv-player-mpv-${randomUUID()}.sock`);
+    const ipcPath = buildMpvIpcPath();
     const mpvProcess = spawn("mpv", buildMpvArgs({ ipcPath, url, title: channel.name }));
     process = mpvProcess;
     currentIpcPath = ipcPath;
 
     mpvProcess.stderr.on("data", (chunk: Buffer) => {
-      const message = sanitizeMpvMessage(chunk.toString("utf8"));
-      if (message.length > 0) {
-        setState({ errorMessage: message });
+      const diagnostic = sanitizePlaybackDiagnostic(chunk.toString("utf8"));
+      if (diagnostic.length > 0) {
+        setState({ errorMessage: "mpv reported a playback error." });
       }
     });
 
@@ -119,7 +176,7 @@ export function createMpvController(options: CreateMpvControllerOptions) {
       }
       setState({
         status: "error",
-        errorMessage: sanitizeMpvMessage(error.message)
+        errorMessage: "mpv failed to start."
       });
     });
 
@@ -131,7 +188,7 @@ export function createMpvController(options: CreateMpvControllerOptions) {
       if (state.status !== "error" && state.status !== "idle") {
         setState({
           status: code === 0 || signal === "SIGTERM" ? "idle" : "error",
-          errorMessage: code === 0 || signal === "SIGTERM" ? null : `mpv exited with code ${code ?? signal ?? "unknown"}`
+          errorMessage: code === 0 || signal === "SIGTERM" ? null : "mpv exited unexpectedly."
         });
       }
     });
@@ -175,12 +232,4 @@ function createIdleState(): PlaybackState {
     isSeekable: false,
     errorMessage: null
   };
-}
-
-function sanitizeMpvMessage(message: string): string {
-  return message
-    .replace(/([?&]password=)[^&\s]*/gi, "$1REDACTED")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, maxStderrMessageLength);
 }
