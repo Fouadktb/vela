@@ -206,11 +206,15 @@ Playback controls:
 - Play/pause.
 - Stop/back to library.
 - Seek for VOD and episodes.
+- Playback-surface seek gestures for seekable content: double-click or double-tap the right half of the player to seek forward 10 seconds, and the left half to seek backward 10 seconds.
+- Keyboard seek shortcuts in playback mode for seekable content, such as Left/Right for 10 seconds backward/forward.
 - Volume and mute.
 - Fullscreen.
 - Audio track selection where available.
 - Subtitle track selection where available.
 - Reconnect/retry.
+- Previous/next episode actions for series episodes.
+- Episode selector for series playback, showing the current episode and nearby episodes so the next episode can be started directly.
 - Open external player.
 
 Playback state should update the app:
@@ -223,8 +227,11 @@ Playback state should update the app:
 - Last played channel.
 - Watch progress for VOD and episodes.
 - Recently watched list.
+- Current series, season, and episode context when playing an episode.
 
-Live streams should prioritize stability and reconnect behavior. VOD and episodes should prioritize seeking, progress, and resume.
+Live streams should prioritize stability and reconnect behavior. VOD and episodes should prioritize seeking, progress, resume, and quick episode-to-episode navigation. For non-seekable live streams, seek gestures should be disabled or ignored with minimal UI noise. If a provider supports catch-up or time-shifted streams later, those streams can opt into the same seek behavior.
+
+For series, the player should include a simple episode navigation surface. The v1 version can be a next episode button plus an episode row below the player when not fullscreen. A later version can make this richer, similar to streaming services that let users scroll below the player and choose another episode directly.
 
 ## Error Handling
 
@@ -354,6 +361,8 @@ Renderer tests:
 - Provider setup form validation.
 - Empty/error/loading states.
 - Player controls state.
+- Playback seek gesture handling for seekable and non-seekable content.
+- Series episode selector and next episode behavior.
 
 Manual verification:
 
