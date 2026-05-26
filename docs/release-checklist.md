@@ -6,6 +6,7 @@ Use this checklist for every local release candidate before creating a GitHub Re
 
 - Confirm the target release version and update `package.json`.
 - Keep version tags aligned with the app version, using `vX.Y.Z`.
+- Confirm release commits use Conventional Commits.
 - Review user-facing changes and note anything that should be included in release notes.
 - Confirm the working tree contains only intended release changes before tagging.
 
