@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseM3u } from "./parseM3u";
+import { parseM3u } from "./parseM3u.js";
 
 describe("parseM3u", () => {
   it("parses extended M3U channels into normalized channel drafts", () => {
@@ -107,6 +107,40 @@ https://stream.test/unnamed.m3u8`;
         isFavorite: false
       }
     ]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it("allocates distinct IDs for duplicate channel names", () => {
+    const input = `#EXTM3U
+#EXTINF:-1,BBC One
+https://stream.test/bbc-1.m3u8
+#EXTINF:-1,BBC One
+https://stream.test/bbc-2.m3u8`;
+
+    const result = parseM3u(input, {
+      providerId: "provider-1",
+      nowIso: "2026-05-26T12:00:00.000Z"
+    });
+
+    expect(result.channels.map((channel) => channel.id)).toEqual([
+      "provider-1:live:bbc-one",
+      "provider-1:live:bbc-one-2"
+    ]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it("uses the EXTINF line number when the channel name slug is empty", () => {
+    const input = `#EXTM3U
+#EXTINF:-1,!!!
+https://stream.test/symbols.m3u8`;
+
+    const result = parseM3u(input, {
+      providerId: "provider-1",
+      nowIso: "2026-05-26T12:00:00.000Z"
+    });
+
+    expect(result.channels[0].id).toBe("provider-1:live:channel-2");
+    expect(result.channels[0].name).toBe("!!!");
     expect(result.diagnostics).toEqual([]);
   });
 

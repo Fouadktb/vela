@@ -1,4 +1,4 @@
-import type { LiveChannel } from "../../shared/catalog/types";
+import type { LiveChannel } from "../../shared/catalog/types.js";
 
 interface ParseM3uOptions {
   providerId: string;
@@ -25,14 +25,16 @@ export function parseM3u(input: string, options: ParseM3uOptions): ParseM3uResul
   const lines = input.split(/\r?\n/);
   const diagnostics: ParseDiagnostic[] = [];
   const channels: LiveChannel[] = [];
+  const slugCounts = new Map<string, number>();
   let pending: ExtInfDraft | null = null;
 
-  lines.forEach((rawLine, index) => {
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index];
     const lineNumber = index + 1;
     const line = rawLine.trim();
 
     if (!line || line === "#EXTM3U") {
-      return;
+      continue;
     }
 
     if (line.startsWith("#EXTINF:")) {
@@ -43,11 +45,11 @@ export function parseM3u(input: string, options: ParseM3uOptions): ParseM3uResul
         });
       }
       pending = parseExtInf(line, lineNumber);
-      return;
+      continue;
     }
 
     if (line.startsWith("#")) {
-      return;
+      continue;
     }
 
     if (!pending) {
@@ -55,12 +57,13 @@ export function parseM3u(input: string, options: ParseM3uOptions): ParseM3uResul
         line: lineNumber,
         message: "Stream URL has no preceding EXTINF metadata"
       });
-      return;
+      continue;
     }
 
-    channels.push(toLiveChannel(pending, line, options));
+    const slug = allocateSlug(pending, slugCounts);
+    channels.push(toLiveChannel(pending, line, options, slug));
     pending = null;
-  });
+  }
 
   if (pending) {
     diagnostics.push({
@@ -89,9 +92,12 @@ function parseExtInf(line: string, lineNumber: number): ExtInfDraft {
   };
 }
 
-function toLiveChannel(draft: ExtInfDraft, url: string, options: ParseM3uOptions): LiveChannel {
-  const slug = slugify(draft.name);
-
+function toLiveChannel(
+  draft: ExtInfDraft,
+  url: string,
+  options: ParseM3uOptions,
+  slug: string
+): LiveChannel {
   return {
     type: "live",
     id: `${options.providerId}:live:${slug}`,
@@ -107,6 +113,14 @@ function toLiveChannel(draft: ExtInfDraft, url: string, options: ParseM3uOptions
     lastSeenAt: options.nowIso,
     isFavorite: false
   };
+}
+
+function allocateSlug(draft: ExtInfDraft, slugCounts: Map<string, number>): string {
+  const baseSlug = slugify(draft.name) || `channel-${draft.line}`;
+  const nextCount = (slugCounts.get(baseSlug) || 0) + 1;
+  slugCounts.set(baseSlug, nextCount);
+
+  return nextCount === 1 ? baseSlug : `${baseSlug}-${nextCount}`;
 }
 
 function slugify(value: string): string {
