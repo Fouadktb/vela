@@ -48,6 +48,8 @@ describe("registerIpcHandlers", () => {
       } as never,
       catalogRepository: {} as never,
       importM3uProvider: vi.fn(async () => undefined) as never,
+      importXtreamProvider: vi.fn(async () => undefined) as never,
+      importXtreamSeriesEpisodes: vi.fn(async () => []) as never,
       mpvController: {} as never,
       openInExternalPlayer: vi.fn() as never
     });
@@ -101,6 +103,8 @@ describe("registerIpcHandlers", () => {
       importM3uProvider: vi.fn(async () => {
         throw new Error("Playlist could not be loaded");
       }) as never,
+      importXtreamProvider: vi.fn(async () => undefined) as never,
+      importXtreamSeriesEpisodes: vi.fn(async () => []) as never,
       mpvController: {} as never,
       openInExternalPlayer: vi.fn() as never
     });
@@ -132,6 +136,8 @@ describe("registerIpcHandlers", () => {
       } as never,
       catalogRepository: {} as never,
       importM3uProvider: importM3uProvider as never,
+      importXtreamProvider: vi.fn(async () => undefined) as never,
+      importXtreamSeriesEpisodes: vi.fn(async () => []) as never,
       mpvController: {} as never,
       openInExternalPlayer: vi.fn() as never
     });
@@ -147,5 +153,156 @@ describe("registerIpcHandlers", () => {
 
     expect(createM3u).not.toHaveBeenCalled();
     expect(importM3uProvider).not.toHaveBeenCalled();
+  });
+
+  it("creates an Xtream provider and returns a summary without credentials", async () => {
+    const createdProvider: Provider = {
+      id: "provider-xtream",
+      type: "xtream",
+      name: "Xtream Account",
+      source: "https://panel.example.test",
+      username: "secret-user",
+      password: "secret-password",
+      createdAt: "2026-05-26T08:00:00.000Z",
+      updatedAt: "2026-05-26T08:00:00.000Z",
+      lastRefreshAt: null
+    };
+    const refreshedProvider: Provider = {
+      ...createdProvider,
+      updatedAt: "2026-05-26T08:01:00.000Z",
+      lastRefreshAt: "2026-05-26T08:01:00.000Z"
+    };
+    const createXtream = vi.fn(() => createdProvider);
+    const importXtreamProvider = vi.fn(async () => undefined);
+
+    registerIpcHandlers({
+      emitToRenderer: vi.fn(),
+      providerRepository: {
+        list: vi.fn(),
+        createM3u: vi.fn(),
+        createXtream,
+        get: vi.fn(() => refreshedProvider),
+        markRefreshed: vi.fn(),
+        delete: vi.fn()
+      } as never,
+      catalogRepository: {} as never,
+      importM3uProvider: vi.fn(async () => undefined) as never,
+      importXtreamProvider: importXtreamProvider as never,
+      importXtreamSeriesEpisodes: vi.fn(async () => []) as never,
+      mpvController: {} as never,
+      openInExternalPlayer: vi.fn() as never
+    });
+
+    const handler = ipcHandlers.get(ipcChannels.providersCreateXtream);
+    expect(handler).toBeDefined();
+
+    const result = await handler?.(null, {
+      name: " Xtream Account ",
+      serverUrl: "https://panel.example.test/",
+      username: " secret-user ",
+      password: " secret-password "
+    });
+
+    expect(createXtream).toHaveBeenCalledWith({
+      name: "Xtream Account",
+      serverUrl: "https://panel.example.test",
+      username: "secret-user",
+      password: "secret-password"
+    });
+    expect(importXtreamProvider).toHaveBeenCalledWith(
+      createdProvider,
+      expect.objectContaining({
+        providerRepository: expect.any(Object),
+        catalogRepository: expect.any(Object)
+      })
+    );
+    expect(result).toEqual({
+      id: "provider-xtream",
+      type: "xtream",
+      name: "Xtream Account",
+      createdAt: "2026-05-26T08:00:00.000Z",
+      updatedAt: "2026-05-26T08:01:00.000Z",
+      lastRefreshAt: "2026-05-26T08:01:00.000Z"
+    });
+    expect(result).not.toHaveProperty("source");
+    expect(result).not.toHaveProperty("username");
+    expect(result).not.toHaveProperty("password");
+  });
+
+  it("deletes a provider through an explicit provider management IPC call", async () => {
+    const deleteProvider = vi.fn();
+
+    registerIpcHandlers({
+      emitToRenderer: vi.fn(),
+      providerRepository: {
+        list: vi.fn(),
+        createM3u: vi.fn(),
+        createXtream: vi.fn(),
+        get: vi.fn(),
+        markRefreshed: vi.fn(),
+        delete: deleteProvider
+      } as never,
+      catalogRepository: {
+        listRecentlyWatched: vi.fn(() => [])
+      } as never,
+      importM3uProvider: vi.fn(async () => undefined) as never,
+      importXtreamProvider: vi.fn(async () => undefined) as never,
+      importXtreamSeriesEpisodes: vi.fn(async () => []) as never,
+      mpvController: {} as never,
+      openInExternalPlayer: vi.fn() as never
+    });
+
+    const handler = ipcHandlers.get(ipcChannels.providersDelete);
+    await handler?.(null, "provider-1");
+
+    expect(deleteProvider).toHaveBeenCalledWith("provider-1");
+  });
+
+  it("returns recently watched catalog items", () => {
+    const listRecentlyWatched = vi.fn(() => [
+      {
+        id: "provider-1:movie:201",
+        itemType: "movie",
+        providerId: "provider-1",
+        title: "City Movie",
+        subtitle: "Action | 2025",
+        artworkUrl: null,
+        lastWatchedAt: "2026-05-26T08:30:00.000Z"
+      }
+    ]);
+
+    registerIpcHandlers({
+      emitToRenderer: vi.fn(),
+      providerRepository: {
+        list: vi.fn(),
+        createM3u: vi.fn(),
+        createXtream: vi.fn(),
+        get: vi.fn(),
+        markRefreshed: vi.fn(),
+        delete: vi.fn()
+      } as never,
+      catalogRepository: {
+        listRecentlyWatched
+      } as never,
+      importM3uProvider: vi.fn(async () => undefined) as never,
+      importXtreamProvider: vi.fn(async () => undefined) as never,
+      importXtreamSeriesEpisodes: vi.fn(async () => []) as never,
+      mpvController: {} as never,
+      openInExternalPlayer: vi.fn() as never
+    });
+
+    const handler = ipcHandlers.get(ipcChannels.catalogListRecentlyWatched);
+    expect(handler?.()).toEqual([
+      {
+        id: "provider-1:movie:201",
+        itemType: "movie",
+        providerId: "provider-1",
+        title: "City Movie",
+        subtitle: "Action | 2025",
+        artworkUrl: null,
+        lastWatchedAt: "2026-05-26T08:30:00.000Z"
+      }
+    ]);
+    expect(listRecentlyWatched).toHaveBeenCalled();
   });
 });

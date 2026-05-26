@@ -1,7 +1,8 @@
-import type { LiveChannel } from "../../shared/catalog/types.js";
+import type { LiveChannel, StreamResolverData } from "../../shared/catalog/types.js";
 
 interface ParseM3uOptions {
   providerId: string;
+  providerType?: StreamResolverData["providerType"];
   nowIso: string;
 }
 
@@ -125,7 +126,7 @@ function toLiveChannel(
     logoUrl: draft.attributes["tvg-logo"] || null,
     category: draft.attributes["group-title"] || "Uncategorized",
     stream: {
-      providerType: "m3u",
+      providerType: options.providerType ?? "m3u",
       url
     },
     epgChannelId: draft.attributes["tvg-id"] || null,

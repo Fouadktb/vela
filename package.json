@@ -4,7 +4,7 @@
   "description": "Desktop IPTV player for macOS and Windows",
   "private": true,
   "packageManager": "pnpm@10.10.0",
-  "type": "module",
+  "type": "commonjs",
   "main": "dist-electron/electron/main/index.js",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
@@ -14,10 +14,11 @@
     "test:watch": "pnpm rebuild:node && vitest",
     "build:renderer": "vite build",
     "build:main": "tsc -p tsconfig.node.json",
-    "build": "pnpm typecheck && pnpm test && pnpm build:renderer && pnpm build:main",
+    "build": "pnpm typecheck && pnpm test && pnpm build:renderer && pnpm build:main && pnpm check:preload",
     "build:mac": "pnpm build && electron-builder --mac",
     "build:win": "pnpm build && electron-builder --win",
     "check:mpv": "node scripts/check-mpv.js",
+    "check:preload": "node scripts/check-preload.cjs",
     "rebuild:native": "electron-builder install-app-deps",
     "rebuild:node": "npm rebuild better-sqlite3 --loglevel=error"
   },

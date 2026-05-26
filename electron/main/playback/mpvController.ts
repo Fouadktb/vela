@@ -1,8 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join, win32 } from "node:path";
 import type { PlaybackState, PlayRequest, SeekRequest } from "../../../src/shared/playback/types.js";
 import type { createCatalogRepository } from "../storage/catalogRepository.js";
 
@@ -15,6 +16,13 @@ interface BuildMpvArgsInput {
   ipcPath: string;
   url: string;
   title: string;
+}
+
+interface ResolveMpvExecutablePathOptions {
+  env: NodeJS.ProcessEnv;
+  platform: NodeJS.Platform;
+  resourcesPath: string;
+  existsSync(path: string): boolean;
 }
 
 type MpvIpcCommand = [string, ...Array<string | number | boolean>];
@@ -45,6 +53,38 @@ export function buildMpvArgs({ ipcPath, url, title }: BuildMpvArgsInput): string
   return ["--force-window=yes", "--idle=no", `--input-ipc-server=${ipcPath}`, `--title=${title}`, url];
 }
 
+export function resolveMpvExecutablePath(options: ResolveMpvExecutablePathOptions): string | null {
+  const explicitPath = options.env.MPV_PATH?.trim();
+  if (explicitPath) {
+    return explicitPath;
+  }
+
+  for (const candidate of getBundledMpvCandidates(options.resourcesPath, options.platform)) {
+    if (options.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  for (const candidate of getSystemMpvCandidates(options.platform, options.env)) {
+    if (options.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  const executableName = options.platform === "win32" ? "mpv.exe" : "mpv";
+  for (const directory of (options.env.PATH ?? "").split(delimiter)) {
+    if (!directory) {
+      continue;
+    }
+    const candidate = join(directory, executableName);
+    if (options.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 export function buildMpvIpcCommand(command: MpvIpcCommand): string {
   return `${JSON.stringify({ command })}\n`;
 }
@@ -71,7 +111,7 @@ export function sanitizePlaybackDiagnostic(message: string): string {
 }
 
 export function createMpvController(options: CreateMpvControllerOptions) {
-  let process: ChildProcessWithoutNullStreams | null = null;
+  let processRef: ChildProcessWithoutNullStreams | null = null;
   let currentIpcPath: string | null = null;
   let state: PlaybackState = createIdleState();
 
@@ -81,7 +121,7 @@ export function createMpvController(options: CreateMpvControllerOptions) {
   };
 
   const sendCommand = (command: MpvIpcCommand): Promise<void> => {
-    if (!process || process.killed || !currentIpcPath) {
+    if (!processRef || processRef.killed || !currentIpcPath) {
       return Promise.resolve();
     }
 
@@ -114,47 +154,69 @@ export function createMpvController(options: CreateMpvControllerOptions) {
   };
 
   const terminateProcess = (): void => {
-    if (!process || process.killed) {
-      process = null;
+    if (!processRef || processRef.killed) {
+      processRef = null;
       currentIpcPath = null;
       return;
     }
-    process.removeAllListeners();
-    process.kill();
-    process = null;
+    processRef.removeAllListeners();
+    processRef.kill();
+    processRef = null;
     currentIpcPath = null;
   };
 
   const play = async (request: PlayRequest): Promise<void> => {
-    if (request.itemType !== "live") {
-      throw new Error(`Unsupported playback item type: ${request.itemType}`);
+    const itemType = request.itemType;
+    if (itemType !== "live" && itemType !== "movie" && itemType !== "episode") {
+      throw new Error(`Unsupported playback item type: ${itemType}`);
     }
 
-    const channel = options.catalogRepository.getLiveChannel(request.itemId);
-    if (!channel) {
-      throw new Error(`Live channel not found: ${request.itemId}`);
+    const item = getPlayableCatalogItem(request.itemId, itemType);
+    if (!item) {
+      throw new Error(`Catalog item not found: ${request.itemId}`);
     }
 
-    const url = channel.stream.url;
+    const url = item.stream.url;
     if (!url) {
-      throw new Error(`No playable stream for live channel: ${request.itemId}`);
+      throw new Error(`No playable stream for catalog item: ${request.itemId}`);
     }
+    const title =
+      item.type === "live"
+        ? item.name
+        : item.type === "episode"
+          ? `S${item.seasonNumber} E${item.episodeNumber} ${item.title}`
+          : item.title;
 
     terminateProcess();
     setState({
       status: "loading",
-      itemId: channel.id,
-      itemType: "live",
-      title: channel.name,
+      itemId: item.id,
+      itemType,
+      title,
       positionSeconds: 0,
       durationSeconds: null,
-      isSeekable: false,
+      isSeekable: itemType !== "live",
       errorMessage: null
     });
 
+    const mpvPath = resolveMpvExecutablePath({
+      env: process.env,
+      platform: process.platform,
+      resourcesPath: process.resourcesPath,
+      existsSync
+    });
+
+    if (!mpvPath) {
+      setState({
+        status: "error",
+        errorMessage: "mpv is not installed or bundled with this app yet."
+      });
+      return;
+    }
+
     const ipcPath = buildMpvIpcPath();
-    const mpvProcess = spawn("mpv", buildMpvArgs({ ipcPath, url, title: channel.name }));
-    process = mpvProcess;
+    const mpvProcess = spawn(mpvPath, buildMpvArgs({ ipcPath, url, title }));
+    processRef = mpvProcess;
     currentIpcPath = ipcPath;
 
     mpvProcess.stderr.on("data", (chunk: Buffer) => {
@@ -165,24 +227,24 @@ export function createMpvController(options: CreateMpvControllerOptions) {
     });
 
     mpvProcess.once("spawn", () => {
-      options.catalogRepository.markRecentlyWatched(channel.id, "live");
+      options.catalogRepository.markRecentlyWatched(item.id, itemType);
       setState({ status: "playing" });
     });
 
     mpvProcess.once("error", (error) => {
-      if (process === mpvProcess) {
-        process = null;
+      if (processRef === mpvProcess) {
+        processRef = null;
         currentIpcPath = null;
       }
       setState({
         status: "error",
-        errorMessage: "mpv failed to start."
+        errorMessage: "mpv failed to start. Check that the bundled player is available."
       });
     });
 
     mpvProcess.once("exit", (code, signal) => {
-      if (process === mpvProcess) {
-        process = null;
+      if (processRef === mpvProcess) {
+        processRef = null;
         currentIpcPath = null;
       }
       if (state.status !== "error" && state.status !== "idle") {
@@ -219,6 +281,61 @@ export function createMpvController(options: CreateMpvControllerOptions) {
       return state;
     }
   };
+
+  function getPlayableCatalogItem(itemId: string, itemType: "live" | "movie" | "episode") {
+    if (itemType === "live") {
+      return options.catalogRepository.getLiveChannel(itemId);
+    }
+    if (itemType === "movie") {
+      return options.catalogRepository.getMovie(itemId);
+    }
+
+    return options.catalogRepository.getEpisode(itemId);
+  }
+}
+
+function getBundledMpvCandidates(resourcesPath: string, platform: NodeJS.Platform): string[] {
+  if (platform === "win32") {
+    return [
+      join(resourcesPath, "bin", "mpv", "win32", "mpv.exe"),
+      join(resourcesPath, "bin", "mpv.exe")
+    ];
+  }
+
+  if (platform === "darwin") {
+    return [
+      join(resourcesPath, "bin", "mpv", "darwin", "mpv"),
+      join(resourcesPath, "bin", "mpv")
+    ];
+  }
+
+  return [
+    join(resourcesPath, "bin", "mpv", platform, "mpv"),
+    join(resourcesPath, "bin", "mpv")
+  ];
+}
+
+function getSystemMpvCandidates(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string[] {
+  if (platform === "darwin") {
+    return [
+      "/Applications/mpv.app/Contents/MacOS/mpv",
+      "/opt/homebrew/bin/mpv",
+      "/usr/local/bin/mpv"
+    ];
+  }
+
+  if (platform === "win32") {
+    const programFiles = env.ProgramFiles ?? "C:\\Program Files";
+    const programFilesX86 = env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)";
+    const localAppData = env.LOCALAPPDATA;
+    return [
+      win32.join(programFiles, "mpv", "mpv.exe"),
+      win32.join(programFilesX86, "mpv", "mpv.exe"),
+      ...(localAppData ? [win32.join(localAppData, "mpv", "mpv.exe")] : [])
+    ];
+  }
+
+  return [];
 }
 
 function createIdleState(): PlaybackState {

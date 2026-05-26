@@ -8,6 +8,7 @@ import {
   buildMpvArgs,
   buildMpvIpcCommand,
   buildMpvIpcPath,
+  resolveMpvExecutablePath,
   sanitizePlaybackDiagnostic
 } from "../../electron/main/playback/mpvController.js";
 
@@ -26,6 +27,50 @@ describe("mpv playback helpers", () => {
       "--title=BBC One",
       "https://example.test/live.m3u8"
     ]);
+  });
+
+  it("prefers an explicit mpv path before PATH lookup", () => {
+    expect(
+      resolveMpvExecutablePath({
+        env: { MPV_PATH: "/Applications/mpv.app/Contents/MacOS/mpv", PATH: "/usr/bin" },
+        platform: "darwin",
+        resourcesPath: "/Applications/IPTV Player.app/Contents/Resources",
+        existsSync: () => false
+      })
+    ).toBe("/Applications/mpv.app/Contents/MacOS/mpv");
+  });
+
+  it("finds common macOS mpv install paths when Finder does not provide a shell PATH", () => {
+    expect(
+      resolveMpvExecutablePath({
+        env: { PATH: "/usr/bin:/bin" },
+        platform: "darwin",
+        resourcesPath: "/Applications/IPTV Player.app/Contents/Resources",
+        existsSync: (candidate) => candidate === "/opt/homebrew/bin/mpv"
+      })
+    ).toBe("/opt/homebrew/bin/mpv");
+  });
+
+  it("finds common Windows mpv install paths before PATH lookup", () => {
+    expect(
+      resolveMpvExecutablePath({
+        env: { ProgramFiles: "C:\\Program Files", PATH: "C:\\Windows\\System32" },
+        platform: "win32",
+        resourcesPath: "C:\\Users\\me\\AppData\\Local\\Programs\\IPTV Player\\resources",
+        existsSync: (candidate) => candidate === "C:\\Program Files\\mpv\\mpv.exe"
+      })
+    ).toBe("C:\\Program Files\\mpv\\mpv.exe");
+  });
+
+  it("detects when mpv is unavailable instead of failing with a generic spawn error", () => {
+    expect(
+      resolveMpvExecutablePath({
+        env: { PATH: "/usr/bin" },
+        platform: "darwin",
+        resourcesPath: "/Applications/IPTV Player.app/Contents/Resources",
+        existsSync: () => false
+      })
+    ).toBeNull();
   });
 
   it("builds newline-delimited JSON IPC commands", () => {

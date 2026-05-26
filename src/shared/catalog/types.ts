@@ -42,6 +42,13 @@ export interface Movie {
   isFavorite: boolean;
 }
 
+export type MovieView = Omit<Movie, "stream">;
+
+export function toMovieView(movie: Movie): MovieView {
+  const { stream: _stream, ...view } = movie;
+  return view;
+}
+
 export interface Series {
   type: "series";
   id: string;
@@ -51,6 +58,12 @@ export interface Series {
   category: string;
   lastSeenAt: string;
   isFavorite: boolean;
+}
+
+export type SeriesView = Series;
+
+export function toSeriesView(series: Series): SeriesView {
+  return series;
 }
 
 export interface Episode {
@@ -64,6 +77,23 @@ export interface Episode {
   durationSeconds: number | null;
   progressSeconds: number;
   stream: StreamResolverData;
+}
+
+export type EpisodeView = Omit<Episode, "stream">;
+
+export function toEpisodeView(episode: Episode): EpisodeView {
+  const { stream: _stream, ...view } = episode;
+  return view;
+}
+
+export interface RecentlyWatchedItemView {
+  id: string;
+  itemType: "live" | "movie" | "episode";
+  providerId: string;
+  title: string;
+  subtitle: string;
+  artworkUrl: string | null;
+  lastWatchedAt: string;
 }
 
 export type CatalogItem = LiveChannel | Movie | Series | Episode;

@@ -7,7 +7,9 @@ const api: IptvApi = {
   providers: {
     list: () => ipcRenderer.invoke(ipcChannels.providersList),
     createM3u: (input) => ipcRenderer.invoke(ipcChannels.providersCreateM3u, input),
+    createXtream: (input) => ipcRenderer.invoke(ipcChannels.providersCreateXtream, input),
     refresh: (providerId) => ipcRenderer.invoke(ipcChannels.providersRefresh, providerId),
+    delete: (providerId) => ipcRenderer.invoke(ipcChannels.providersDelete, providerId),
     onImportProgress: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, progress: ImportProgress) => callback(progress);
       ipcRenderer.on(ipcChannels.providersImportProgress, listener);
@@ -17,6 +19,13 @@ const api: IptvApi = {
   catalog: {
     listLiveChannels: (query, category) =>
       ipcRenderer.invoke(ipcChannels.catalogListLiveChannels, { query, category }),
+    listLiveCategories: () => ipcRenderer.invoke(ipcChannels.catalogListLiveCategories),
+    listMovies: (query, category) => ipcRenderer.invoke(ipcChannels.catalogListMovies, { query, category }),
+    listMovieCategories: () => ipcRenderer.invoke(ipcChannels.catalogListMovieCategories),
+    listSeries: (query, category) => ipcRenderer.invoke(ipcChannels.catalogListSeries, { query, category }),
+    listSeriesCategories: () => ipcRenderer.invoke(ipcChannels.catalogListSeriesCategories),
+    listEpisodesForSeries: (seriesId) => ipcRenderer.invoke(ipcChannels.catalogListEpisodesForSeries, seriesId),
+    listRecentlyWatched: () => ipcRenderer.invoke(ipcChannels.catalogListRecentlyWatched),
     toggleFavorite: (itemId, itemType) =>
       ipcRenderer.invoke(ipcChannels.catalogToggleFavorite, { itemId, itemType })
   },

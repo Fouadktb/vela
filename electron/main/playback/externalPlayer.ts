@@ -44,18 +44,23 @@ export async function openInExternalPlayer(
   if (!catalogRepository) {
     throw new Error("Catalog repository is required to open external playback");
   }
-  if (request.itemType !== "live") {
+  if (request.itemType !== "live" && request.itemType !== "movie" && request.itemType !== "episode") {
     throw new Error(`Unsupported external playback item type: ${request.itemType}`);
   }
 
-  const channel = catalogRepository.getLiveChannel(request.itemId);
-  if (!channel) {
-    throw new Error(`Live channel not found: ${request.itemId}`);
+  const item =
+    request.itemType === "live"
+      ? catalogRepository.getLiveChannel(request.itemId)
+      : request.itemType === "movie"
+        ? catalogRepository.getMovie(request.itemId)
+        : catalogRepository.getEpisode(request.itemId);
+  if (!item) {
+    throw new Error(`Catalog item not found: ${request.itemId}`);
   }
 
-  const url = channel.stream.url;
+  const url = item.stream.url;
   if (!url) {
-    throw new Error(`No playable stream for live channel: ${request.itemId}`);
+    throw new Error(`No playable stream for catalog item: ${request.itemId}`);
   }
 
   const player = process.env.IPTV_EXTERNAL_PLAYER || "mpv";
@@ -71,5 +76,5 @@ export async function openInExternalPlayer(
 
   await waitForExternalPlayerLaunch(child);
   child.unref();
-  catalogRepository.markRecentlyWatched(channel.id, "live");
+  catalogRepository.markRecentlyWatched(item.id, request.itemType);
 }

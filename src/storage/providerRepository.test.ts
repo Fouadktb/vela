@@ -35,6 +35,28 @@ describe("providerRepository", () => {
     expect(provider.updatedAt).toBe(provider.createdAt);
   });
 
+  it("stores and returns an xtream provider with server and credentials", () => {
+    const { repo } = createTestRepository();
+
+    const provider = repo.createXtream({
+      name: "Xtream Account",
+      serverUrl: "https://panel.example.test:8443",
+      username: "my-user",
+      password: "my-password"
+    });
+
+    expect(provider).toMatchObject({
+      type: "xtream",
+      name: "Xtream Account",
+      source: "https://panel.example.test:8443",
+      username: "my-user",
+      password: "my-password",
+      lastRefreshAt: null
+    });
+    expect(provider.id).toEqual(expect.any(String));
+    expect(repo.get(provider.id)).toEqual(provider);
+  });
+
   it("lists providers ordered by creation time ascending", () => {
     const { db, repo } = createTestRepository();
 
@@ -97,6 +119,14 @@ describe("providerRepository", () => {
       null,
       "2026-05-26T09:00:00.000Z"
     );
+    db.prepare("INSERT INTO favorites (item_id, item_type, created_at) VALUES (?, 'live', ?)").run(
+      `${provider.id}:live:news`,
+      "2026-05-26T09:01:00.000Z"
+    );
+    db.prepare("INSERT INTO recently_watched (item_id, item_type, last_watched_at) VALUES (?, 'live', ?)").run(
+      `${provider.id}:live:news`,
+      "2026-05-26T09:02:00.000Z"
+    );
 
     repo.delete(provider.id);
 
@@ -104,5 +134,7 @@ describe("providerRepository", () => {
     expect(db.prepare("SELECT COUNT(*) AS count FROM live_channels WHERE provider_id = ?").get(provider.id)).toEqual({
       count: 0
     });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM favorites").get()).toEqual({ count: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM recently_watched").get()).toEqual({ count: 0 });
   });
 });

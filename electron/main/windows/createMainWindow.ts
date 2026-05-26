@@ -1,8 +1,5 @@
 import { BrowserWindow } from "electron";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function createMainWindow(): BrowserWindow {
   const preloadPath = path.join(__dirname, "../../preload/index.js");
@@ -25,7 +22,9 @@ export function createMainWindow(): BrowserWindow {
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
     void window.loadURL(devServerUrl);
-    window.webContents.openDevTools({ mode: "detach" });
+    if (process.env.OPEN_DEVTOOLS === "1") {
+      window.webContents.openDevTools({ mode: "detach" });
+    }
   } else {
     void window.loadFile(path.join(__dirname, "../../../../dist/index.html"));
   }

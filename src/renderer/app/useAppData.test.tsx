@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LiveChannelView } from "../../shared/catalog/types";
+import type { LiveChannelView, RecentlyWatchedItemView } from "../../shared/catalog/types";
 import type { ImportProgress, ProviderSummary } from "../../shared/providers/types";
 import { useAppData } from "./useAppData";
 
@@ -9,10 +9,18 @@ const mockApi = vi.hoisted(() => ({
     list: vi.fn<() => Promise<ProviderSummary[]>>(),
     createM3u: vi.fn(),
     refresh: vi.fn(),
+    delete: vi.fn(),
     onImportProgress: vi.fn()
   },
   catalog: {
     listLiveChannels: vi.fn<(query: string, category: string | null) => Promise<LiveChannelView[]>>(),
+    listLiveCategories: vi.fn<() => Promise<string[]>>(),
+    listMovies: vi.fn(),
+    listMovieCategories: vi.fn(),
+    listSeries: vi.fn(),
+    listSeriesCategories: vi.fn(),
+    listEpisodesForSeries: vi.fn(),
+    listRecentlyWatched: vi.fn<() => Promise<RecentlyWatchedItemView[]>>(),
     toggleFavorite: vi.fn()
   },
   playback: {
@@ -76,6 +84,13 @@ describe("useAppData", () => {
     mockApi.catalog.listLiveChannels.mockImplementation(async (query) =>
       query ? [sportChannel] : [newsChannel, sportChannel]
     );
+    mockApi.catalog.listLiveCategories.mockResolvedValue(["News", "Sports"]);
+    mockApi.catalog.listMovies.mockResolvedValue([]);
+    mockApi.catalog.listMovieCategories.mockResolvedValue([]);
+    mockApi.catalog.listSeries.mockResolvedValue([]);
+    mockApi.catalog.listSeriesCategories.mockResolvedValue([]);
+    mockApi.catalog.listEpisodesForSeries.mockResolvedValue([]);
+    mockApi.catalog.listRecentlyWatched.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -93,7 +108,7 @@ describe("useAppData", () => {
     });
 
     await waitFor(() => expect(result.current.selectedChannel?.id).toBe(sportChannel.id));
-    expect(result.current.categories).toEqual(["Sports"]);
+    expect(result.current.categories).toEqual(["News", "Sports"]);
   });
 
   it("reloads providers and channels when an import completes", async () => {
@@ -113,6 +128,10 @@ describe("useAppData", () => {
 
     await waitFor(() => expect(mockApi.providers.list).toHaveBeenCalledTimes(2));
     expect(mockApi.catalog.listLiveChannels).toHaveBeenCalledTimes(2);
+    expect(mockApi.catalog.listLiveCategories).toHaveBeenCalledTimes(2);
+    expect(mockApi.catalog.listMovies).toHaveBeenCalledTimes(2);
+    expect(mockApi.catalog.listSeries).toHaveBeenCalledTimes(2);
+    expect(mockApi.catalog.listRecentlyWatched).toHaveBeenCalledTimes(2);
     expect(result.current.statusMessage).toBe("Import complete");
   });
 });
