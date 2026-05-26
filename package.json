@@ -3,21 +3,23 @@
   "version": "0.1.0",
   "description": "Desktop IPTV player for macOS and Windows",
   "private": true,
+  "packageManager": "pnpm@10.10.0",
   "type": "module",
   "main": "dist-electron/electron/main/index.js",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "dev:electron": "concurrently -k \"pnpm dev\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "dev:electron": "pnpm rebuild:native && concurrently -k \"pnpm dev\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "pnpm rebuild:node && vitest run",
+    "test:watch": "pnpm rebuild:node && vitest",
     "build:renderer": "vite build",
     "build:main": "tsc -p tsconfig.node.json",
     "build": "pnpm typecheck && pnpm test && pnpm build:renderer && pnpm build:main",
     "build:mac": "pnpm build && electron-builder --mac",
     "build:win": "pnpm build && electron-builder --win",
     "check:mpv": "node scripts/check-mpv.js",
-    "rebuild:native": "electron-builder install-app-deps"
+    "rebuild:native": "electron-builder install-app-deps",
+    "rebuild:node": "npm rebuild better-sqlite3 --loglevel=error"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.0",
@@ -47,7 +49,10 @@
   },
   "build": {
     "appId": "com.fouadktb.iptvplayer",
-    "productName": "IPTV Player"
+    "productName": "IPTV Player",
+    "directories": {
+      "output": "release"
+    }
   },
   "pnpm": {
     "overrides": {
