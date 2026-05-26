@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join, win32 } from "node:path";
-import type { PlaybackState, PlayRequest, SeekRequest } from "../../../src/shared/playback/types.js";
+import type { PlaybackState, PlaybackTrack, PlayRequest, SeekRequest } from "../../../src/shared/playback/types.js";
 import type { createCatalogRepository } from "../storage/catalogRepository.js";
 
 interface CreateMpvControllerOptions {
@@ -26,7 +26,23 @@ interface ResolveMpvExecutablePathOptions {
   existsSync(path: string): boolean;
 }
 
-type MpvIpcCommand = [string, ...Array<string | number | boolean>];
+type MpvIpcValue = string | number | boolean | null;
+type MpvIpcCommand = [string, ...MpvIpcValue[]];
+
+interface MpvIpcResponse<T> {
+  request_id?: number;
+  error?: string;
+  data?: T;
+}
+
+interface MpvRawTrack {
+  id?: unknown;
+  type?: unknown;
+  title?: unknown;
+  lang?: unknown;
+  default?: unknown;
+  selected?: unknown;
+}
 
 const maxDiagnosticLength = 300;
 const mpvIpcCommandTimeoutMs = 1_500;
@@ -146,6 +162,10 @@ export function buildMpvIpcCommand(command: MpvIpcCommand): string {
   return `${JSON.stringify({ command })}\n`;
 }
 
+function buildMpvIpcRequest(command: MpvIpcCommand, requestId: number): string {
+  return `${JSON.stringify({ command, request_id: requestId })}\n`;
+}
+
 export function buildMpvIpcPath(platform: NodeJS.Platform = process.platform, id: string = randomUUID()): string {
   if (platform === "win32") {
     return `\\\\.\\pipe\\iptv-player-mpv-${id}`;
@@ -167,10 +187,33 @@ export function sanitizePlaybackDiagnostic(message: string): string {
     .slice(0, maxDiagnosticLength);
 }
 
+export function toPlaybackTrackState(
+  rawTracks: MpvRawTrack[],
+  selectedAudioTrack: unknown,
+  selectedSubtitleTrack: unknown
+): Pick<PlaybackState, "audioTracks" | "subtitleTracks" | "selectedAudioTrackId" | "selectedSubtitleTrackId"> {
+  const selectedAudioTrackId = toTrackId(selectedAudioTrack);
+  const selectedSubtitleTrackId = toTrackId(selectedSubtitleTrack);
+  const audioTracks = rawTracks
+    .map((track) => toPlaybackTrack(track, "audio", selectedAudioTrackId))
+    .filter((track): track is PlaybackTrack => track !== null);
+  const subtitleTracks = rawTracks
+    .map((track) => toPlaybackTrack(track, "subtitle", selectedSubtitleTrackId))
+    .filter((track): track is PlaybackTrack => track !== null);
+
+  return {
+    audioTracks,
+    subtitleTracks,
+    selectedAudioTrackId,
+    selectedSubtitleTrackId
+  };
+}
+
 export function createMpvController(options: CreateMpvControllerOptions) {
   let processRef: ChildProcessWithoutNullStreams | null = null;
   let currentIpcPath: string | null = null;
   let state: PlaybackState = createIdleState();
+  let nextIpcRequestId = 1;
 
   const setState = (patch: Partial<PlaybackState>) => {
     state = { ...state, ...patch };
@@ -208,6 +251,83 @@ export function createMpvController(options: CreateMpvControllerOptions) {
         finish(error);
       });
     });
+  };
+
+  const sendCommandWithResponse = <T>(command: MpvIpcCommand): Promise<T | undefined> => {
+    if (!processRef || processRef.killed || !currentIpcPath) {
+      return Promise.resolve(undefined);
+    }
+
+    const ipcPath = currentIpcPath;
+    const requestId = nextIpcRequestId;
+    nextIpcRequestId += 1;
+
+    return new Promise((resolve, reject) => {
+      const socket = createConnection(ipcPath);
+      let buffer = "";
+      const timeout = setTimeout(() => {
+        socket.destroy();
+        reject(new Error("mpv IPC command timed out"));
+      }, mpvIpcCommandTimeoutMs);
+
+      const finish = (response?: MpvIpcResponse<T>, error?: Error) => {
+        clearTimeout(timeout);
+        socket.removeAllListeners();
+        socket.destroy();
+        if (error) {
+          reject(new Error("mpv IPC command failed"));
+          return;
+        }
+        if (response?.error && response.error !== "success") {
+          reject(new Error("mpv IPC command failed"));
+          return;
+        }
+        resolve(response?.data);
+      };
+
+      socket.on("data", (chunk: Buffer) => {
+        buffer += chunk.toString("utf8");
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.trim()) {
+            continue;
+          }
+
+          let response: MpvIpcResponse<T>;
+          try {
+            response = JSON.parse(line) as MpvIpcResponse<T>;
+          } catch {
+            continue;
+          }
+
+          if (response.request_id === requestId) {
+            finish(response);
+            return;
+          }
+        }
+      });
+      socket.once("connect", () => {
+        socket.write(buildMpvIpcRequest(command, requestId));
+      });
+      socket.once("error", (error) => {
+        finish(undefined, error);
+      });
+    });
+  };
+
+  const refreshTrackState = async (): Promise<void> => {
+    try {
+      const rawTracks = (await sendCommandWithResponse<unknown>(["get_property", "track-list"])) ?? [];
+      const selectedAudioTrack = await sendCommandWithResponse<unknown>(["get_property", "aid"]);
+      const selectedSubtitleTrack = await sendCommandWithResponse<unknown>(["get_property", "sid"]);
+      if (Array.isArray(rawTracks)) {
+        setState(toPlaybackTrackState(rawTracks as MpvRawTrack[], selectedAudioTrack, selectedSubtitleTrack));
+      }
+    } catch {
+      // Track metadata is best-effort because mpv may not expose IPC immediately after spawn.
+    }
   };
 
   const terminateProcess = (): void => {
@@ -253,6 +373,10 @@ export function createMpvController(options: CreateMpvControllerOptions) {
       positionSeconds: 0,
       durationSeconds: null,
       isSeekable: itemType !== "live",
+      audioTracks: [],
+      subtitleTracks: [],
+      selectedAudioTrackId: null,
+      selectedSubtitleTrackId: null,
       errorMessage: null
     });
 
@@ -286,6 +410,7 @@ export function createMpvController(options: CreateMpvControllerOptions) {
     mpvProcess.once("spawn", () => {
       options.catalogRepository.markRecentlyWatched(item.id, itemType);
       setState({ status: "playing" });
+      setTimeout(() => void refreshTrackState(), 350);
     });
 
     mpvProcess.once("error", (error) => {
@@ -334,6 +459,14 @@ export function createMpvController(options: CreateMpvControllerOptions) {
         await sendCommand(["seek", request.offsetSeconds, "relative"]);
       }
     },
+    async selectAudioTrack(trackId: number): Promise<void> {
+      await sendCommandWithResponse(["set_property", "aid", trackId]);
+      await refreshTrackState();
+    },
+    async selectSubtitleTrack(trackId: number | null): Promise<void> {
+      await sendCommandWithResponse(["set_property", "sid", trackId ?? "no"]);
+      await refreshTrackState();
+    },
     getState(): PlaybackState {
       return state;
     }
@@ -349,6 +482,59 @@ export function createMpvController(options: CreateMpvControllerOptions) {
 
     return options.catalogRepository.getEpisode(itemId);
   }
+}
+
+function toPlaybackTrack(
+  rawTrack: MpvRawTrack,
+  expectedType: PlaybackTrack["type"],
+  selectedTrackId: number | null
+): PlaybackTrack | null {
+  const id = toTrackId(rawTrack.id);
+  if (id === null) {
+    return null;
+  }
+
+  const trackType = rawTrack.type === "audio" ? "audio" : rawTrack.type === "sub" ? "subtitle" : null;
+  if (trackType !== expectedType) {
+    return null;
+  }
+
+  const language = typeof rawTrack.lang === "string" && rawTrack.lang.trim() ? rawTrack.lang.trim() : null;
+  const title = toTrackTitle(rawTrack.title, language, trackType, id);
+
+  return {
+    id,
+    type: trackType,
+    title,
+    language,
+    isDefault: rawTrack.default === true,
+    isSelected: rawTrack.selected === true || selectedTrackId === id
+  };
+}
+
+function toTrackId(value: unknown): number | null {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    const parsed = Number.parseInt(value, 10);
+    return parsed > 0 ? parsed : null;
+  }
+
+  return null;
+}
+
+function toTrackTitle(rawTitle: unknown, language: string | null, trackType: PlaybackTrack["type"], id: number): string {
+  if (typeof rawTitle === "string" && rawTitle.trim()) {
+    return rawTitle.trim();
+  }
+
+  if (language) {
+    return language;
+  }
+
+  return trackType === "audio" ? `Audio ${id}` : `Subtitle ${id}`;
 }
 
 function buildOscScriptOptions(): string {
@@ -381,23 +567,25 @@ function buildPlatformMpvArgs(platform: NodeJS.Platform): string[] {
 }
 
 function getBundledMpvCandidates(resourcesPath: string, platform: NodeJS.Platform): string[] {
+  const pathJoin = platform === "win32" ? win32.join : join;
   if (platform === "win32") {
     return [
-      join(resourcesPath, "bin", "mpv", "win32", "mpv.exe"),
-      join(resourcesPath, "bin", "mpv.exe")
+      pathJoin(resourcesPath, "bin", "mpv", "win32", "mpv.exe"),
+      pathJoin(resourcesPath, "bin", "mpv.exe")
     ];
   }
 
   if (platform === "darwin") {
     return [
-      join(resourcesPath, "bin", "mpv", "darwin", "mpv"),
-      join(resourcesPath, "bin", "mpv")
+      pathJoin(resourcesPath, "bin", "mpv", "darwin", "mpv.app", "Contents", "MacOS", "mpv"),
+      pathJoin(resourcesPath, "bin", "mpv", "darwin", "mpv"),
+      pathJoin(resourcesPath, "bin", "mpv")
     ];
   }
 
   return [
-    join(resourcesPath, "bin", "mpv", platform, "mpv"),
-    join(resourcesPath, "bin", "mpv")
+    pathJoin(resourcesPath, "bin", "mpv", platform, "mpv"),
+    pathJoin(resourcesPath, "bin", "mpv")
   ];
 }
 
@@ -433,6 +621,10 @@ function createIdleState(): PlaybackState {
     positionSeconds: 0,
     durationSeconds: null,
     isSeekable: false,
+    audioTracks: [],
+    subtitleTracks: [],
+    selectedAudioTrackId: null,
+    selectedSubtitleTrackId: null,
     errorMessage: null
   };
 }

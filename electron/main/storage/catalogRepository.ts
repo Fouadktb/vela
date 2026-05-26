@@ -1,10 +1,15 @@
 import type {
+  CategoryContentType,
+  CategoryView,
   Episode,
   LiveChannel,
+  LiveProgram,
+  LiveProgramView,
   Movie,
   RecentlyWatchedItemView,
   Series
 } from "../../../src/shared/catalog/types.js";
+import { toLiveProgramView } from "../../../src/shared/catalog/types.js";
 import type { SqliteDatabase } from "./database.js";
 
 interface LiveChannelRow {
@@ -63,6 +68,24 @@ interface RecentlyWatchedRow {
   subtitle: string;
   artwork_url: string | null;
   last_watched_at: string;
+}
+
+interface CategoryViewRow {
+  content_type: CategoryContentType;
+  category: string;
+  item_count: number;
+  is_pinned: 0 | 1;
+  sort_order: number | null;
+}
+
+interface LiveProgramRow {
+  id: string;
+  provider_id: string;
+  channel_id: string;
+  title: string;
+  description: string | null;
+  start_at: string;
+  end_at: string;
 }
 
 export function createCatalogRepository(db: SqliteDatabase) {
@@ -125,6 +148,20 @@ export function createCatalogRepository(db: SqliteDatabase) {
       stream_json = excluded.stream_json,
       last_seen_at = excluded.last_seen_at,
       stale = 0
+  `);
+  const upsertLiveProgramStatement = db.prepare(`
+    INSERT INTO live_programs (
+      id, provider_id, channel_id, title, description, start_at, end_at
+    ) VALUES (
+      @id, @providerId, @channelId, @title, @description, @startAt, @endAt
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      provider_id = excluded.provider_id,
+      channel_id = excluded.channel_id,
+      title = excluded.title,
+      description = excluded.description,
+      start_at = excluded.start_at,
+      end_at = excluded.end_at
   `);
 
   const runLiveChannelUpserts = (channels: LiveChannel[]) => {
@@ -226,16 +263,125 @@ export function createCatalogRepository(db: SqliteDatabase) {
       return rows.map(toLiveChannel);
     },
     listLiveCategories(): string[] {
+      return this.listCategoryViews("live").map((category) => category.name);
+    },
+    listCategoryViews(contentType: CategoryContentType): CategoryView[] {
+      const tableName = getCategoryTableName(contentType);
       const rows = db.prepare(`
-        SELECT category
-        FROM live_channels
-        WHERE stale = 0
-          AND trim(category) <> ''
-        GROUP BY category
-        ORDER BY lower(category) ASC
-      `).all() as Array<{ category: string }>;
+        SELECT
+          ? AS content_type,
+          ${tableName}.category AS category,
+          count(*) AS item_count,
+          coalesce(category_preferences.is_pinned, 0) AS is_pinned,
+          CASE
+            WHEN coalesce(category_preferences.is_pinned, 0) = 1 THEN category_preferences.sort_order
+            ELSE NULL
+          END AS sort_order
+        FROM ${tableName}
+        LEFT JOIN category_preferences
+          ON category_preferences.provider_id = '*'
+          AND category_preferences.content_type = ?
+          AND category_preferences.category = ${tableName}.category
+        WHERE ${tableName}.stale = 0
+          AND trim(${tableName}.category) <> ''
+        GROUP BY ${tableName}.category
+        ORDER BY
+          is_pinned DESC,
+          CASE WHEN is_pinned = 1 THEN coalesce(sort_order, 999999) ELSE 999999 END ASC,
+          lower(${tableName}.category) ASC
+      `).all(contentType, contentType) as CategoryViewRow[];
 
-      return rows.map((row) => row.category);
+      return rows.map(toCategoryView);
+    },
+    toggleCategoryPin(contentType: CategoryContentType, category: string): void {
+      const normalizedCategory = category.trim();
+      if (!normalizedCategory) {
+        return;
+      }
+
+      const existing = db.prepare(`
+        SELECT is_pinned
+        FROM category_preferences
+        WHERE provider_id = '*'
+          AND content_type = ?
+          AND category = ?
+      `).get(contentType, normalizedCategory) as { is_pinned: 0 | 1 } | undefined;
+      const nowIso = new Date().toISOString();
+
+      if (existing?.is_pinned === 1) {
+        db.prepare(`
+          UPDATE category_preferences
+          SET is_pinned = 0, sort_order = NULL, updated_at = ?
+          WHERE provider_id = '*'
+            AND content_type = ?
+            AND category = ?
+        `).run(nowIso, contentType, normalizedCategory);
+        return;
+      }
+
+      const nextOrderRow = db.prepare(`
+        SELECT coalesce(max(sort_order) + 1, 0) AS next_order
+        FROM category_preferences
+        WHERE provider_id = '*'
+          AND content_type = ?
+          AND is_pinned = 1
+      `).get(contentType) as { next_order: number };
+
+      db.prepare(`
+        INSERT INTO category_preferences (
+          provider_id, content_type, category, is_pinned, sort_order, updated_at
+        ) VALUES (
+          '*', ?, ?, 1, ?, ?
+        )
+        ON CONFLICT(provider_id, content_type, category) DO UPDATE SET
+          is_pinned = 1,
+          sort_order = excluded.sort_order,
+          updated_at = excluded.updated_at
+      `).run(contentType, normalizedCategory, nextOrderRow.next_order, nowIso);
+    },
+    reorderPinnedCategories(contentType: CategoryContentType, categories: string[]): void {
+      const normalizedCategories = Array.from(new Set(categories.map((category) => category.trim()).filter(Boolean)));
+      const nowIso = new Date().toISOString();
+      const transaction = db.transaction((items: string[]) => {
+        if (items.length === 0) {
+          db.prepare(`
+            UPDATE category_preferences
+            SET is_pinned = 0, sort_order = NULL, updated_at = ?
+            WHERE provider_id = '*'
+              AND content_type = ?
+              AND is_pinned = 1
+          `).run(nowIso, contentType);
+          return;
+        }
+
+        const placeholders = items.map(() => "?").join(",");
+        db.prepare(`
+          UPDATE category_preferences
+          SET is_pinned = 0, sort_order = NULL, updated_at = ?
+          WHERE provider_id = '*'
+            AND content_type = ?
+            AND is_pinned = 1
+            AND category NOT IN (${placeholders})
+        `).run(nowIso, contentType, ...items);
+
+        const upsertPreference = db.prepare(`
+          INSERT INTO category_preferences (
+            provider_id, content_type, category, is_pinned, sort_order, updated_at
+          ) VALUES (
+            '*', ?, ?, 1, ?, ?
+          )
+          ON CONFLICT(provider_id, content_type, category) DO UPDATE SET
+            is_pinned = 1,
+            sort_order = excluded.sort_order,
+            updated_at = excluded.updated_at
+        `);
+
+        items.forEach((item, index) => {
+          upsertPreference.run(contentType, item, index, nowIso);
+        });
+      });
+
+      transaction(normalizedCategories);
     },
     replaceMoviesForProvider(providerId: string, movies: Movie[]): void {
       const transaction = db.transaction((items: Movie[]) => {
@@ -270,7 +416,7 @@ export function createCatalogRepository(db: SqliteDatabase) {
       return rows.map(toMovie);
     },
     listMovieCategories(): string[] {
-      return listCategories("movies");
+      return this.listCategoryViews("movie").map((category) => category.name);
     },
     getMovie(itemId: string): Movie | null {
       const row = db.prepare(`
@@ -320,7 +466,7 @@ export function createCatalogRepository(db: SqliteDatabase) {
       return rows.map(toSeries);
     },
     listSeriesCategories(): string[] {
-      return listCategories("series");
+      return this.listCategoryViews("series").map((category) => category.name);
     },
     getSeries(itemId: string): Series | null {
       const row = db.prepare(`
@@ -475,21 +621,65 @@ export function createCatalogRepository(db: SqliteDatabase) {
       `).all() as RecentlyWatchedRow[];
 
       return rows.map(toRecentlyWatchedItemView);
+    },
+    replaceLiveProgramsForChannel(providerId: string, channelId: string, programs: LiveProgram[]): void {
+      const transaction = db.transaction((items: LiveProgram[]) => {
+        for (const item of items) {
+          if (item.providerId !== providerId || item.channelId !== channelId) {
+            throw new Error("Cannot replace live programs across providers or channels");
+          }
+        }
+
+        db.prepare("DELETE FROM live_programs WHERE provider_id = ? AND channel_id = ?").run(providerId, channelId);
+        for (const item of items) {
+          upsertLiveProgramStatement.run({
+            id: item.id,
+            providerId: item.providerId,
+            channelId: item.channelId,
+            title: item.title,
+            description: item.description,
+            startAt: item.startAt,
+            endAt: item.endAt
+          });
+        }
+      });
+
+      transaction(programs);
+    },
+    listLiveProgramsForChannel(channelId: string, nowIso: string = new Date().toISOString()): LiveProgramView[] {
+      const rows = db.prepare(`
+        SELECT *
+        FROM live_programs
+        WHERE channel_id = ?
+          AND end_at > ?
+        ORDER BY start_at ASC
+        LIMIT 24
+      `).all(channelId, nowIso) as LiveProgramRow[];
+
+      return rows.map(toLiveProgram).map((program) => toLiveProgramView(program, nowIso));
     }
   };
+}
 
-  function listCategories(tableName: "movies" | "series"): string[] {
-    const rows = db.prepare(`
-      SELECT category
-      FROM ${tableName}
-      WHERE stale = 0
-        AND trim(category) <> ''
-      GROUP BY category
-      ORDER BY lower(category) ASC
-    `).all() as Array<{ category: string }>;
-
-    return rows.map((row) => row.category);
+function getCategoryTableName(contentType: CategoryContentType): "live_channels" | "movies" | "series" {
+  if (contentType === "live") {
+    return "live_channels";
   }
+  if (contentType === "movie") {
+    return "movies";
+  }
+
+  return "series";
+}
+
+function toCategoryView(row: CategoryViewRow): CategoryView {
+  return {
+    contentType: row.content_type,
+    name: row.category,
+    itemCount: row.item_count,
+    isPinned: row.is_pinned === 1,
+    sortOrder: row.is_pinned === 1 ? row.sort_order : null
+  };
 }
 
 function toLiveChannel(row: LiveChannelRow): LiveChannel {
@@ -548,6 +738,18 @@ function toEpisode(row: EpisodeRow): Episode {
     durationSeconds: row.duration_seconds,
     progressSeconds: row.progress_seconds,
     stream: JSON.parse(row.stream_json) as Episode["stream"]
+  };
+}
+
+function toLiveProgram(row: LiveProgramRow): LiveProgram {
+  return {
+    id: row.id,
+    providerId: row.provider_id,
+    channelId: row.channel_id,
+    title: row.title,
+    description: row.description,
+    startAt: row.start_at,
+    endAt: row.end_at
   };
 }
 

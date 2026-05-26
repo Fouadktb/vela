@@ -92,6 +92,26 @@ export function createSchema(db: SqliteDatabase): void {
       PRIMARY KEY (item_id, item_type)
     );
 
+    CREATE TABLE IF NOT EXISTS category_preferences (
+      provider_id TEXT NOT NULL DEFAULT '*',
+      content_type TEXT NOT NULL,
+      category TEXT NOT NULL,
+      is_pinned INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (provider_id, content_type, category)
+    );
+
+    CREATE TABLE IF NOT EXISTS live_programs (
+      id TEXT PRIMARY KEY,
+      provider_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      start_at TEXT NOT NULL,
+      end_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_live_channels_provider ON live_channels(provider_id);
     CREATE INDEX IF NOT EXISTS idx_live_channels_category ON live_channels(category);
     CREATE INDEX IF NOT EXISTS idx_live_channels_name ON live_channels(name);
@@ -105,5 +125,8 @@ export function createSchema(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_episodes_series ON episodes(series_id);
     CREATE INDEX IF NOT EXISTS idx_episodes_order ON episodes(series_id, season_number, episode_number);
     CREATE INDEX IF NOT EXISTS idx_recently_watched_last ON recently_watched(last_watched_at);
+    CREATE INDEX IF NOT EXISTS idx_category_preferences_lookup ON category_preferences(provider_id, content_type, is_pinned, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_live_programs_channel_start ON live_programs(channel_id, start_at);
+    CREATE INDEX IF NOT EXISTS idx_live_programs_provider ON live_programs(provider_id);
   `);
 }

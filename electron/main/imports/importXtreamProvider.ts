@@ -1,4 +1,5 @@
-import type { Episode, LiveChannel, Movie, Series } from "../../../src/shared/catalog/types.js";
+import { Buffer } from "node:buffer";
+import type { Episode, LiveChannel, LiveProgram, Movie, Series } from "../../../src/shared/catalog/types.js";
 import {
   buildXtreamApiUrl,
   buildXtreamLiveStreamUrl,
@@ -18,6 +19,10 @@ interface ImportXtreamProviderDeps {
 }
 
 interface ImportXtreamSeriesEpisodesDeps {
+  catalogRepository: ReturnType<typeof createCatalogRepository>;
+}
+
+interface ImportXtreamLiveProgramsDeps {
   catalogRepository: ReturnType<typeof createCatalogRepository>;
 }
 
@@ -68,6 +73,22 @@ interface XtreamEpisodeResponse {
 interface XtreamEpisodeInfoResponse {
   duration?: unknown;
   duration_secs?: unknown;
+}
+
+interface XtreamShortEpgResponse {
+  epg_listings?: unknown;
+}
+
+interface XtreamEpgListingResponse {
+  id?: unknown;
+  title?: unknown;
+  description?: unknown;
+  start?: unknown;
+  end?: unknown;
+  stop?: unknown;
+  start_timestamp?: unknown;
+  stop_timestamp?: unknown;
+  end_timestamp?: unknown;
 }
 
 type XtreamFailureKind =
@@ -171,6 +192,27 @@ export async function importXtreamSeriesEpisodes(
 
     deps.catalogRepository.replaceEpisodesForSeries(provider.id, series.id, episodes);
     return episodes;
+  } catch (error) {
+    throw new Error(toSafeXtreamImportErrorMessage(error));
+  }
+}
+
+export async function importXtreamLivePrograms(
+  provider: Provider,
+  channel: LiveChannel,
+  deps: ImportXtreamLiveProgramsDeps
+): Promise<LiveProgram[]> {
+  try {
+    const account = toXtreamAccount(provider);
+    const streamId = toXtreamLiveStreamId(channel);
+    const data = await loadXtreamJson(account, "get_short_epg", { stream_id: streamId, limit: "12" });
+    const listings = flattenXtreamEpgListings(data);
+    const programs = listings
+      .map((listing) => toLiveProgram(provider.id, channel.id, streamId, listing))
+      .filter((program): program is LiveProgram => program !== null);
+
+    deps.catalogRepository.replaceLiveProgramsForChannel(provider.id, channel.id, programs);
+    return programs;
   } catch (error) {
     throw new Error(toSafeXtreamImportErrorMessage(error));
   }
@@ -315,6 +357,22 @@ function toXtreamSeriesStreamId(series: Series): string {
   }
 
   return streamId;
+}
+
+function toXtreamLiveStreamId(channel: LiveChannel): string {
+  const streamId = toNonEmptyString(channel.stream.streamId);
+  if (streamId) {
+    return streamId;
+  }
+
+  const marker = ":live:";
+  const markerIndex = channel.id.indexOf(marker);
+  const fallbackStreamId = markerIndex >= 0 ? channel.id.slice(markerIndex + marker.length) : "";
+  if (!fallbackStreamId) {
+    throw new XtreamImportFailure("invalid-source");
+  }
+
+  return fallbackStreamId;
 }
 
 function toLiveChannel(
@@ -489,6 +547,53 @@ function flattenXtreamEpisodes(data: unknown): Array<{ episode: XtreamEpisodeRes
   return episodes;
 }
 
+function flattenXtreamEpgListings(data: unknown): XtreamEpgListingResponse[] {
+  if (Array.isArray(data)) {
+    return data.filter(isRecord);
+  }
+
+  if (!isRecord(data)) {
+    throw new XtreamImportFailure("unexpected-response");
+  }
+
+  const rawListings = (data as XtreamShortEpgResponse).epg_listings;
+  return Array.isArray(rawListings) ? rawListings.filter(isRecord) : [];
+}
+
+function toLiveProgram(
+  providerId: string,
+  channelId: string,
+  streamId: string,
+  listing: XtreamEpgListingResponse
+): LiveProgram | null {
+  const startAt =
+    toIsoFromUnixSeconds(listing.start_timestamp) ??
+    toIsoFromXtreamDate(listing.start);
+  const endAt =
+    toIsoFromUnixSeconds(listing.stop_timestamp) ??
+    toIsoFromUnixSeconds(listing.end_timestamp) ??
+    toIsoFromXtreamDate(listing.end) ??
+    toIsoFromXtreamDate(listing.stop);
+
+  if (!startAt || !endAt || endAt <= startAt) {
+    return null;
+  }
+
+  const title = decodeMaybeBase64(listing.title) ?? "Program";
+  const description = decodeMaybeBase64(listing.description);
+  const rawId = toNonEmptyString(listing.start_timestamp) ?? toNonEmptyString(listing.id) ?? startAt;
+
+  return {
+    id: `${providerId}:live:${streamId}:${rawId}`,
+    providerId,
+    channelId,
+    title,
+    description,
+    startAt,
+    endAt
+  };
+}
+
 function isInvalidLoginResponse(value: unknown): boolean {
   if (!isRecord(value)) {
     return false;
@@ -582,6 +687,51 @@ function toDurationSeconds(value: unknown): number | null {
   }
 
   return null;
+}
+
+function toIsoFromUnixSeconds(value: unknown): string | null {
+  const text = toNonEmptyString(value);
+  if (!text || !/^\d+$/.test(text)) {
+    return null;
+  }
+
+  const date = new Date(Number.parseInt(text, 10) * 1000);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function toIsoFromXtreamDate(value: unknown): string | null {
+  const text = toNonEmptyString(value);
+  if (!text) {
+    return null;
+  }
+
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(text) ? `${text.replace(" ", "T")}Z` : text;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function decodeMaybeBase64(value: unknown): string | null {
+  const text = toNonEmptyString(value);
+  if (!text) {
+    return null;
+  }
+
+  const normalized = text.replace(/\s+/g, "");
+  const looksBase64 = normalized.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(normalized);
+  if (!looksBase64) {
+    return text;
+  }
+
+  try {
+    const decoded = Buffer.from(normalized, "base64").toString("utf8").trim();
+    if (decoded && !decoded.includes("\uFFFD") && /[\p{L}\p{N}]/u.test(decoded)) {
+      return decoded;
+    }
+  } catch {
+    return text;
+  }
+
+  return text;
 }
 
 function formatCount(count: number, singular: string, plural: string = `${singular}s`): string {

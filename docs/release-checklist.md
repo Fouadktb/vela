@@ -16,6 +16,8 @@ Use this checklist for every local release candidate before creating a GitHub Re
 - Run `pnpm test`.
 - Run `pnpm check:mpv`.
 - Run `pnpm build`.
+- Run `pnpm prepare:mpv -- --platform=darwin` before a macOS package.
+- Run `pnpm prepare:mpv -- --platform=win32 --arch=x64` before a Windows package.
 - Import a known legal sample M3U playlist.
 - Confirm the imported playlist appears in the live catalog.
 - Start playback for a legal sample stream.
@@ -25,8 +27,10 @@ Use this checklist for every local release candidate before creating a GitHub Re
 ## Local Builds
 
 - On macOS, run `pnpm build:mac`.
+- Confirm the packaged app contains `Contents/Resources/bin/mpv/darwin/mpv.app/Contents/MacOS/mpv`.
 - Install the macOS artifact locally and confirm the app launches.
 - On Windows, run `pnpm build:win`.
+- Confirm the packaged app contains `resources/bin/mpv/win32/mpv.exe`.
 - Install the Windows artifact locally and confirm the app launches.
 - Check that generated artifacts are written under `release/`.
 

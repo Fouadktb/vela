@@ -9,6 +9,8 @@ const mockApi = vi.hoisted(() => ({
     pause: vi.fn(),
     stop: vi.fn(),
     seek: vi.fn(),
+    selectAudioTrack: vi.fn(),
+    selectSubtitleTrack: vi.fn(),
     openExternal: vi.fn(),
     getState: vi.fn(),
     onState: vi.fn()
@@ -27,6 +29,10 @@ const playingState: PlaybackState = {
   positionSeconds: 0,
   durationSeconds: null,
   isSeekable: true,
+  audioTracks: [],
+  subtitleTracks: [],
+  selectedAudioTrackId: null,
+  selectedSubtitleTrackId: null,
   errorMessage: null
 };
 
@@ -202,6 +208,51 @@ describe("PlayerControls", () => {
     fireEvent.keyDown(window, { key: "ArrowLeft" });
 
     expect(mockApi.playback.seek).toHaveBeenCalledWith({ offsetSeconds: -10 });
+  });
+
+  it("opens track menus and selects audio and subtitle tracks", async () => {
+    mockApi.playback.getState.mockResolvedValue({
+      ...playingState,
+      audioTracks: [
+        {
+          id: 1,
+          type: "audio",
+          title: "English Stereo",
+          language: "eng",
+          isDefault: true,
+          isSelected: true
+        },
+        {
+          id: 2,
+          type: "audio",
+          title: "Director Commentary",
+          language: "eng",
+          isDefault: false,
+          isSelected: false
+        }
+      ],
+      subtitleTracks: [
+        {
+          id: 3,
+          type: "subtitle",
+          title: "English CC",
+          language: "eng",
+          isDefault: false,
+          isSelected: true
+        }
+      ],
+      selectedAudioTrackId: 1,
+      selectedSubtitleTrackId: 3
+    });
+    render(<PlayerControls />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Audio: English Stereo" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Director Commentary" }));
+    fireEvent.click(screen.getByRole("button", { name: "Subtitles: English CC" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Subtitles off" }));
+
+    expect(mockApi.playback.selectAudioTrack).toHaveBeenCalledWith(2);
+    expect(mockApi.playback.selectSubtitleTrack).toHaveBeenCalledWith(null);
   });
 });
 

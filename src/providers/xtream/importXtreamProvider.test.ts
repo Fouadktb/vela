@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { importXtreamProvider, importXtreamSeriesEpisodes } from "../../../electron/main/imports/importXtreamProvider.js";
-import type { Series } from "../../shared/catalog/types.js";
+import {
+  importXtreamLivePrograms,
+  importXtreamProvider,
+  importXtreamSeriesEpisodes
+} from "../../../electron/main/imports/importXtreamProvider.js";
+import type { LiveChannel, Series } from "../../shared/catalog/types.js";
 import type { ImportProgress, Provider } from "../../shared/providers/types.js";
 
 describe("importXtreamProvider", () => {
@@ -194,6 +198,51 @@ describe("importXtreamProvider", () => {
     ]);
     expect(replaceEpisodesForSeries).toHaveBeenCalledWith("provider-xtream", "provider-xtream:series:789", episodes);
   });
+
+  it("imports short EPG programs for a selected live channel on demand", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          epg_listings: [
+            {
+              id: "program-1",
+              title: Buffer.from("Midday News", "utf8").toString("base64"),
+              description: Buffer.from("Headlines and weather.", "utf8").toString("base64"),
+              start_timestamp: "1779796800",
+              stop_timestamp: "1779798600"
+            }
+          ]
+        }),
+        { status: 200 }
+      )
+    );
+    const replaceLiveProgramsForChannel = vi.fn();
+
+    const programs = await importXtreamLivePrograms(xtreamProvider(), liveChannel(), {
+      catalogRepository: { replaceLiveProgramsForChannel } as never
+    });
+
+    expect(fetch).toHaveBeenCalledWith(
+      "https://panel.example.test/player_api.php?username=user&password=pass&action=get_short_epg&stream_id=123&limit=12",
+      expect.any(Object)
+    );
+    expect(programs).toEqual([
+      {
+        id: "provider-xtream:live:123:1779796800",
+        providerId: "provider-xtream",
+        channelId: "provider-xtream:live:123",
+        title: "Midday News",
+        description: "Headlines and weather.",
+        startAt: "2026-05-26T12:00:00.000Z",
+        endAt: "2026-05-26T12:30:00.000Z"
+      }
+    ]);
+    expect(replaceLiveProgramsForChannel).toHaveBeenCalledWith(
+      "provider-xtream",
+      "provider-xtream:live:123",
+      programs
+    );
+  });
 });
 
 function xtreamProvider(): Provider {
@@ -218,6 +267,26 @@ function series(): Series {
     title: "City Series",
     posterUrl: null,
     category: "Series",
+    lastSeenAt: "2026-05-26T08:00:00.000Z",
+    isFavorite: false
+  };
+}
+
+function liveChannel(): LiveChannel {
+  return {
+    type: "live",
+    id: "provider-xtream:live:123",
+    providerId: "provider-xtream",
+    name: "City News",
+    logoUrl: null,
+    category: "News",
+    stream: {
+      providerType: "xtream",
+      url: "https://panel.example.test/live/user/pass/123.ts",
+      streamId: "123",
+      containerExtension: "ts"
+    },
+    epgChannelId: "city.news",
     lastSeenAt: "2026-05-26T08:00:00.000Z",
     isFavorite: false
   };

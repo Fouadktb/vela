@@ -20,6 +20,12 @@ const api: IptvApi = {
     listLiveChannels: (query, category) =>
       ipcRenderer.invoke(ipcChannels.catalogListLiveChannels, { query, category }),
     listLiveCategories: () => ipcRenderer.invoke(ipcChannels.catalogListLiveCategories),
+    listCategoryViews: (contentType) => ipcRenderer.invoke(ipcChannels.catalogListCategoryViews, contentType),
+    toggleCategoryPin: (contentType, category) =>
+      ipcRenderer.invoke(ipcChannels.catalogToggleCategoryPin, { contentType, category }),
+    reorderPinnedCategories: (contentType, categories) =>
+      ipcRenderer.invoke(ipcChannels.catalogReorderPinnedCategories, { contentType, categories }),
+    listLivePrograms: (channelId) => ipcRenderer.invoke(ipcChannels.catalogListLivePrograms, channelId),
     listMovies: (query, category) => ipcRenderer.invoke(ipcChannels.catalogListMovies, { query, category }),
     listMovieCategories: () => ipcRenderer.invoke(ipcChannels.catalogListMovieCategories),
     listSeries: (query, category) => ipcRenderer.invoke(ipcChannels.catalogListSeries, { query, category }),
@@ -34,6 +40,8 @@ const api: IptvApi = {
     pause: () => ipcRenderer.invoke(ipcChannels.playbackPause),
     stop: () => ipcRenderer.invoke(ipcChannels.playbackStop),
     seek: (request) => ipcRenderer.invoke(ipcChannels.playbackSeek, request),
+    selectAudioTrack: (trackId) => ipcRenderer.invoke(ipcChannels.playbackSelectAudioTrack, trackId),
+    selectSubtitleTrack: (trackId) => ipcRenderer.invoke(ipcChannels.playbackSelectSubtitleTrack, trackId),
     openExternal: (request) => ipcRenderer.invoke(ipcChannels.playbackOpenExternal, request),
     getState: () => ipcRenderer.invoke(ipcChannels.playbackGetState),
     onState: (callback) => {

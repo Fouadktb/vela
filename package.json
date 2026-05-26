@@ -15,8 +15,9 @@
     "build:renderer": "vite build",
     "build:main": "tsc -p tsconfig.node.json",
     "build": "pnpm typecheck && pnpm test && pnpm build:renderer && pnpm build:main && pnpm check:preload",
-    "build:mac": "pnpm build && electron-builder --mac",
-    "build:win": "pnpm build && electron-builder --win",
+    "prepare:mpv": "node scripts/prepare-mpv.cjs",
+    "build:mac": "pnpm prepare:mpv -- --platform=darwin && pnpm build && electron-builder --mac",
+    "build:win": "pnpm prepare:mpv -- --platform=win32 --arch=x64 && pnpm build && electron-builder --win",
     "check:mpv": "node scripts/check-mpv.js",
     "check:preload": "node scripts/check-preload.cjs",
     "rebuild:native": "electron-builder install-app-deps",
@@ -31,6 +32,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "7zip-bin": "^5.2.0",
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.1.0",
     "@types/better-sqlite3": "^7.6.0",
@@ -55,10 +57,47 @@
     "directories": {
       "output": "release"
     },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json"
+    ],
     "mac": {
       "identity": null,
       "hardenedRuntime": false,
-      "gatekeeperAssess": false
+      "gatekeeperAssess": false,
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "extraResources": [
+        {
+          "from": "vendor/mpv/darwin",
+          "to": "bin/mpv/darwin",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "extraResources": [
+        {
+          "from": "vendor/mpv/win32",
+          "to": "bin/mpv/win32",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
     }
   },
   "pnpm": {

@@ -1,5 +1,6 @@
 export type CatalogItemType = "live" | "movie" | "series" | "episode";
 export type PlayableCatalogItemType = Exclude<CatalogItemType, "series">;
+export type CategoryContentType = "live" | "movie" | "series";
 
 export interface StreamResolverData {
   providerType: "m3u" | "xtream";
@@ -19,6 +20,36 @@ export interface LiveChannel {
   epgChannelId: string | null;
   lastSeenAt: string;
   isFavorite: boolean;
+}
+
+export interface CategoryView {
+  contentType: CategoryContentType;
+  name: string;
+  itemCount: number;
+  isPinned: boolean;
+  sortOrder: number | null;
+}
+
+export interface LiveProgram {
+  id: string;
+  providerId: string;
+  channelId: string;
+  title: string;
+  description: string | null;
+  startAt: string;
+  endAt: string;
+}
+
+export type LiveProgramView = Omit<LiveProgram, "providerId"> & {
+  isCurrent: boolean;
+};
+
+export function toLiveProgramView(program: LiveProgram, nowIso: string = new Date().toISOString()): LiveProgramView {
+  const { providerId: _providerId, ...view } = program;
+  return {
+    ...view,
+    isCurrent: program.startAt <= nowIso && program.endAt > nowIso
+  };
 }
 
 export type LiveChannelView = Omit<LiveChannel, "stream">;

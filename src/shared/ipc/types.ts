@@ -1,6 +1,9 @@
 import type {
+  CategoryContentType,
+  CategoryView,
   EpisodeView,
   LiveChannelView,
+  LiveProgramView,
   MovieView,
   RecentlyWatchedItemView,
   SeriesView
@@ -25,6 +28,10 @@ export interface IptvApi {
   catalog: {
     listLiveChannels(query: string, category: string | null): Promise<LiveChannelView[]>;
     listLiveCategories(): Promise<string[]>;
+    listCategoryViews(contentType: CategoryContentType): Promise<CategoryView[]>;
+    toggleCategoryPin(contentType: CategoryContentType, category: string): Promise<void>;
+    reorderPinnedCategories(contentType: CategoryContentType, categories: string[]): Promise<void>;
+    listLivePrograms(channelId: string): Promise<LiveProgramView[]>;
     listMovies(query: string, category: string | null): Promise<MovieView[]>;
     listMovieCategories(): Promise<string[]>;
     listSeries(query: string, category: string | null): Promise<SeriesView[]>;
@@ -38,6 +45,8 @@ export interface IptvApi {
     pause(): Promise<void>;
     stop(): Promise<void>;
     seek(request: SeekRequest): Promise<void>;
+    selectAudioTrack(trackId: number): Promise<void>;
+    selectSubtitleTrack(trackId: number | null): Promise<void>;
     openExternal(request: PlayRequest): Promise<void>;
     getState(): Promise<PlaybackState>;
     onState(callback: (state: PlaybackState) => void): () => void;
@@ -53,6 +62,10 @@ export const ipcChannels = {
   providersImportProgress: "providers:importProgress",
   catalogListLiveChannels: "catalog:listLiveChannels",
   catalogListLiveCategories: "catalog:listLiveCategories",
+  catalogListCategoryViews: "catalog:listCategoryViews",
+  catalogToggleCategoryPin: "catalog:toggleCategoryPin",
+  catalogReorderPinnedCategories: "catalog:reorderPinnedCategories",
+  catalogListLivePrograms: "catalog:listLivePrograms",
   catalogListMovies: "catalog:listMovies",
   catalogListMovieCategories: "catalog:listMovieCategories",
   catalogListSeries: "catalog:listSeries",
@@ -64,6 +77,8 @@ export const ipcChannels = {
   playbackPause: "playback:pause",
   playbackStop: "playback:stop",
   playbackSeek: "playback:seek",
+  playbackSelectAudioTrack: "playback:selectAudioTrack",
+  playbackSelectSubtitleTrack: "playback:selectSubtitleTrack",
   playbackOpenExternal: "playback:openExternal",
   playbackGetState: "playback:getState",
   playbackState: "playback:state"

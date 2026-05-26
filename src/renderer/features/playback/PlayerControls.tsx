@@ -1,8 +1,8 @@
-import { FastForward, Pause, Play, Rewind, Square } from "lucide-react";
+import { Captions, FastForward, Languages, Pause, Play, Rewind, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent, PointerEvent } from "react";
 import { iptvApi } from "../../app/api";
-import type { PlaybackState } from "../../../shared/playback/types";
+import type { PlaybackState, PlaybackTrack } from "../../../shared/playback/types";
 import { getSeekSecondsForDoubleClick } from "./playerGestures";
 
 const DOUBLE_TAP_MAX_MS = 350;
@@ -17,16 +17,24 @@ interface TapSnapshot {
 
 export function PlayerControls() {
   const [state, setState] = useState<PlaybackState | null>(null);
+  const [openTrackMenu, setOpenTrackMenu] = useState<"audio" | "subtitle" | null>(null);
   const lastTapRef = useRef<TapSnapshot | null>(null);
 
   useEffect(() => {
     let isMounted = true;
 
-    iptvApi.playback.getState().then((nextState) => {
-      if (isMounted) {
-        setState(nextState);
-      }
-    });
+    iptvApi.playback
+      .getState()
+      .then((nextState) => {
+        if (isMounted) {
+          setState(nextState);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setState(null);
+        }
+      });
 
     const unsubscribe = iptvApi.playback.onState((nextState) => {
       setState(nextState);
@@ -130,6 +138,8 @@ export function PlayerControls() {
   const canTogglePlayPause = state.status === "playing" || state.status === "paused";
   const canSeek = canSeekPlayback(state);
   const playPauseLabel = isPlaying ? "Pause playback" : "Resume playback";
+  const selectedAudioTrack = state.audioTracks.find((track) => track.isSelected) ?? null;
+  const selectedSubtitleTrack = state.subtitleTracks.find((track) => track.isSelected) ?? null;
 
   return (
     <div
@@ -148,6 +158,86 @@ export function PlayerControls() {
       </div>
 
       <div className="player-controls-actions">
+        {state.audioTracks.length > 0 ? (
+          <div className="track-menu">
+            <button
+              type="button"
+              className="track-menu-trigger"
+              aria-label={`Audio: ${selectedAudioTrack?.title ?? "Auto"}`}
+              aria-expanded={openTrackMenu === "audio"}
+              onClick={() => setOpenTrackMenu((current) => (current === "audio" ? null : "audio"))}
+            >
+              <Languages size={16} aria-hidden="true" />
+              <span>Audio</span>
+            </button>
+            {openTrackMenu === "audio" ? (
+              <div className="track-menu-panel" role="menu" aria-label="Audio tracks">
+                {state.audioTracks.map((track) => (
+                  <button
+                    type="button"
+                    className={track.isSelected ? "track-option active" : "track-option"}
+                    role="menuitemradio"
+                    aria-checked={track.isSelected}
+                    key={track.id}
+                    onClick={() => {
+                      setOpenTrackMenu(null);
+                      void iptvApi.playback.selectAudioTrack(track.id);
+                    }}
+                  >
+                    <span>{formatTrackTitle(track)}</span>
+                    {track.isDefault ? <small>Default</small> : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {state.subtitleTracks.length > 0 ? (
+          <div className="track-menu">
+            <button
+              type="button"
+              className="track-menu-trigger"
+              aria-label={`Subtitles: ${selectedSubtitleTrack?.title ?? "Off"}`}
+              aria-expanded={openTrackMenu === "subtitle"}
+              onClick={() => setOpenTrackMenu((current) => (current === "subtitle" ? null : "subtitle"))}
+            >
+              <Captions size={16} aria-hidden="true" />
+              <span>Subtitles</span>
+            </button>
+            {openTrackMenu === "subtitle" ? (
+              <div className="track-menu-panel" role="menu" aria-label="Subtitle tracks">
+                <button
+                  type="button"
+                  className={selectedSubtitleTrack === null ? "track-option active" : "track-option"}
+                  role="menuitemradio"
+                  aria-checked={selectedSubtitleTrack === null}
+                  onClick={() => {
+                    setOpenTrackMenu(null);
+                    void iptvApi.playback.selectSubtitleTrack(null);
+                  }}
+                >
+                  <span>Subtitles off</span>
+                </button>
+                {state.subtitleTracks.map((track) => (
+                  <button
+                    type="button"
+                    className={track.isSelected ? "track-option active" : "track-option"}
+                    role="menuitemradio"
+                    aria-checked={track.isSelected}
+                    key={track.id}
+                    onClick={() => {
+                      setOpenTrackMenu(null);
+                      void iptvApi.playback.selectSubtitleTrack(track.id);
+                    }}
+                  >
+                    <span>{formatTrackTitle(track)}</span>
+                    {track.isDefault ? <small>Default</small> : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <button
           aria-label="Seek back 10 seconds"
           className="icon-button"
@@ -190,6 +280,10 @@ export function PlayerControls() {
       </div>
     </div>
   );
+}
+
+function formatTrackTitle(track: PlaybackTrack): string {
+  return track.title;
 }
 
 function canSeekPlayback(state: PlaybackState): boolean {

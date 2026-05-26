@@ -7,6 +7,15 @@ export interface PlayRequest {
 
 export type PlaybackStatus = "idle" | "loading" | "playing" | "paused" | "error";
 
+export interface PlaybackTrack {
+  id: number;
+  type: "audio" | "subtitle";
+  title: string;
+  language: string | null;
+  isDefault: boolean;
+  isSelected: boolean;
+}
+
 export interface PlaybackState {
   status: PlaybackStatus;
   itemId: string | null;
@@ -15,6 +24,10 @@ export interface PlaybackState {
   positionSeconds: number;
   durationSeconds: number | null;
   isSeekable: boolean;
+  audioTracks: PlaybackTrack[];
+  subtitleTracks: PlaybackTrack[];
+  selectedAudioTrackId: number | null;
+  selectedSubtitleTrackId: number | null;
   errorMessage: string | null;
 }
 

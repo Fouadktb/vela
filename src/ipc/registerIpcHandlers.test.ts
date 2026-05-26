@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ipcChannels } from "../shared/ipc/types.js";
+import type { LiveChannel, LiveProgramView } from "../shared/catalog/types.js";
 import type { Provider } from "../shared/providers/types.js";
 
 const ipcHandlers = new Map<string, (...args: unknown[]) => unknown>();
@@ -305,4 +306,132 @@ describe("registerIpcHandlers", () => {
     ]);
     expect(listRecentlyWatched).toHaveBeenCalled();
   });
+
+  it("manages category pinning and ordering through catalog IPC calls", async () => {
+    const listCategoryViews = vi.fn(() => [
+      { contentType: "live", name: "News", itemCount: 2, isPinned: true, sortOrder: 0 }
+    ]);
+    const toggleCategoryPin = vi.fn();
+    const reorderPinnedCategories = vi.fn();
+
+    registerIpcHandlers({
+      emitToRenderer: vi.fn(),
+      providerRepository: {
+        list: vi.fn(),
+        createM3u: vi.fn(),
+        createXtream: vi.fn(),
+        get: vi.fn(),
+        markRefreshed: vi.fn(),
+        delete: vi.fn()
+      } as never,
+      catalogRepository: {
+        listCategoryViews,
+        toggleCategoryPin,
+        reorderPinnedCategories
+      } as never,
+      importM3uProvider: vi.fn(async () => undefined) as never,
+      importXtreamProvider: vi.fn(async () => undefined) as never,
+      importXtreamSeriesEpisodes: vi.fn(async () => []) as never,
+      mpvController: {} as never,
+      openInExternalPlayer: vi.fn() as never
+    });
+
+    expect(await ipcHandlers.get(ipcChannels.catalogListCategoryViews)?.(null, "live")).toEqual([
+      { contentType: "live", name: "News", itemCount: 2, isPinned: true, sortOrder: 0 }
+    ]);
+    await ipcHandlers.get(ipcChannels.catalogToggleCategoryPin)?.(null, {
+      contentType: "live",
+      category: " News "
+    });
+    await ipcHandlers.get(ipcChannels.catalogReorderPinnedCategories)?.(null, {
+      contentType: "live",
+      categories: ["News", "Sports"]
+    });
+
+    expect(toggleCategoryPin).toHaveBeenCalledWith("live", "News");
+    expect(reorderPinnedCategories).toHaveBeenCalledWith("live", ["News", "Sports"]);
+  });
+
+  it("lazy imports Xtream live programs when the local schedule is empty", async () => {
+    const channel = liveChannel();
+    const provider = xtreamProvider();
+    const programs: LiveProgramView[] = [
+      {
+        id: "provider-xtream:live:123:1779796800",
+        channelId: channel.id,
+        title: "Midday News",
+        description: "Headlines and weather.",
+        startAt: "2026-05-26T12:00:00.000Z",
+        endAt: "2026-05-26T12:30:00.000Z",
+        isCurrent: true
+      }
+    ];
+    const importXtreamLivePrograms = vi.fn(async () => []);
+    const listLiveProgramsForChannel = vi.fn().mockReturnValueOnce([]).mockReturnValueOnce(programs);
+
+    registerIpcHandlers({
+      emitToRenderer: vi.fn(),
+      providerRepository: {
+        list: vi.fn(),
+        createM3u: vi.fn(),
+        createXtream: vi.fn(),
+        get: vi.fn(() => provider),
+        markRefreshed: vi.fn(),
+        delete: vi.fn()
+      } as never,
+      catalogRepository: {
+        getLiveChannel: vi.fn(() => channel),
+        listLiveProgramsForChannel
+      } as never,
+      importM3uProvider: vi.fn(async () => undefined) as never,
+      importXtreamProvider: vi.fn(async () => undefined) as never,
+      importXtreamSeriesEpisodes: vi.fn(async () => []) as never,
+      importXtreamLivePrograms: importXtreamLivePrograms as never,
+      mpvController: {} as never,
+      openInExternalPlayer: vi.fn() as never
+    });
+
+    const result = await ipcHandlers.get(ipcChannels.catalogListLivePrograms)?.(null, channel.id);
+
+    expect(importXtreamLivePrograms).toHaveBeenCalledWith(
+      provider,
+      channel,
+      expect.objectContaining({ catalogRepository: expect.any(Object) })
+    );
+    expect(result).toEqual(programs);
+  });
 });
+
+function xtreamProvider(): Provider {
+  return {
+    id: "provider-xtream",
+    type: "xtream",
+    name: "Xtream",
+    source: "https://panel.example.test",
+    username: "user",
+    password: "pass",
+    createdAt: "2026-05-26T08:00:00.000Z",
+    updatedAt: "2026-05-26T08:00:00.000Z",
+    lastRefreshAt: null
+  };
+}
+
+function liveChannel(): LiveChannel {
+  return {
+    type: "live",
+    id: "provider-xtream:live:123",
+    providerId: "provider-xtream",
+    name: "City News",
+    logoUrl: null,
+    category: "News",
+    stream: {
+      providerType: "xtream",
+      url: "https://panel.example.test/live/user/pass/123.ts",
+      streamId: "123",
+      containerExtension: "ts"
+    },
+    epgChannelId: "city.news",
+    lastSeenAt: "2026-05-26T08:00:00.000Z",
+    isFavorite: false
+  };
+}

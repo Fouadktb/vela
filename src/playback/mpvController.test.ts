@@ -9,7 +9,8 @@ import {
   buildMpvIpcCommand,
   buildMpvIpcPath,
   resolveMpvExecutablePath,
-  sanitizePlaybackDiagnostic
+  sanitizePlaybackDiagnostic,
+  toPlaybackTrackState
 } from "../../electron/main/playback/mpvController.js";
 
 describe("mpv playback helpers", () => {
@@ -93,6 +94,20 @@ describe("mpv playback helpers", () => {
     ).toBe("/opt/homebrew/bin/mpv");
   });
 
+  it("prefers the bundled macOS mpv.app before system paths", () => {
+    const resourcesPath = "/Applications/IPTV Player.app/Contents/Resources";
+    const bundledMpvPath = `${resourcesPath}/bin/mpv/darwin/mpv.app/Contents/MacOS/mpv`;
+
+    expect(
+      resolveMpvExecutablePath({
+        env: { PATH: "/usr/bin:/bin" },
+        platform: "darwin",
+        resourcesPath,
+        existsSync: (candidate) => candidate === bundledMpvPath || candidate === "/opt/homebrew/bin/mpv"
+      })
+    ).toBe(bundledMpvPath);
+  });
+
   it("finds common Windows mpv install paths before PATH lookup", () => {
     expect(
       resolveMpvExecutablePath({
@@ -102,6 +117,20 @@ describe("mpv playback helpers", () => {
         existsSync: (candidate) => candidate === "C:\\Program Files\\mpv\\mpv.exe"
       })
     ).toBe("C:\\Program Files\\mpv\\mpv.exe");
+  });
+
+  it("prefers the bundled Windows mpv before system paths", () => {
+    const resourcesPath = "C:\\Users\\me\\AppData\\Local\\Programs\\IPTV Player\\resources";
+    const bundledMpvPath = `${resourcesPath}\\bin\\mpv\\win32\\mpv.exe`;
+
+    expect(
+      resolveMpvExecutablePath({
+        env: { ProgramFiles: "C:\\Program Files", PATH: "C:\\Windows\\System32" },
+        platform: "win32",
+        resourcesPath,
+        existsSync: (candidate) => candidate === bundledMpvPath || candidate === "C:\\Program Files\\mpv\\mpv.exe"
+      })
+    ).toBe(bundledMpvPath);
   });
 
   it("detects when mpv is unavailable instead of failing with a generic spawn error", () => {
@@ -117,6 +146,51 @@ describe("mpv playback helpers", () => {
 
   it("builds newline-delimited JSON IPC commands", () => {
     expect(buildMpvIpcCommand(["seek", 10, "relative"])).toBe('{"command":["seek",10,"relative"]}\n');
+  });
+
+  it("normalizes mpv audio and subtitle tracks for renderer menus", () => {
+    expect(
+      toPlaybackTrackState(
+        [
+          { id: 1, type: "audio", title: "English Stereo", lang: "eng", default: true, selected: false },
+          { id: 2, type: "audio", title: "Director Commentary", lang: "eng", default: false, selected: true },
+          { id: 3, type: "sub", title: "English CC", lang: "eng", selected: false }
+        ],
+        2,
+        "no"
+      )
+    ).toEqual({
+      audioTracks: [
+        {
+          id: 1,
+          type: "audio",
+          title: "English Stereo",
+          language: "eng",
+          isDefault: true,
+          isSelected: false
+        },
+        {
+          id: 2,
+          type: "audio",
+          title: "Director Commentary",
+          language: "eng",
+          isDefault: false,
+          isSelected: true
+        }
+      ],
+      subtitleTracks: [
+        {
+          id: 3,
+          type: "subtitle",
+          title: "English CC",
+          language: "eng",
+          isDefault: false,
+          isSelected: false
+        }
+      ],
+      selectedAudioTrackId: 2,
+      selectedSubtitleTrackId: null
+    });
   });
 
   it("builds Windows-safe mpv named pipe paths", () => {

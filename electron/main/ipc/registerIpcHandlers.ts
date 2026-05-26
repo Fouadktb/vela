@@ -1,4 +1,5 @@
 import { ipcMain } from "electron";
+import type { CategoryContentType } from "../../../src/shared/catalog/types.js";
 import { toEpisodeView, toLiveChannelView, toMovieView, toSeriesView } from "../../../src/shared/catalog/types.js";
 import { ipcChannels } from "../../../src/shared/ipc/types.js";
 import type { PlayRequest, SeekRequest } from "../../../src/shared/playback/types.js";
@@ -8,7 +9,11 @@ import {
   validateCreateXtreamProviderInput
 } from "../../../src/shared/providers/types.js";
 import type { importM3uProvider } from "../imports/importM3uProvider.js";
-import type { importXtreamProvider, importXtreamSeriesEpisodes } from "../imports/importXtreamProvider.js";
+import type {
+  importXtreamLivePrograms,
+  importXtreamProvider,
+  importXtreamSeriesEpisodes
+} from "../imports/importXtreamProvider.js";
 import type { openInExternalPlayer } from "../playback/externalPlayer.js";
 import type { createMpvController } from "../playback/mpvController.js";
 import type { createCatalogRepository } from "../storage/catalogRepository.js";
@@ -21,6 +26,7 @@ interface RegisterIpcHandlersDeps {
   importM3uProvider: typeof importM3uProvider;
   importXtreamProvider: typeof importXtreamProvider;
   importXtreamSeriesEpisodes: typeof importXtreamSeriesEpisodes;
+  importXtreamLivePrograms?: typeof importXtreamLivePrograms;
   mpvController: ReturnType<typeof createMpvController>;
   openInExternalPlayer: typeof openInExternalPlayer;
 }
@@ -92,6 +98,51 @@ export function registerIpcHandlers(deps: RegisterIpcHandlersDeps): void {
 
   ipcMain.handle(ipcChannels.catalogListLiveCategories, () => deps.catalogRepository.listLiveCategories());
 
+  ipcMain.handle(ipcChannels.catalogListCategoryViews, (_event, rawContentType: unknown) =>
+    deps.catalogRepository.listCategoryViews(toCategoryContentType(rawContentType))
+  );
+
+  ipcMain.handle(
+    ipcChannels.catalogToggleCategoryPin,
+    (_event, input: { contentType: unknown; category: unknown }) => {
+      const category = toCategoryName(input.category);
+      if (!category) {
+        return;
+      }
+      deps.catalogRepository.toggleCategoryPin(toCategoryContentType(input.contentType), category);
+    }
+  );
+
+  ipcMain.handle(
+    ipcChannels.catalogReorderPinnedCategories,
+    (_event, input: { contentType: unknown; categories: unknown }) => {
+      const categories = Array.isArray(input.categories)
+        ? input.categories.map(toCategoryName).filter((category): category is string => category !== null)
+        : [];
+      deps.catalogRepository.reorderPinnedCategories(toCategoryContentType(input.contentType), categories);
+    }
+  );
+
+  ipcMain.handle(ipcChannels.catalogListLivePrograms, async (_event, channelId: string) => {
+    const channel = deps.catalogRepository.getLiveChannel(channelId);
+    if (!channel) {
+      throw new Error(`Live channel not found: ${channelId}`);
+    }
+
+    let programs = deps.catalogRepository.listLiveProgramsForChannel(channel.id);
+    if (programs.length === 0 && deps.importXtreamLivePrograms) {
+      const provider = deps.providerRepository.get(channel.providerId);
+      if (provider?.type === "xtream") {
+        await deps.importXtreamLivePrograms(provider, channel, {
+          catalogRepository: deps.catalogRepository
+        });
+        programs = deps.catalogRepository.listLiveProgramsForChannel(channel.id);
+      }
+    }
+
+    return programs;
+  });
+
   ipcMain.handle(ipcChannels.catalogListMovies, (_event, input: { query: string; category: string | null }) =>
     deps.catalogRepository.listMovies(input.query, input.category).map(toMovieView)
   );
@@ -150,11 +201,38 @@ export function registerIpcHandlers(deps: RegisterIpcHandlersDeps): void {
     emitPlaybackState(deps);
   });
 
+  ipcMain.handle(ipcChannels.playbackSelectAudioTrack, async (_event, trackId: number) => {
+    await deps.mpvController.selectAudioTrack(trackId);
+    emitPlaybackState(deps);
+  });
+
+  ipcMain.handle(ipcChannels.playbackSelectSubtitleTrack, async (_event, trackId: number | null) => {
+    await deps.mpvController.selectSubtitleTrack(trackId);
+    emitPlaybackState(deps);
+  });
+
   ipcMain.handle(ipcChannels.playbackOpenExternal, async (_event, request: PlayRequest) => {
     await deps.openInExternalPlayer(request, deps.catalogRepository);
   });
 
   ipcMain.handle(ipcChannels.playbackGetState, () => deps.mpvController.getState());
+}
+
+function toCategoryContentType(value: unknown): CategoryContentType {
+  if (value === "live" || value === "movie" || value === "series") {
+    return value;
+  }
+
+  throw new Error("Invalid category content type");
+}
+
+function toCategoryName(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || null;
 }
 
 function emitPlaybackState(deps: RegisterIpcHandlersDeps): void {

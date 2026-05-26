@@ -1,6 +1,10 @@
 import { BrowserWindow, app } from "electron";
 import { importM3uProvider } from "./imports/importM3uProvider.js";
-import { importXtreamProvider, importXtreamSeriesEpisodes } from "./imports/importXtreamProvider.js";
+import {
+  importXtreamLivePrograms,
+  importXtreamProvider,
+  importXtreamSeriesEpisodes
+} from "./imports/importXtreamProvider.js";
 import { registerIpcHandlers } from "./ipc/registerIpcHandlers.js";
 import { openInExternalPlayer } from "./playback/externalPlayer.js";
 import { createMpvController } from "./playback/mpvController.js";
@@ -39,6 +43,7 @@ async function boot(): Promise<void> {
     importM3uProvider,
     importXtreamProvider,
     importXtreamSeriesEpisodes,
+    importXtreamLivePrograms,
     mpvController,
     openInExternalPlayer
   });

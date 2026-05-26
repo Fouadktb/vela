@@ -2,8 +2,10 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  CategoryView,
   EpisodeView,
   LiveChannelView,
+  LiveProgramView,
   MovieView,
   RecentlyWatchedItemView,
   SeriesView
@@ -24,6 +26,10 @@ const mockApi = vi.hoisted(() => ({
   catalog: {
     listLiveChannels: vi.fn<(query: string, category: string | null) => Promise<LiveChannelView[]>>(),
     listLiveCategories: vi.fn<() => Promise<string[]>>(),
+    listCategoryViews: vi.fn<(contentType: "live" | "movie" | "series") => Promise<CategoryView[]>>(),
+    toggleCategoryPin: vi.fn<(contentType: "live" | "movie" | "series", category: string) => Promise<void>>(),
+    reorderPinnedCategories: vi.fn<(contentType: "live" | "movie" | "series", categories: string[]) => Promise<void>>(),
+    listLivePrograms: vi.fn<(channelId: string) => Promise<LiveProgramView[]>>(),
     listMovies: vi.fn<(query: string, category: string | null) => Promise<MovieView[]>>(),
     listMovieCategories: vi.fn<() => Promise<string[]>>(),
     listSeries: vi.fn<(query: string, category: string | null) => Promise<SeriesView[]>>(),
@@ -37,6 +43,8 @@ const mockApi = vi.hoisted(() => ({
     pause: vi.fn(),
     stop: vi.fn(),
     seek: vi.fn(),
+    selectAudioTrack: vi.fn(),
+    selectSubtitleTrack: vi.fn(),
     openExternal: vi.fn(),
     getState: vi.fn<() => Promise<PlaybackState>>(),
     onState: vi.fn()
@@ -122,8 +130,46 @@ const idlePlaybackState: PlaybackState = {
   positionSeconds: 0,
   durationSeconds: null,
   isSeekable: false,
+  audioTracks: [],
+  subtitleTracks: [],
+  selectedAudioTrackId: null,
+  selectedSubtitleTrackId: null,
   errorMessage: null
 };
+
+const liveCategoryViews: CategoryView[] = [
+  { contentType: "live", name: "News", itemCount: 1, isPinned: false, sortOrder: null },
+  { contentType: "live", name: "Sports", itemCount: 12, isPinned: false, sortOrder: null }
+];
+
+const movieCategoryViews: CategoryView[] = [
+  { contentType: "movie", name: "Action", itemCount: 1, isPinned: false, sortOrder: null }
+];
+
+const seriesCategoryViews: CategoryView[] = [
+  { contentType: "series", name: "Drama", itemCount: 1, isPinned: false, sortOrder: null }
+];
+
+const livePrograms: LiveProgramView[] = [
+  {
+    id: "provider-1:live:101:2026-05-26T08:00:00.000Z",
+    channelId: liveChannel.id,
+    title: "Morning News",
+    description: "Local headlines.",
+    startAt: "2026-05-26T08:00:00.000Z",
+    endAt: "2026-05-26T08:30:00.000Z",
+    isCurrent: true
+  },
+  {
+    id: "provider-1:live:101:2026-05-26T08:30:00.000Z",
+    channelId: liveChannel.id,
+    title: "Market Watch",
+    description: null,
+    startAt: "2026-05-26T08:30:00.000Z",
+    endAt: "2026-05-26T09:00:00.000Z",
+    isCurrent: false
+  }
+];
 
 describe("App catalog navigation", () => {
   beforeEach(() => {
@@ -132,6 +178,18 @@ describe("App catalog navigation", () => {
     mockApi.providers.onImportProgress.mockImplementation((_callback: (progress: ImportProgress) => void) => vi.fn());
     mockApi.catalog.listLiveChannels.mockResolvedValue([liveChannel]);
     mockApi.catalog.listLiveCategories.mockResolvedValue(["News"]);
+    mockApi.catalog.listCategoryViews.mockImplementation(async (contentType) => {
+      if (contentType === "movie") {
+        return movieCategoryViews;
+      }
+      if (contentType === "series") {
+        return seriesCategoryViews;
+      }
+      return liveCategoryViews;
+    });
+    mockApi.catalog.toggleCategoryPin.mockResolvedValue(undefined);
+    mockApi.catalog.reorderPinnedCategories.mockResolvedValue(undefined);
+    mockApi.catalog.listLivePrograms.mockResolvedValue(livePrograms);
     mockApi.catalog.listMovies.mockResolvedValue([movie]);
     mockApi.catalog.listMovieCategories.mockResolvedValue(["Action"]);
     mockApi.catalog.listSeries.mockResolvedValue([series]);
@@ -171,6 +229,35 @@ describe("App catalog navigation", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Favorites" })).toBeInTheDocument());
     expect(screen.getByPlaceholderText("Search favorites")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /The City Movie/ })).toBeInTheDocument();
+  });
+
+  it("uses category-first browsing with category pinning instead of a select", async () => {
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Live TV" })).toBeInTheDocument());
+
+    expect(screen.queryByLabelText("Category")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "News category" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Search categories"), { target: { value: "spo" } });
+    expect(screen.queryByRole("button", { name: "News category" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sports category" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Search categories"), { target: { value: "" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Pin News category" }));
+
+    await waitFor(() => expect(mockApi.catalog.toggleCategoryPin).toHaveBeenCalledWith("live", "News"));
+  });
+
+  it("loads a live channel schedule into the detail pane", async () => {
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Live TV" })).toBeInTheDocument());
+
+    expect(mockApi.catalog.listLivePrograms).toHaveBeenCalledWith(liveChannel.id);
+    expect(await screen.findByText("Now on")).toBeInTheDocument();
+    expect(screen.getByText("Morning News")).toBeInTheDocument();
+    expect(screen.getByText("Market Watch")).toBeInTheDocument();
   });
 
   it("starts movie playback from the selected movie detail pane", async () => {

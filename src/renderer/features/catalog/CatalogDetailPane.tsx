@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Heart, Play, RefreshCw } from "lucide-react";
-import type { EpisodeView } from "../../../shared/catalog/types";
+import { CalendarClock, Heart, Play, RefreshCw } from "lucide-react";
+import type { EpisodeView, LiveProgramView } from "../../../shared/catalog/types";
 import type { CatalogCardItem } from "./CatalogGrid";
 
 interface CatalogDetailItem extends CatalogCardItem {
@@ -14,7 +14,9 @@ interface CatalogDetailItem extends CatalogCardItem {
 interface CatalogDetailPaneProps {
   item: CatalogDetailItem | null;
   episodes: EpisodeView[];
+  livePrograms: LiveProgramView[];
   isLoadingEpisodes: boolean;
+  isLoadingPrograms: boolean;
   onPlay(itemId: string): void;
   onPlayEpisode(itemId: string): void;
   onToggleFavorite(itemId: string): void;
@@ -27,7 +29,9 @@ const visibleEpisodeIncrement = 8;
 export function CatalogDetailPane({
   item,
   episodes,
+  livePrograms,
   isLoadingEpisodes,
+  isLoadingPrograms,
   onPlay,
   onPlayEpisode,
   onToggleFavorite,
@@ -97,10 +101,36 @@ export function CatalogDetailPane({
           ) : null}
         </div>
       ) : null}
+      {item.itemType === "live" ? (
+        <div className="live-schedule">
+          <p className="eyebrow">Schedule</p>
+          {isLoadingPrograms ? <div className="episode-state">Loading schedule</div> : null}
+          {!isLoadingPrograms && livePrograms.length === 0 ? (
+            <div className="episode-state">No schedule found for this channel.</div>
+          ) : null}
+          {livePrograms.map((program) => (
+            <article className={program.isCurrent ? "program-row current" : "program-row"} key={program.id}>
+              <CalendarClock size={15} aria-hidden="true" />
+              <div>
+                <span>{program.isCurrent ? "Now on" : formatProgramTime(program.startAt)}</span>
+                <strong>{program.title}</strong>
+                {program.description ? <small>{program.description}</small> : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : null}
     </aside>
   );
 }
 
 function formatEpisodeCode(episode: EpisodeView): string {
   return `S${episode.seasonNumber} E${episode.episodeNumber}`;
+}
+
+function formatProgramTime(startAt: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(startAt));
 }

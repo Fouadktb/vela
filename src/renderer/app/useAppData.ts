@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { LiveChannelView, MovieView, RecentlyWatchedItemView, SeriesView } from "../../shared/catalog/types";
+import type {
+  CategoryContentType,
+  CategoryView,
+  LiveChannelView,
+  MovieView,
+  RecentlyWatchedItemView,
+  SeriesView
+} from "../../shared/catalog/types";
 import type { ProviderSummary } from "../../shared/providers/types";
 import { iptvApi } from "./api";
 
@@ -12,6 +19,9 @@ export function useAppData() {
   const [categories, setCategories] = useState<string[]>([]);
   const [movieCategories, setMovieCategories] = useState<string[]>([]);
   const [seriesCategories, setSeriesCategories] = useState<string[]>([]);
+  const [categoryViews, setCategoryViews] = useState<CategoryView[]>([]);
+  const [movieCategoryViews, setMovieCategoryViews] = useState<CategoryView[]>([]);
+  const [seriesCategoryViews, setSeriesCategoryViews] = useState<CategoryView[]>([]);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
@@ -53,7 +63,9 @@ export function useAppData() {
   const reloadCategories = useCallback(async () => {
     try {
       setErrorMessage(null);
-      setCategories(await iptvApi.catalog.listLiveCategories());
+      const nextCategories = await iptvApi.catalog.listCategoryViews("live");
+      setCategoryViews(nextCategories);
+      setCategories(nextCategories.map((item) => item.name));
     } catch (unknownError) {
       setErrorMessage(unknownError instanceof Error ? unknownError.message : "Unable to load live categories");
     }
@@ -71,7 +83,9 @@ export function useAppData() {
   const reloadMovieCategories = useCallback(async () => {
     try {
       setErrorMessage(null);
-      setMovieCategories(await iptvApi.catalog.listMovieCategories());
+      const nextCategories = await iptvApi.catalog.listCategoryViews("movie");
+      setMovieCategoryViews(nextCategories);
+      setMovieCategories(nextCategories.map((item) => item.name));
     } catch (unknownError) {
       setErrorMessage(unknownError instanceof Error ? unknownError.message : "Unable to load movie categories");
     }
@@ -89,11 +103,45 @@ export function useAppData() {
   const reloadSeriesCategories = useCallback(async () => {
     try {
       setErrorMessage(null);
-      setSeriesCategories(await iptvApi.catalog.listSeriesCategories());
+      const nextCategories = await iptvApi.catalog.listCategoryViews("series");
+      setSeriesCategoryViews(nextCategories);
+      setSeriesCategories(nextCategories.map((item) => item.name));
     } catch (unknownError) {
       setErrorMessage(unknownError instanceof Error ? unknownError.message : "Unable to load series categories");
     }
   }, []);
+
+  const reloadCategoryViews = useCallback(
+    async (contentType: CategoryContentType) => {
+      if (contentType === "movie") {
+        await reloadMovieCategories();
+        return;
+      }
+      if (contentType === "series") {
+        await reloadSeriesCategories();
+        return;
+      }
+
+      await reloadCategories();
+    },
+    [reloadCategories, reloadMovieCategories, reloadSeriesCategories]
+  );
+
+  const toggleCategoryPin = useCallback(
+    async (contentType: CategoryContentType, categoryName: string) => {
+      await iptvApi.catalog.toggleCategoryPin(contentType, categoryName);
+      await reloadCategoryViews(contentType);
+    },
+    [reloadCategoryViews]
+  );
+
+  const reorderPinnedCategories = useCallback(
+    async (contentType: CategoryContentType, categoryNames: string[]) => {
+      await iptvApi.catalog.reorderPinnedCategories(contentType, categoryNames);
+      await reloadCategoryViews(contentType);
+    },
+    [reloadCategoryViews]
+  );
 
   const reloadRecentlyWatched = useCallback(async () => {
     try {
@@ -183,6 +231,9 @@ export function useAppData() {
     categories,
     movieCategories,
     seriesCategories,
+    categoryViews,
+    movieCategoryViews,
+    seriesCategoryViews,
     query,
     setQuery,
     category,
@@ -200,6 +251,9 @@ export function useAppData() {
     reloadAll,
     reloadRecentlyWatched,
     reloadSeriesCategories,
-    reloadSeries
+    reloadSeries,
+    reloadCategoryViews,
+    reorderPinnedCategories,
+    toggleCategoryPin
   };
 }

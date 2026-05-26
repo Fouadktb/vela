@@ -4,6 +4,7 @@ dist/
 dist-electron/
 out/
 release/
+vendor/mpv/
 coverage/
 .env
 .env.*

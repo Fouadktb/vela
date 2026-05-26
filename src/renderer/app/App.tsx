@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import type { EpisodeView } from "../../shared/catalog/types";
+import type { CategoryContentType, CategoryView, EpisodeView, LiveProgramView } from "../../shared/catalog/types";
 import { Sidebar, type AppSection } from "../components/Sidebar";
 import { SearchBar } from "../components/SearchBar";
+import { CategoryRail } from "../features/catalog/CategoryRail";
 import { CatalogDetailPane } from "../features/catalog/CatalogDetailPane";
 import { CatalogGrid, type CatalogCardItem } from "../features/catalog/CatalogGrid";
 import { PlayerControls } from "../features/playback/PlayerControls";
@@ -25,7 +26,9 @@ export function App() {
   const [activeSection, setActiveSection] = useState<AppSection>("live");
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [episodes, setEpisodes] = useState<EpisodeView[]>([]);
+  const [livePrograms, setLivePrograms] = useState<LiveProgramView[]>([]);
   const [isLoadingEpisodes, setIsLoadingEpisodes] = useState(false);
+  const [isLoadingPrograms, setIsLoadingPrograms] = useState(false);
   const items = useMemo(() => buildCatalogItems(data), [data]);
   const visibleItems = useMemo(
     () => getSectionItems(activeSection, items, data.query),
@@ -35,12 +38,13 @@ export function App() {
     () => visibleItems.find((item) => item.id === selectedItemId) ?? visibleItems[0] ?? null,
     [selectedItemId, visibleItems]
   );
-  const categories = getSectionCategories(activeSection, data);
+  const categoryViews = getSectionCategoryViews(activeSection, data);
+  const categoryContentType = getSectionCategoryContentType(activeSection);
   const title = getSectionTitle(activeSection);
   const allCategoryLabel = getAllCategoryLabel(activeSection);
   const searchPlaceholder = getSearchPlaceholder(activeSection);
   const isSettingsSection = activeSection === "settings";
-  const showCategorySelect = activeSection !== "settings" && activeSection !== "recent";
+  const showCategoryRail = activeSection !== "settings" && activeSection !== "recent";
 
   function changeSection(nextSection: AppSection) {
     setActiveSection(nextSection);
@@ -79,6 +83,42 @@ export function App() {
       .finally(() => {
         if (!isCancelled) {
           setIsLoadingEpisodes(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedItem?.id, selectedItem?.itemType]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    if (selectedItem?.itemType !== "live") {
+      setLivePrograms([]);
+      setIsLoadingPrograms(false);
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    setIsLoadingPrograms(true);
+    setLivePrograms([]);
+    iptvApi.catalog
+      .listLivePrograms(selectedItem.id)
+      .then((nextPrograms) => {
+        if (!isCancelled) {
+          setLivePrograms(nextPrograms);
+        }
+      })
+      .catch(() => {
+        if (!isCancelled) {
+          setLivePrograms([]);
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsLoadingPrograms(false);
         }
       });
 
@@ -128,24 +168,25 @@ export function App() {
           />
         ) : (
           <>
-            {showCategorySelect ? (
-              <label className="category-select">
-                <span>Category</span>
-                <select
-                  value={data.category ?? ""}
-                  onChange={(event) => data.setCategory(event.target.value || null)}
-                >
-                  <option value="">{allCategoryLabel}</option>
-                  {categories.map((category) => (
-                    <option key={category} value={category}>
-                      {category || "Uncategorized"}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-
-            <div className="main-grid">
+            <div className={showCategoryRail ? "main-grid with-categories" : "main-grid"}>
+              {showCategoryRail ? (
+                <CategoryRail
+                  allLabel={allCategoryLabel}
+                  categories={categoryViews}
+                  contentType={categoryContentType}
+                  selectedCategory={data.category}
+                  onSelect={(nextCategory) => {
+                    setSelectedItemId(null);
+                    data.setCategory(nextCategory);
+                  }}
+                  onTogglePin={(contentType, categoryName) => {
+                    void data.toggleCategoryPin(contentType, categoryName);
+                  }}
+                  onReorderPinned={(contentType, categoryNames) => {
+                    void data.reorderPinnedCategories(contentType, categoryNames);
+                  }}
+                />
+              ) : null}
               <CatalogGrid
                 items={visibleItems}
                 selectedItemId={selectedItem?.id ?? null}
@@ -156,7 +197,9 @@ export function App() {
               <CatalogDetailPane
                 item={selectedItem}
                 episodes={episodes}
+                livePrograms={livePrograms}
                 isLoadingEpisodes={isLoadingEpisodes}
+                isLoadingPrograms={isLoadingPrograms}
                 onPlay={(itemId) => {
                   const item = visibleItems.find((candidate) => candidate.id === itemId);
                   if (item?.itemType === "live" || item?.itemType === "movie" || item?.itemType === "episode") {
@@ -266,23 +309,54 @@ function getSectionItems(
   return items.live;
 }
 
-function getSectionCategories(section: AppSection, data: ReturnType<typeof useAppData>): string[] {
+function getSectionCategoryViews(section: AppSection, data: ReturnType<typeof useAppData>): CategoryView[] {
   if (section === "movies") {
-    return data.movieCategories;
+    return data.movieCategoryViews;
   }
   if (section === "series") {
-    return data.seriesCategories;
+    return data.seriesCategoryViews;
   }
   if (section === "favorites") {
-    return Array.from(new Set([...data.categories, ...data.movieCategories, ...data.seriesCategories])).sort((a, b) =>
-      a.localeCompare(b)
-    );
+    return mergeCategoryViews([...data.categoryViews, ...data.movieCategoryViews, ...data.seriesCategoryViews]);
   }
   if (section === "recent" || section === "settings") {
     return [];
   }
 
-  return data.categories;
+  return data.categoryViews;
+}
+
+function getSectionCategoryContentType(section: AppSection): CategoryContentType | null {
+  if (section === "movies") {
+    return "movie";
+  }
+  if (section === "series") {
+    return "series";
+  }
+  if (section === "live") {
+    return "live";
+  }
+
+  return null;
+}
+
+function mergeCategoryViews(categoryViews: CategoryView[]): CategoryView[] {
+  const merged = new Map<string, CategoryView>();
+
+  for (const category of categoryViews) {
+    const existing = merged.get(category.name);
+    if (!existing) {
+      merged.set(category.name, { ...category, contentType: "live", isPinned: false, sortOrder: null });
+      continue;
+    }
+
+    merged.set(category.name, {
+      ...existing,
+      itemCount: existing.itemCount + category.itemCount
+    });
+  }
+
+  return Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function getSectionTitle(section: AppSection): string {

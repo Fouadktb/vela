@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LiveChannelView, RecentlyWatchedItemView } from "../../shared/catalog/types";
+import type { CategoryView, LiveChannelView, RecentlyWatchedItemView } from "../../shared/catalog/types";
 import type { ImportProgress, ProviderSummary } from "../../shared/providers/types";
 import { useAppData } from "./useAppData";
 
@@ -15,6 +15,10 @@ const mockApi = vi.hoisted(() => ({
   catalog: {
     listLiveChannels: vi.fn<(query: string, category: string | null) => Promise<LiveChannelView[]>>(),
     listLiveCategories: vi.fn<() => Promise<string[]>>(),
+    listCategoryViews: vi.fn<(contentType: "live" | "movie" | "series") => Promise<CategoryView[]>>(),
+    toggleCategoryPin: vi.fn(),
+    reorderPinnedCategories: vi.fn(),
+    listLivePrograms: vi.fn(),
     listMovies: vi.fn(),
     listMovieCategories: vi.fn(),
     listSeries: vi.fn(),
@@ -85,6 +89,10 @@ describe("useAppData", () => {
       query ? [sportChannel] : [newsChannel, sportChannel]
     );
     mockApi.catalog.listLiveCategories.mockResolvedValue(["News", "Sports"]);
+    mockApi.catalog.listCategoryViews.mockResolvedValue([
+      { contentType: "live", name: "News", itemCount: 1, isPinned: false, sortOrder: null },
+      { contentType: "live", name: "Sports", itemCount: 1, isPinned: true, sortOrder: 0 }
+    ]);
     mockApi.catalog.listMovies.mockResolvedValue([]);
     mockApi.catalog.listMovieCategories.mockResolvedValue([]);
     mockApi.catalog.listSeries.mockResolvedValue([]);
@@ -128,7 +136,7 @@ describe("useAppData", () => {
 
     await waitFor(() => expect(mockApi.providers.list).toHaveBeenCalledTimes(2));
     expect(mockApi.catalog.listLiveChannels).toHaveBeenCalledTimes(2);
-    expect(mockApi.catalog.listLiveCategories).toHaveBeenCalledTimes(2);
+    expect(mockApi.catalog.listCategoryViews).toHaveBeenCalledTimes(6);
     expect(mockApi.catalog.listMovies).toHaveBeenCalledTimes(2);
     expect(mockApi.catalog.listSeries).toHaveBeenCalledTimes(2);
     expect(mockApi.catalog.listRecentlyWatched).toHaveBeenCalledTimes(2);
