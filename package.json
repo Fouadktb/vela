@@ -1,6 +1,6 @@
 {
   "name": "iptv-player",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Desktop IPTV player for macOS and Windows",
   "private": true,
   "packageManager": "pnpm@10.10.0",
@@ -50,8 +50,14 @@
   "build": {
     "appId": "com.fouadktb.iptvplayer",
     "productName": "IPTV Player",
+    "afterPack": "scripts/after-pack-mac.cjs",
     "directories": {
       "output": "release"
+    },
+    "mac": {
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
     }
   },
   "pnpm": {
