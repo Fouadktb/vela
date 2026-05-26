@@ -110,6 +110,22 @@ https://stream.test/unnamed.m3u8`;
     expect(result.diagnostics).toEqual([]);
   });
 
+  it("preserves commas in quoted attributes and channel names", () => {
+    const input = `#EXTM3U
+#EXTINF:-1 group-title="News, Local",News, HD
+https://stream.test/news-hd.m3u8`;
+
+    const result = parseM3u(input, {
+      providerId: "provider-1",
+      nowIso: "2026-05-26T12:00:00.000Z"
+    });
+
+    expect(result.channels).toHaveLength(1);
+    expect(result.channels[0].category).toBe("News, Local");
+    expect(result.channels[0].name).toBe("News, HD");
+    expect(result.diagnostics).toEqual([]);
+  });
+
   it("allocates distinct IDs for duplicate channel names", () => {
     const input = `#EXTM3U
 #EXTINF:-1,BBC One

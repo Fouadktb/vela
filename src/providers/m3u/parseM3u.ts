@@ -76,7 +76,7 @@ export function parseM3u(input: string, options: ParseM3uOptions): ParseM3uResul
 }
 
 function parseExtInf(line: string, lineNumber: number): ExtInfDraft {
-  const commaIndex = line.lastIndexOf(",");
+  const commaIndex = findExtInfNameDelimiter(line);
   const metadata = commaIndex >= 0 ? line.slice(0, commaIndex) : line;
   const name = commaIndex >= 0 ? line.slice(commaIndex + 1).trim() : "Unnamed Channel";
   const attributes: Record<string, string> = {};
@@ -90,6 +90,25 @@ function parseExtInf(line: string, lineNumber: number): ExtInfDraft {
     name: name || "Unnamed Channel",
     attributes
   };
+}
+
+function findExtInfNameDelimiter(line: string): number {
+  let isQuoted = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+
+    if (char === '"') {
+      isQuoted = !isQuoted;
+      continue;
+    }
+
+    if (char === "," && !isQuoted) {
+      return index;
+    }
+  }
+
+  return -1;
 }
 
 function toLiveChannel(
