@@ -1,12 +1,15 @@
 import { FastForward, Pause, Play, Rewind, Square } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { KeyboardEvent, MouseEvent } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { MouseEvent, PointerEvent } from "react";
 import { iptvApi } from "../../app/api";
 import type { PlaybackState } from "../../../shared/playback/types";
 import { getSeekSecondsForDoubleClick } from "./playerGestures";
 
+const DOUBLE_TAP_MAX_MS = 350;
+
 export function PlayerControls() {
   const [state, setState] = useState<PlaybackState | null>(null);
+  const lastTapTimeRef = useRef<number | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -26,6 +29,34 @@ export function PlayerControls() {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!state || state.status === "idle" || !state.isSeekable) {
+      return;
+    }
+
+    const handleWindowKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (isEditableTarget(event.target) || isEditableTarget(document.activeElement)) {
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        void iptvApi.playback.seek({ offsetSeconds: -10 });
+      }
+
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        void iptvApi.playback.seek({ offsetSeconds: 10 });
+      }
+    };
+
+    window.addEventListener("keydown", handleWindowKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleWindowKeyDown);
+    };
+  }, [state?.isSeekable, state?.status]);
 
   if (!state || state.status === "idle") {
     return null;
@@ -55,19 +86,29 @@ export function PlayerControls() {
     }
   };
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!state.isSeekable) {
+  const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "mouse" || isButtonEventTarget(event.target)) {
       return;
     }
 
-    if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      void iptvApi.playback.seek({ offsetSeconds: -10 });
+    const previousTapTime = lastTapTimeRef.current;
+    lastTapTimeRef.current = event.timeStamp;
+
+    if (previousTapTime === null || event.timeStamp - previousTapTime > DOUBLE_TAP_MAX_MS) {
+      return;
     }
 
-    if (event.key === "ArrowRight") {
-      event.preventDefault();
-      void iptvApi.playback.seek({ offsetSeconds: 10 });
+    lastTapTimeRef.current = null;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const offsetSeconds = getSeekSecondsForDoubleClick({
+      clientX: event.clientX,
+      left: bounds.left,
+      width: bounds.width,
+      isSeekable: state.isSeekable
+    });
+
+    if (offsetSeconds !== 0) {
+      void iptvApi.playback.seek({ offsetSeconds });
     }
   };
 
@@ -79,7 +120,7 @@ export function PlayerControls() {
     <div
       className="player-controls"
       onDoubleClick={handleDoubleClick}
-      onKeyDown={handleKeyDown}
+      onPointerUp={handlePointerUp}
       role="toolbar"
       aria-label="Playback controls"
       tabIndex={0}
@@ -134,4 +175,20 @@ export function PlayerControls() {
       </div>
     </div>
   );
+}
+
+function isButtonEventTarget(target: EventTarget): boolean {
+  return target instanceof HTMLElement && Boolean(target.closest("button"));
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.isContentEditable || target.closest("[contenteditable='true']")) {
+    return true;
+  }
+
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
 }
