@@ -1,11 +1,11 @@
 import type { LiveChannel } from "../catalog/types.js";
 import type { PlayRequest, PlaybackState, SeekRequest } from "../playback/types.js";
-import type { CreateM3uProviderInput, ImportProgress, Provider } from "../providers/types.js";
+import type { CreateM3uProviderInput, ImportProgress, ProviderSummary } from "../providers/types.js";
 
 export interface IptvApi {
   providers: {
-    list(): Promise<Provider[]>;
-    createM3u(input: CreateM3uProviderInput): Promise<Provider>;
+    list(): Promise<ProviderSummary[]>;
+    createM3u(input: CreateM3uProviderInput): Promise<ProviderSummary>;
     refresh(providerId: string): Promise<void>;
     onImportProgress(callback: (progress: ImportProgress) => void): () => void;
   };

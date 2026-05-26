@@ -12,6 +12,26 @@ export interface Provider {
   lastRefreshAt: string | null;
 }
 
+export interface ProviderSummary {
+  id: string;
+  type: ProviderType;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  lastRefreshAt: string | null;
+}
+
+export function toProviderSummary(provider: Provider): ProviderSummary {
+  return {
+    id: provider.id,
+    type: provider.type,
+    name: provider.name,
+    createdAt: provider.createdAt,
+    updatedAt: provider.updatedAt,
+    lastRefreshAt: provider.lastRefreshAt
+  };
+}
+
 export interface CreateM3uProviderInput {
   name: string;
   source: string;

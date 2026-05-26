@@ -1,7 +1,7 @@
-import type { CatalogItemType } from "../catalog/types.js";
+import type { PlayableCatalogItemType } from "../catalog/types.js";
 
 export interface PlayRequest {
-  itemType: CatalogItemType;
+  itemType: PlayableCatalogItemType;
   itemId: string;
 }
 
@@ -10,7 +10,7 @@ export type PlaybackStatus = "idle" | "loading" | "playing" | "paused" | "error"
 export interface PlaybackState {
   status: PlaybackStatus;
   itemId: string | null;
-  itemType: CatalogItemType | null;
+  itemType: PlayableCatalogItemType | null;
   title: string | null;
   positionSeconds: number;
   durationSeconds: number | null;
@@ -19,5 +19,5 @@ export interface PlaybackState {
 }
 
 export interface SeekRequest {
-  seconds: number;
+  offsetSeconds: number;
 }

@@ -1,4 +1,5 @@
 export type CatalogItemType = "live" | "movie" | "series" | "episode";
+export type PlayableCatalogItemType = Exclude<CatalogItemType, "series">;
 
 export interface StreamResolverData {
   providerType: "m3u" | "xtream";

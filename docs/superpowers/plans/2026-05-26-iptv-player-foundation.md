@@ -517,6 +517,7 @@ Create `src/shared/catalog/types.ts`:
 
 ```ts
 export type CatalogItemType = "live" | "movie" | "series" | "episode";
+export type PlayableCatalogItemType = Exclude<CatalogItemType, "series">;
 
 export interface StreamResolverData {
   providerType: "m3u" | "xtream";
@@ -598,6 +599,26 @@ export interface Provider {
   lastRefreshAt: string | null;
 }
 
+export interface ProviderSummary {
+  id: string;
+  type: ProviderType;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  lastRefreshAt: string | null;
+}
+
+export function toProviderSummary(provider: Provider): ProviderSummary {
+  return {
+    id: provider.id,
+    type: provider.type,
+    name: provider.name,
+    createdAt: provider.createdAt,
+    updatedAt: provider.updatedAt,
+    lastRefreshAt: provider.lastRefreshAt
+  };
+}
+
 export interface CreateM3uProviderInput {
   name: string;
   source: string;
@@ -618,10 +639,10 @@ export interface ImportProgress {
 Create `src/shared/playback/types.ts`:
 
 ```ts
-import type { CatalogItemType } from "../catalog/types";
+import type { PlayableCatalogItemType } from "../catalog/types";
 
 export interface PlayRequest {
-  itemType: CatalogItemType;
+  itemType: PlayableCatalogItemType;
   itemId: string;
 }
 
@@ -630,7 +651,7 @@ export type PlaybackStatus = "idle" | "loading" | "playing" | "paused" | "error"
 export interface PlaybackState {
   status: PlaybackStatus;
   itemId: string | null;
-  itemType: CatalogItemType | null;
+  itemType: PlayableCatalogItemType | null;
   title: string | null;
   positionSeconds: number;
   durationSeconds: number | null;
@@ -639,7 +660,7 @@ export interface PlaybackState {
 }
 
 export interface SeekRequest {
-  seconds: number;
+  offsetSeconds: number;
 }
 ```
 
@@ -680,12 +701,12 @@ Create `src/shared/ipc/types.ts`:
 ```ts
 import type { LiveChannel } from "../catalog/types";
 import type { PlayRequest, PlaybackState, SeekRequest } from "../playback/types";
-import type { CreateM3uProviderInput, ImportProgress, Provider } from "../providers/types";
+import type { CreateM3uProviderInput, ImportProgress, ProviderSummary } from "../providers/types";
 
 export interface IptvApi {
   providers: {
-    list(): Promise<Provider[]>;
-    createM3u(input: CreateM3uProviderInput): Promise<Provider>;
+    list(): Promise<ProviderSummary[]>;
+    createM3u(input: CreateM3uProviderInput): Promise<ProviderSummary>;
     refresh(providerId: string): Promise<void>;
     onImportProgress(callback: (progress: ImportProgress) => void): () => void;
   };
@@ -775,11 +796,19 @@ import type { IptvApi } from "../../shared/ipc/types";
 
 declare global {
   interface Window {
-    iptv: IptvApi;
+    iptv?: IptvApi;
   }
 }
 
-export const iptvApi = window.iptv;
+export function getIptvApi(): IptvApi {
+  if (!window.iptv) {
+    throw new Error("IPTV preload API is unavailable");
+  }
+
+  return window.iptv;
+}
+
+export const iptvApi = getIptvApi();
 ```
 
 - [ ] **Step 8: Run typecheck**
@@ -1512,7 +1541,7 @@ Create `electron/main/ipc/registerIpcHandlers.ts`:
 import type { BrowserWindow } from "electron";
 import { ipcMain } from "electron";
 import { ipcChannels } from "../../../src/shared/ipc/types.js";
-import type { CreateM3uProviderInput } from "../../../src/shared/providers/types.js";
+import { toProviderSummary, type CreateM3uProviderInput } from "../../../src/shared/providers/types.js";
 import type { createCatalogRepository } from "../storage/catalogRepository.js";
 import type { createProviderRepository } from "../storage/providerRepository.js";
 import type { importM3uProvider } from "../imports/importM3uProvider.js";
@@ -1529,7 +1558,7 @@ interface RegisterIpcHandlersDeps {
 }
 
 export function registerIpcHandlers(deps: RegisterIpcHandlersDeps): void {
-  ipcMain.handle(ipcChannels.providersList, () => deps.providerRepository.list());
+  ipcMain.handle(ipcChannels.providersList, () => deps.providerRepository.list().map(toProviderSummary));
 
   ipcMain.handle(ipcChannels.providersCreateM3u, async (_event, input: CreateM3uProviderInput) => {
     const provider = deps.providerRepository.createM3u(input);
@@ -1538,7 +1567,7 @@ export function registerIpcHandlers(deps: RegisterIpcHandlersDeps): void {
       catalogRepository: deps.catalogRepository,
       emitProgress: (progress) => deps.mainWindow.webContents.send(ipcChannels.providersImportProgress, progress)
     });
-    return provider;
+    return toProviderSummary(provider);
   });
 
   ipcMain.handle(ipcChannels.providersRefresh, async (_event, providerId: string) => {
@@ -1712,11 +1741,11 @@ Create `src/renderer/app/useAppData.ts`:
 ```ts
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { LiveChannel } from "../../shared/catalog/types";
-import type { Provider } from "../../shared/providers/types";
+import type { ProviderSummary } from "../../shared/providers/types";
 import { iptvApi } from "./api";
 
 export function useAppData() {
-  const [providers, setProviders] = useState<Provider[]>([]);
+  const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [channels, setChannels] = useState<LiveChannel[]>([]);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
@@ -2499,7 +2528,7 @@ export function createMpvController(options: CreateMpvControllerOptions) {
     if (!state.isSeekable) {
       return;
     }
-    await sendCommand(["seek", request.seconds, "relative"]);
+    await sendCommand(["seek", request.offsetSeconds, "relative"]);
   }
 
   async function sendCommand(command: MpvJsonValue[]): Promise<void> {
@@ -2765,10 +2794,10 @@ export function PlayerControls() {
         return;
       }
       if (event.key === "ArrowLeft") {
-        void iptvApi.playback.seek({ seconds: -10 });
+        void iptvApi.playback.seek({ offsetSeconds: -10 });
       }
       if (event.key === "ArrowRight") {
-        void iptvApi.playback.seek({ seconds: 10 });
+        void iptvApi.playback.seek({ offsetSeconds: 10 });
       }
     }
 
@@ -2791,7 +2820,7 @@ export function PlayerControls() {
           isSeekable: state.isSeekable
         });
         if (seconds !== 0) {
-          void iptvApi.playback.seek({ seconds });
+          void iptvApi.playback.seek({ offsetSeconds: seconds });
         }
       }}
     >
@@ -2800,7 +2829,7 @@ export function PlayerControls() {
         {state.errorMessage ? <span className="playback-error">{state.errorMessage}</span> : null}
       </div>
       <div className="player-buttons">
-        <button type="button" title="Back 10 seconds" disabled={!state.isSeekable} onClick={() => iptvApi.playback.seek({ seconds: -10 })}>
+        <button type="button" title="Back 10 seconds" disabled={!state.isSeekable} onClick={() => iptvApi.playback.seek({ offsetSeconds: -10 })}>
           <StepBack size={17} />
         </button>
         <button type="button" title="Play or pause" onClick={() => iptvApi.playback.pause()}>
@@ -2809,7 +2838,7 @@ export function PlayerControls() {
         <button type="button" title="Stop" onClick={() => iptvApi.playback.stop()}>
           <Square size={17} />
         </button>
-        <button type="button" title="Forward 10 seconds" disabled={!state.isSeekable} onClick={() => iptvApi.playback.seek({ seconds: 10 })}>
+        <button type="button" title="Forward 10 seconds" disabled={!state.isSeekable} onClick={() => iptvApi.playback.seek({ offsetSeconds: 10 })}>
           <StepForward size={17} />
         </button>
       </div>
