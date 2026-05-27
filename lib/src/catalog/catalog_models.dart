@@ -470,6 +470,7 @@ class ProviderCatalogSnapshot {
     this.series = const [],
     this.seasons = const [],
     this.episodes = const [],
+    this.refreshedEpisodeSeriesIds,
     this.refreshedAtMs,
   });
 
@@ -479,6 +480,10 @@ class ProviderCatalogSnapshot {
   final List<SeriesInput> series;
   final List<SeasonInput> seasons;
   final List<EpisodeInput> episodes;
+
+  /// Null means the season and episode lists are a complete provider snapshot.
+  /// A set means only those series ids had their episode details refreshed.
+  final Set<String>? refreshedEpisodeSeriesIds;
   final int? refreshedAtMs;
 }
 

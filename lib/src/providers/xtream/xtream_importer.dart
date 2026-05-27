@@ -8,7 +8,7 @@ class XtreamImporter {
 
   final XtreamClient client;
 
-  Future<ProviderCatalogSnapshot> importProvider({
+  Future<XtreamImportResult> importProvider({
     required String providerId,
   }) async {
     await client.getPlayerApiInfo();
@@ -47,6 +47,8 @@ class XtreamImporter {
     final series = <SeriesInput>[];
     final seasons = <SeasonInput>[];
     final episodes = <EpisodeInput>[];
+    final refreshedEpisodeSeriesIds = <String>{};
+    var skippedSeriesDetails = 0;
 
     for (final item in seriesItems) {
       if (item.seriesId.isEmpty) {
@@ -64,7 +66,14 @@ class XtreamImporter {
         ),
       );
 
-      final info = await client.getSeriesInfo(item.seriesId);
+      late final XtreamSeriesInfo info;
+      try {
+        info = await client.getSeriesInfo(item.seriesId);
+      } on XtreamClientException {
+        skippedSeriesDetails += 1;
+        continue;
+      }
+      refreshedEpisodeSeriesIds.add(seriesItemId);
 
       final seasonByNumber = {
         for (final season in info.seasons) season.seasonNumber: season,
@@ -122,15 +131,26 @@ class XtreamImporter {
       }
     }
 
-    return ProviderCatalogSnapshot(
-      providerId: providerId,
-      categories: categories,
-      items: items,
-      series: series,
-      seasons: seasons,
-      episodes: episodes,
+    return XtreamImportResult(
+      snapshot: ProviderCatalogSnapshot(
+        providerId: providerId,
+        categories: categories,
+        items: items,
+        series: series,
+        seasons: seasons,
+        episodes: episodes,
+        refreshedEpisodeSeriesIds: refreshedEpisodeSeriesIds,
+      ),
+      warningMessage: _seriesDetailsWarning(skippedSeriesDetails),
     );
   }
+}
+
+class XtreamImportResult {
+  const XtreamImportResult({required this.snapshot, this.warningMessage});
+
+  final ProviderCatalogSnapshot snapshot;
+  final String? warningMessage;
 }
 
 List<CatalogCategoryInput> _categoryInputs(
@@ -258,4 +278,12 @@ String _seriesItemId(String providerId, String seriesId) {
 
 String _episodeItemId(String providerId, String episodeId) {
   return '$providerId:episode:$episodeId';
+}
+
+String? _seriesDetailsWarning(int skippedCount) {
+  if (skippedCount == 0) {
+    return null;
+  }
+  final noun = skippedCount == 1 ? 'series' : 'series';
+  return 'Skipped episode details for $skippedCount $noun because the provider returned incomplete series metadata';
 }

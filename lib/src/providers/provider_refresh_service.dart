@@ -252,10 +252,13 @@ class ProviderRefreshService {
       httpClient: _httpClient,
       timeout: playlistTimeout,
     );
-    final snapshot = await XtreamImporter(
+    final result = await XtreamImporter(
       client,
     ).importProvider(providerId: provider.id);
-    return _ProviderImportResult(snapshot: snapshot);
+    return _ProviderImportResult(
+      snapshot: result.snapshot,
+      warningMessage: result.warningMessage,
+    );
   }
 
   _ProviderImportResult _parsePlaylist(String providerId, String playlist) {

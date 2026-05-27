@@ -158,6 +158,7 @@ class CatalogRepository {
   Future<void> replaceProviderCatalog(ProviderCatalogSnapshot snapshot) async {
     final now = snapshot.refreshedAtMs ?? _nowMs();
     _validateSnapshot(snapshot);
+    final refreshedEpisodeSeriesIds = snapshot.refreshedEpisodeSeriesIds;
 
     await _db.transaction(() async {
       await (_db.update(_db.categories)
@@ -169,12 +170,14 @@ class CatalogRepository {
       await (_db.update(_db.series)
             ..where((row) => row.providerId.equals(snapshot.providerId)))
           .write(const SeriesCompanion(isStale: Value(true)));
-      await (_db.update(_db.seasons)
-            ..where((row) => row.providerId.equals(snapshot.providerId)))
-          .write(const SeasonsCompanion(isStale: Value(true)));
-      await (_db.update(_db.episodes)
-            ..where((row) => row.providerId.equals(snapshot.providerId)))
-          .write(const EpisodesCompanion(isStale: Value(true)));
+      if (refreshedEpisodeSeriesIds == null) {
+        await (_db.update(_db.seasons)
+              ..where((row) => row.providerId.equals(snapshot.providerId)))
+            .write(const SeasonsCompanion(isStale: Value(true)));
+        await (_db.update(_db.episodes)
+              ..where((row) => row.providerId.equals(snapshot.providerId)))
+            .write(const EpisodesCompanion(isStale: Value(true)));
+      }
 
       final categories = _collectCategories(snapshot);
       for (final category in categories.values) {
@@ -186,6 +189,13 @@ class CatalogRepository {
       }
       for (final item in snapshot.series) {
         await _upsertSeries(item, now);
+      }
+      if (refreshedEpisodeSeriesIds != null) {
+        await _markEpisodeDetailsStaleForSeries(
+          providerId: snapshot.providerId,
+          seriesIds: refreshedEpisodeSeriesIds,
+        );
+        await _markEpisodeDetailsStaleForRemovedSeries(snapshot.providerId);
       }
       for (final item in snapshot.seasons) {
         await _upsertSeason(item, now);
@@ -741,6 +751,63 @@ class CatalogRepository {
         );
   }
 
+  Future<void> _markEpisodeDetailsStaleForSeries({
+    required String providerId,
+    required Set<String> seriesIds,
+  }) async {
+    if (seriesIds.isEmpty) {
+      return;
+    }
+
+    for (final chunk in _chunked(seriesIds, 400)) {
+      await (_db.update(_db.seasons)..where(
+            (row) =>
+                row.providerId.equals(providerId) & row.seriesId.isIn(chunk),
+          ))
+          .write(const SeasonsCompanion(isStale: Value(true)));
+      await (_db.update(_db.episodes)..where(
+            (row) =>
+                row.providerId.equals(providerId) & row.seriesId.isIn(chunk),
+          ))
+          .write(const EpisodesCompanion(isStale: Value(true)));
+    }
+  }
+
+  Future<void> _markEpisodeDetailsStaleForRemovedSeries(
+    String providerId,
+  ) async {
+    await _db.customUpdate(
+      '''
+      UPDATE seasons
+      SET is_stale = 1
+      WHERE provider_id = ?
+        AND series_id IN (
+          SELECT id
+          FROM series
+          WHERE provider_id = ?
+            AND is_stale = 1
+        )
+      ''',
+      variables: [Variable<String>(providerId), Variable<String>(providerId)],
+      updates: {_db.seasons},
+    );
+    await _db.customUpdate(
+      '''
+      UPDATE episodes
+      SET is_stale = 1
+      WHERE provider_id = ?
+        AND series_id IN (
+          SELECT id
+          FROM series
+          WHERE provider_id = ?
+            AND is_stale = 1
+        )
+      ''',
+      variables: [Variable<String>(providerId), Variable<String>(providerId)],
+      updates: {_db.episodes},
+    );
+  }
+
   Future<String?> _resolveCategoryId(CatalogItemInput input) async {
     final categoryName = input.categoryName?.trim();
     if (categoryName != null && categoryName.isNotEmpty) {
@@ -903,6 +970,15 @@ void _validateSnapshot(ProviderCatalogSnapshot snapshot) {
       throw ArgumentError('Cannot replace episodes across providers');
     }
   }
+  final refreshedEpisodeSeriesIds = snapshot.refreshedEpisodeSeriesIds;
+  if (refreshedEpisodeSeriesIds != null) {
+    final seriesIds = snapshot.series.map(_seriesRowId).toSet();
+    for (final seriesId in refreshedEpisodeSeriesIds) {
+      if (!seriesIds.contains(seriesId)) {
+        throw ArgumentError('Cannot refresh episodes outside provider scope');
+      }
+    }
+  }
 }
 
 CatalogProvider _toProvider(CatalogProviderRow row) {
@@ -1025,6 +1101,20 @@ CatalogEpisode _episodeFromQueryRow(QueryRow row) {
       isStale: row.read<bool>('is_stale'),
     ),
   );
+}
+
+Iterable<List<T>> _chunked<T>(Iterable<T> values, int size) sync* {
+  final chunk = <T>[];
+  for (final value in values) {
+    chunk.add(value);
+    if (chunk.length == size) {
+      yield List<T>.unmodifiable(chunk);
+      chunk.clear();
+    }
+  }
+  if (chunk.isNotEmpty) {
+    yield List<T>.unmodifiable(chunk);
+  }
 }
 
 int _nowMs() => DateTime.now().millisecondsSinceEpoch;
