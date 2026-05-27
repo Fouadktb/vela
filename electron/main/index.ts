@@ -41,6 +41,8 @@ async function boot(): Promise<void> {
       return;
     }
 
+    restoreRegularAppActivation();
+
     if (!mainWindow || mainWindow.isDestroyed()) {
       mainWindow = createMainWindow();
       mainWindow.on("closed", () => {
@@ -51,10 +53,24 @@ async function boot(): Promise<void> {
       });
     }
 
+    focusMainWindow();
+    setTimeout(focusMainWindow, 200);
+    setTimeout(focusMainWindow, 650);
+  };
+  const focusMainWindow = () => {
+    if (isQuitting || !mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
     if (mainWindow.isMinimized()) {
       mainWindow.restore();
     }
+
+    restoreRegularAppActivation();
+    mainWindow.setSkipTaskbar(false);
     mainWindow.show();
+    app.focus({ steal: true });
+    mainWindow.moveTop();
     mainWindow.focus();
   };
   let mpvController: ReturnType<typeof createMpvController> | null = null;
@@ -100,6 +116,15 @@ async function boot(): Promise<void> {
   app.on("activate", () => {
     showMainWindow();
   });
+}
+
+function restoreRegularAppActivation(): void {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  app.setActivationPolicy("regular");
+  void app.dock.show();
 }
 
 app.on("window-all-closed", () => {

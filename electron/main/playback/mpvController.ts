@@ -228,6 +228,10 @@ export function createMpvController(options: CreateMpvControllerOptions) {
   let statePollTimer: NodeJS.Timeout | null = null;
   let state: PlaybackState = createIdleState();
   let nextIpcRequestId = 1;
+  const processExitBehavior = new WeakMap<
+    ChildProcessWithoutNullStreams,
+    { closePlayerWindow: boolean; closeFallbackTimer: NodeJS.Timeout | null }
+  >();
 
   const setState = (patch: Partial<PlaybackState>) => {
     state = { ...state, ...patch };
@@ -402,13 +406,15 @@ export function createMpvController(options: CreateMpvControllerOptions) {
       }
       return;
     }
-    processRef.removeAllListeners();
-    processRef.kill();
+    const mpvProcess = processRef;
+    const closePlayerWindow = input.closePlayerWindow !== false;
+    processExitBehavior.set(mpvProcess, {
+      closeFallbackTimer: closePlayerWindow ? schedulePlayerWindowCloseFallback(mpvProcess) : null,
+      closePlayerWindow
+    });
+    mpvProcess.kill();
     processRef = null;
     currentIpcPath = null;
-    if (input.closePlayerWindow !== false) {
-      options.playerWindow?.close();
-    }
   };
 
   const play = async (request: PlayRequest): Promise<void> => {
@@ -471,6 +477,7 @@ export function createMpvController(options: CreateMpvControllerOptions) {
     const mpvProcess = spawn(mpvPath, buildMpvArgs({ ipcPath, url, title, platform: process.platform }));
     processRef = mpvProcess;
     currentIpcPath = ipcPath;
+    processExitBehavior.set(mpvProcess, { closePlayerWindow: true, closeFallbackTimer: null });
 
     mpvProcess.stderr.on("data", (chunk: Buffer) => {
       const diagnostic = sanitizePlaybackDiagnostic(chunk.toString("utf8"));
@@ -493,6 +500,7 @@ export function createMpvController(options: CreateMpvControllerOptions) {
         processRef = null;
         currentIpcPath = null;
       }
+      clearProcessExitBehavior(mpvProcess);
       stopStatePolling();
       setState({
         status: "error",
@@ -512,7 +520,7 @@ export function createMpvController(options: CreateMpvControllerOptions) {
           errorMessage: code === 0 || signal === "SIGTERM" ? null : "mpv exited unexpectedly."
         });
       }
-      options.playerWindow?.close();
+      closePlayerWindowForProcess(mpvProcess);
     });
   };
 
@@ -564,6 +572,31 @@ export function createMpvController(options: CreateMpvControllerOptions) {
     }
 
     return options.catalogRepository.getEpisode(itemId);
+  }
+
+  function schedulePlayerWindowCloseFallback(mpvProcess: ChildProcessWithoutNullStreams): NodeJS.Timeout {
+    return setTimeout(() => {
+      closePlayerWindowForProcess(mpvProcess);
+    }, 1_500);
+  }
+
+  function closePlayerWindowForProcess(mpvProcess: ChildProcessWithoutNullStreams): void {
+    const behavior = processExitBehavior.get(mpvProcess) ?? {
+      closeFallbackTimer: null,
+      closePlayerWindow: true
+    };
+    clearProcessExitBehavior(mpvProcess);
+    if (behavior.closePlayerWindow) {
+      options.playerWindow?.close();
+    }
+  }
+
+  function clearProcessExitBehavior(mpvProcess: ChildProcessWithoutNullStreams): void {
+    const behavior = processExitBehavior.get(mpvProcess);
+    if (behavior?.closeFallbackTimer) {
+      clearTimeout(behavior.closeFallbackTimer);
+    }
+    processExitBehavior.delete(mpvProcess);
   }
 }
 

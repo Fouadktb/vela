@@ -329,6 +329,76 @@ describe("mpv playback helpers", () => {
     }
   });
 
+  it("waits for the mpv process to exit before dismissing the theater window on stop", async () => {
+    vi.resetModules();
+    const originalMpvPath = process.env.MPV_PATH;
+    process.env.MPV_PATH = "/usr/bin/mpv-test";
+
+    class MockChildProcess extends EventEmitter {
+      public killed = false;
+      public stderr = new EventEmitter();
+
+      kill(): boolean {
+        this.killed = true;
+        return true;
+      }
+    }
+
+    let childProcess: MockChildProcess | null = null;
+    const spawnMock = vi.fn(() => {
+      childProcess = new MockChildProcess();
+      return childProcess;
+    });
+    vi.doMock("node:child_process", () => ({
+      default: { spawn: spawnMock },
+      spawn: spawnMock
+    }));
+
+    try {
+      const { createMpvController } = await import("../../electron/main/playback/mpvController.js");
+      const playerWindow = {
+        open: vi.fn(),
+        raise: vi.fn(),
+        close: vi.fn()
+      };
+      const catalogRepository = {
+        getLiveChannel: vi.fn(() => ({
+          id: "live-1",
+          type: "live",
+          name: "BBC One",
+          stream: { url: "https://example.test/live.m3u8" }
+        })),
+        getMovie: vi.fn(),
+        getEpisode: vi.fn(),
+        markRecentlyWatched: vi.fn()
+      };
+      const controller = createMpvController({
+        catalogRepository: catalogRepository as never,
+        onStateChange: vi.fn(),
+        playerWindow
+      });
+
+      await controller.play({ itemId: "live-1", itemType: "live" });
+      expect(childProcess).toBeInstanceOf(MockChildProcess);
+      (childProcess as unknown as MockChildProcess).emit("spawn");
+
+      await controller.stop();
+
+      expect(playerWindow.close).not.toHaveBeenCalled();
+
+      (childProcess as unknown as MockChildProcess).emit("exit", null, "SIGTERM");
+
+      expect(playerWindow.close).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.doUnmock("node:child_process");
+      if (originalMpvPath === undefined) {
+        delete process.env.MPV_PATH;
+      } else {
+        process.env.MPV_PATH = originalMpvPath;
+      }
+    }
+  });
+
   it("builds external player arguments without exposing extra data", () => {
     expect(buildExternalPlayerArgs("https://example.test/live.m3u8")).toEqual(["https://example.test/live.m3u8"]);
   });
