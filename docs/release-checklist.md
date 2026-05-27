@@ -1,43 +1,54 @@
 # Release Checklist
 
-Use this checklist for every local release candidate before creating a GitHub Release.
+Use this checklist for every local Vela release candidate before creating a GitHub Release.
 
 ## Versioning
 
-- Confirm the target release version and update `package.json`.
+- Confirm the target release version and update `pubspec.yaml`.
 - Keep version tags aligned with the app version, using `vX.Y.Z`.
 - Confirm release commits use Conventional Commits.
 - Review user-facing changes and note anything that should be included in release notes.
 - Confirm the working tree contains only intended release changes before tagging.
 
-## Verification
+## Flutter Verification
 
-- Run `pnpm typecheck`.
-- Run `pnpm test`.
-- Run `pnpm check:mpv`.
-- Run `pnpm build`.
-- Run `pnpm prepare:mpv -- --platform=darwin` before a macOS package.
-- Run `pnpm prepare:mpv -- --platform=win32 --arch=x64` before a Windows package.
-- Import a known legal sample M3U playlist.
-- Confirm the imported playlist appears in the live catalog.
-- Start playback for a legal sample stream.
-- Confirm the embedded player controls respond.
-- Confirm the external player fallback opens the current stream when embedded playback is unavailable.
+- Run `flutter pub get`.
+- Run `dart format --set-exit-if-changed .`.
+- Run `flutter analyze`.
+- On macOS, run `flutter build macos`.
+- On Windows, run `flutter build windows`.
 
-## Local Builds
+## Manual Provider Import Checks
 
-- On macOS, run `pnpm build:mac`.
-- Confirm the packaged app contains `Contents/Resources/bin/mpv/darwin/mpv.app/Contents/MacOS/mpv`.
-- Install the macOS artifact locally and confirm the app launches.
-- On Windows, run `pnpm build:win`.
-- Confirm the packaged app contains `resources/bin/mpv/win32/mpv.exe`.
-- Install the Windows artifact locally and confirm the app launches.
-- Check that generated artifacts are written under `release/`.
+- Import a known legal sample M3U provider.
+- Confirm the imported provider appears in the catalog.
+- Import a known legal Xtream provider, when credentials are available.
+- Confirm live channels, movies, and series appear in their expected sections.
+- Restart Vela and confirm imported provider data is still available.
 
-## GitHub Release
+## Manual Playback Checks
+
+- Launch the built app from the platform build output.
+- Start playback for a known legal sample stream.
+- Confirm video renders inside the Vela player.
+- Confirm play, pause, seek, and volume controls respond.
+- Close the player and confirm the app remains open.
+- Relaunch Vela and confirm watch continuity resumes from the expected item.
+
+## Local Packages
+
+- On macOS, run `scripts/package-macos.sh`.
+- Confirm `release/vela-macos/Vela.app` launches locally.
+- Confirm `release/vela-macos.zip` is ready for GitHub upload.
+- On Windows, run `scripts/package-windows.ps1`.
+- Confirm `release/vela-windows/vela.exe` launches locally.
+- Confirm `release/vela-windows.zip` is ready for GitHub upload.
+- Keep installer and DMG polish separate until the playable Flutter app is validated on both macOS and Windows.
+
+## GitHub Release Upload
 
 - Create or push the release tag after local verification passes.
 - Create a GitHub Release for the tag.
-- Upload release artifacts manually from `release/`.
+- Upload the platform zip files manually from `release/`.
 - Include verification notes, supported platforms, and known limitations in the release body.
 - Download the uploaded artifacts from GitHub and confirm the files match the local release output.
