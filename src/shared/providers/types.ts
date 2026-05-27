@@ -10,6 +10,8 @@ export interface Provider {
   createdAt: string;
   updatedAt: string;
   lastRefreshAt: string | null;
+  autoRefreshEnabled: boolean;
+  autoRefreshIntervalHours: number;
 }
 
 export interface ProviderSummary {
@@ -19,6 +21,8 @@ export interface ProviderSummary {
   createdAt: string;
   updatedAt: string;
   lastRefreshAt: string | null;
+  autoRefreshEnabled: boolean;
+  autoRefreshIntervalHours: number;
 }
 
 export function toProviderSummary(provider: Provider): ProviderSummary {
@@ -28,8 +32,16 @@ export function toProviderSummary(provider: Provider): ProviderSummary {
     name: provider.name,
     createdAt: provider.createdAt,
     updatedAt: provider.updatedAt,
-    lastRefreshAt: provider.lastRefreshAt
+    lastRefreshAt: provider.lastRefreshAt,
+    autoRefreshEnabled: provider.autoRefreshEnabled,
+    autoRefreshIntervalHours: provider.autoRefreshIntervalHours
   };
+}
+
+export interface UpdateProviderAutoRefreshInput {
+  providerId: string;
+  enabled: boolean;
+  intervalHours: number;
 }
 
 export interface CreateM3uProviderInput {
@@ -109,6 +121,26 @@ export function validateCreateXtreamProviderInput(input: unknown): CreateXtreamP
   }
 
   return { name, serverUrl, username, password };
+}
+
+export function validateUpdateProviderAutoRefreshInput(input: unknown): UpdateProviderAutoRefreshInput {
+  if (!isRecord(input)) {
+    throw new Error("Invalid provider auto-refresh input");
+  }
+
+  const providerId = typeof input.providerId === "string" ? input.providerId.trim() : "";
+  const enabled = input.enabled;
+  const intervalHours = input.intervalHours;
+
+  if (!providerId || typeof enabled !== "boolean" || typeof intervalHours !== "number" || !Number.isInteger(intervalHours)) {
+    throw new Error("Invalid provider auto-refresh input");
+  }
+
+  if (intervalHours < 1 || intervalHours > 168) {
+    throw new Error("Invalid provider auto-refresh input");
+  }
+
+  return { providerId, enabled, intervalHours };
 }
 
 export function buildXtreamM3uPlaylistUrl(input: CreateXtreamProviderInput): string {

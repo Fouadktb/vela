@@ -26,7 +26,9 @@ export function createSchema(db: SqliteDatabase): void {
       password TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      last_refresh_at TEXT
+      last_refresh_at TEXT,
+      auto_refresh_enabled INTEGER NOT NULL DEFAULT 1,
+      auto_refresh_interval_hours INTEGER NOT NULL DEFAULT 24
     );
 
     CREATE TABLE IF NOT EXISTS live_channels (
@@ -129,4 +131,16 @@ export function createSchema(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_live_programs_channel_start ON live_programs(channel_id, start_at);
     CREATE INDEX IF NOT EXISTS idx_live_programs_provider ON live_programs(provider_id);
   `);
+
+  addColumnIfMissing(db, "providers", "auto_refresh_enabled", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing(db, "providers", "auto_refresh_interval_hours", "INTEGER NOT NULL DEFAULT 24");
+}
+
+function addColumnIfMissing(db: SqliteDatabase, tableName: string, columnName: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  if (columns.some((column) => column.name === columnName)) {
+    return;
+  }
+
+  db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`).run();
 }

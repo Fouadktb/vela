@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, Pin, PinOff, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { CategoryContentType, CategoryView } from "../../../shared/catalog/types";
 
 interface CategoryRailProps {
@@ -34,6 +34,10 @@ export function CategoryRail({
   );
   const visiblePinnedCategories = visibleCategories.filter((category) => category.isPinned);
   const visibleOtherCategories = visibleCategories.filter((category) => !category.isPinned);
+
+  useEffect(() => {
+    setCategoryQuery("");
+  }, [allLabel, contentType]);
 
   const movePinnedCategory = (categoryName: string, direction: -1 | 1) => {
     if (!contentType) {

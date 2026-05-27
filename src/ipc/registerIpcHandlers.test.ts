@@ -30,12 +30,16 @@ describe("registerIpcHandlers", () => {
       password: "hidden-password",
       createdAt: "2026-05-26T08:00:00.000Z",
       updatedAt: "2026-05-26T08:00:00.000Z",
-      lastRefreshAt: null
+      lastRefreshAt: null,
+    autoRefreshEnabled: true,
+    autoRefreshIntervalHours: 24
     };
     const refreshedProvider: Provider = {
       ...createdProvider,
       updatedAt: "2026-05-26T08:01:00.000Z",
-      lastRefreshAt: "2026-05-26T08:01:00.000Z"
+      lastRefreshAt: "2026-05-26T08:01:00.000Z",
+    autoRefreshEnabled: true,
+    autoRefreshIntervalHours: 24
     };
 
     registerIpcHandlers({
@@ -70,7 +74,9 @@ describe("registerIpcHandlers", () => {
       name: "Playlist",
       createdAt: "2026-05-26T08:00:00.000Z",
       updatedAt: "2026-05-26T08:01:00.000Z",
-      lastRefreshAt: "2026-05-26T08:01:00.000Z"
+      lastRefreshAt: "2026-05-26T08:01:00.000Z",
+    autoRefreshEnabled: true,
+    autoRefreshIntervalHours: 24
     });
     expect(result).not.toHaveProperty("source");
     expect(result).not.toHaveProperty("username");
@@ -87,7 +93,9 @@ describe("registerIpcHandlers", () => {
       password: null,
       createdAt: "2026-05-26T08:00:00.000Z",
       updatedAt: "2026-05-26T08:00:00.000Z",
-      lastRefreshAt: null
+      lastRefreshAt: null,
+    autoRefreshEnabled: true,
+    autoRefreshIntervalHours: 24
     };
     const deleteProvider = vi.fn();
 
@@ -166,12 +174,16 @@ describe("registerIpcHandlers", () => {
       password: "secret-password",
       createdAt: "2026-05-26T08:00:00.000Z",
       updatedAt: "2026-05-26T08:00:00.000Z",
-      lastRefreshAt: null
+      lastRefreshAt: null,
+    autoRefreshEnabled: true,
+    autoRefreshIntervalHours: 24
     };
     const refreshedProvider: Provider = {
       ...createdProvider,
       updatedAt: "2026-05-26T08:01:00.000Z",
-      lastRefreshAt: "2026-05-26T08:01:00.000Z"
+      lastRefreshAt: "2026-05-26T08:01:00.000Z",
+    autoRefreshEnabled: true,
+    autoRefreshIntervalHours: 24
     };
     const createXtream = vi.fn(() => createdProvider);
     const importXtreamProvider = vi.fn(async () => undefined);
@@ -223,7 +235,9 @@ describe("registerIpcHandlers", () => {
       name: "Xtream Account",
       createdAt: "2026-05-26T08:00:00.000Z",
       updatedAt: "2026-05-26T08:01:00.000Z",
-      lastRefreshAt: "2026-05-26T08:01:00.000Z"
+      lastRefreshAt: "2026-05-26T08:01:00.000Z",
+    autoRefreshEnabled: true,
+    autoRefreshIntervalHours: 24
     });
     expect(result).not.toHaveProperty("source");
     expect(result).not.toHaveProperty("username");
@@ -257,6 +271,60 @@ describe("registerIpcHandlers", () => {
     await handler?.(null, "provider-1");
 
     expect(deleteProvider).toHaveBeenCalledWith("provider-1");
+  });
+
+  it("updates provider auto-refresh settings through IPC", async () => {
+    const provider: Provider = {
+      id: "provider-1",
+      type: "m3u",
+      name: "Playlist",
+      source: "https://example.test/list.m3u",
+      username: null,
+      password: null,
+      createdAt: "2026-05-26T08:00:00.000Z",
+      updatedAt: "2026-05-26T09:00:00.000Z",
+      lastRefreshAt: "2026-05-26T08:01:00.000Z",
+      autoRefreshEnabled: false,
+      autoRefreshIntervalHours: 48
+    };
+    const updateAutoRefresh = vi.fn();
+
+    registerIpcHandlers({
+      emitToRenderer: vi.fn(),
+      providerRepository: {
+        list: vi.fn(),
+        createM3u: vi.fn(),
+        createXtream: vi.fn(),
+        get: vi.fn(() => provider),
+        markRefreshed: vi.fn(),
+        updateAutoRefresh,
+        delete: vi.fn()
+      } as never,
+      catalogRepository: {} as never,
+      importM3uProvider: vi.fn(async () => undefined) as never,
+      importXtreamProvider: vi.fn(async () => undefined) as never,
+      importXtreamSeriesEpisodes: vi.fn(async () => []) as never,
+      mpvController: {} as never,
+      openInExternalPlayer: vi.fn() as never
+    });
+
+    const result = await ipcHandlers.get(ipcChannels.providersUpdateAutoRefresh)?.(null, {
+      providerId: "provider-1",
+      enabled: false,
+      intervalHours: 48
+    });
+
+    expect(updateAutoRefresh).toHaveBeenCalledWith("provider-1", false, 48);
+    expect(result).toEqual({
+      id: "provider-1",
+      type: "m3u",
+      name: "Playlist",
+      createdAt: "2026-05-26T08:00:00.000Z",
+      updatedAt: "2026-05-26T09:00:00.000Z",
+      lastRefreshAt: "2026-05-26T08:01:00.000Z",
+      autoRefreshEnabled: false,
+      autoRefreshIntervalHours: 48
+    });
   });
 
   it("returns recently watched catalog items", () => {
@@ -412,7 +480,9 @@ function xtreamProvider(): Provider {
     password: "pass",
     createdAt: "2026-05-26T08:00:00.000Z",
     updatedAt: "2026-05-26T08:00:00.000Z",
-    lastRefreshAt: null
+    lastRefreshAt: null,
+    autoRefreshEnabled: true,
+    autoRefreshIntervalHours: 24
   };
 }
 

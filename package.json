@@ -1,7 +1,7 @@
 {
   "name": "iptv-player",
   "version": "0.1.1",
-  "description": "Desktop IPTV player for macOS and Windows",
+  "description": "Vela desktop IPTV player for macOS and Windows",
   "private": true,
   "packageManager": "pnpm@10.10.0",
   "type": "commonjs",
@@ -52,7 +52,7 @@
   },
   "build": {
     "appId": "com.fouadktb.iptvplayer",
-    "productName": "IPTV Player",
+    "productName": "Vela",
     "afterPack": "scripts/after-pack-mac.cjs",
     "directories": {
       "output": "release"

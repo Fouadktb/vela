@@ -539,16 +539,18 @@ function toTrackTitle(rawTitle: unknown, language: string | null, trackType: Pla
 
 function buildOscScriptOptions(): string {
   return [
-    "osc-layout=bottombar",
+    "osc-layout=box",
     "osc-seekbarstyle=bar",
     "osc-deadzonesize=0",
     "osc-minmousemove=3",
-    "osc-hidetimeout=1200",
-    "osc-fadeduration=220",
-    "osc-boxalpha=70",
-    "osc-barmargin=6",
-    "osc-scalewindowed=1.08",
-    "osc-scalefullscreen=1.18"
+    "osc-hidetimeout=950",
+    "osc-fadeduration=180",
+    "osc-boxalpha=55",
+    "osc-barmargin=18",
+    "osc-scalewindowed=1.16",
+    "osc-scalefullscreen=1.24",
+    "osc-valign=0.92",
+    "osc-halign=0.5"
   ].join(",");
 }
 

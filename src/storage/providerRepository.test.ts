@@ -28,7 +28,9 @@ describe("providerRepository", () => {
       source: "https://example.test/playlist.m3u",
       username: null,
       password: null,
-      lastRefreshAt: null
+      lastRefreshAt: null,
+    autoRefreshEnabled: true,
+    autoRefreshIntervalHours: 24
     });
     expect(provider.id).toEqual(expect.any(String));
     expect(provider.createdAt).toEqual(expect.any(String));
@@ -51,7 +53,9 @@ describe("providerRepository", () => {
       source: "https://panel.example.test:8443",
       username: "my-user",
       password: "my-password",
-      lastRefreshAt: null
+      lastRefreshAt: null,
+    autoRefreshEnabled: true,
+    autoRefreshIntervalHours: 24
     });
     expect(provider.id).toEqual(expect.any(String));
     expect(repo.get(provider.id)).toEqual(provider);
@@ -96,6 +100,22 @@ describe("providerRepository", () => {
     expect(refreshed?.lastRefreshAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(refreshed?.updatedAt).toEqual(refreshed?.lastRefreshAt);
     expect(refreshed?.updatedAt).not.toBe("2026-05-26T09:00:00.000Z");
+  });
+
+  it("updates provider auto-refresh preferences", () => {
+    const { repo } = createTestRepository();
+    const provider = repo.createM3u({
+      name: "Main playlist",
+      source: "https://example.test/playlist.m3u",
+      sourceKind: "url"
+    });
+
+    repo.updateAutoRefresh(provider.id, false, 48);
+
+    expect(repo.get(provider.id)).toMatchObject({
+      autoRefreshEnabled: false,
+      autoRefreshIntervalHours: 48
+    });
   });
 
   it("deletes a provider and its live catalog rows", () => {

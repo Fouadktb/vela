@@ -16,7 +16,9 @@ describe("importM3uProvider", () => {
       password: null,
       createdAt: "2026-05-26T00:00:00.000Z",
       updatedAt: "2026-05-26T00:00:00.000Z",
-      lastRefreshAt: null
+      lastRefreshAt: null,
+    autoRefreshEnabled: true,
+    autoRefreshIntervalHours: 24
     };
     const progress: ImportProgress[] = [];
 
@@ -110,7 +112,9 @@ function providerWithSource(source: string): Provider {
     password: null,
     createdAt: "2026-05-26T00:00:00.000Z",
     updatedAt: "2026-05-26T00:00:00.000Z",
-    lastRefreshAt: null
+    lastRefreshAt: null,
+    autoRefreshEnabled: true,
+    autoRefreshIntervalHours: 24
   };
 }
 

@@ -9,6 +9,7 @@ const mockApi = vi.hoisted(() => ({
     list: vi.fn<() => Promise<ProviderSummary[]>>(),
     createM3u: vi.fn(),
     refresh: vi.fn(),
+    updateAutoRefresh: vi.fn(),
     delete: vi.fn(),
     onImportProgress: vi.fn()
   },
@@ -48,7 +49,9 @@ const provider: ProviderSummary = {
   name: "Local M3U",
   createdAt: "2026-05-26T08:00:00.000Z",
   updatedAt: "2026-05-26T08:00:00.000Z",
-  lastRefreshAt: null
+  lastRefreshAt: null,
+    autoRefreshEnabled: true,
+    autoRefreshIntervalHours: 24
 };
 
 const newsChannel: LiveChannelView = {

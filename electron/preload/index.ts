@@ -9,6 +9,7 @@ const api: IptvApi = {
     createM3u: (input) => ipcRenderer.invoke(ipcChannels.providersCreateM3u, input),
     createXtream: (input) => ipcRenderer.invoke(ipcChannels.providersCreateXtream, input),
     refresh: (providerId) => ipcRenderer.invoke(ipcChannels.providersRefresh, providerId),
+    updateAutoRefresh: (input) => ipcRenderer.invoke(ipcChannels.providersUpdateAutoRefresh, input),
     delete: (providerId) => ipcRenderer.invoke(ipcChannels.providersDelete, providerId),
     onImportProgress: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, progress: ImportProgress) => callback(progress);

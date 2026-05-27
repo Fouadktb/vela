@@ -20,6 +20,7 @@ const mockApi = vi.hoisted(() => ({
     createM3u: vi.fn(),
     createXtream: vi.fn(),
     refresh: vi.fn(),
+    updateAutoRefresh: vi.fn(),
     delete: vi.fn(),
     onImportProgress: vi.fn()
   },
@@ -61,7 +62,9 @@ const provider: ProviderSummary = {
   name: "Xtream Account",
   createdAt: "2026-05-26T08:00:00.000Z",
   updatedAt: "2026-05-26T08:00:00.000Z",
-  lastRefreshAt: "2026-05-26T08:10:00.000Z"
+  lastRefreshAt: "2026-05-26T08:10:00.000Z",
+    autoRefreshEnabled: true,
+    autoRefreshIntervalHours: 24
 };
 
 const liveChannel: LiveChannelView = {
@@ -199,6 +202,10 @@ describe("App catalog navigation", () => {
     mockApi.catalog.toggleFavorite.mockResolvedValue(undefined);
     mockApi.providers.delete.mockResolvedValue(undefined);
     mockApi.providers.refresh.mockResolvedValue(undefined);
+    mockApi.providers.updateAutoRefresh.mockResolvedValue({
+      ...provider,
+      autoRefreshEnabled: false
+    });
     mockApi.playback.play.mockResolvedValue(undefined);
     mockApi.playback.getState.mockResolvedValue(idlePlaybackState);
     mockApi.playback.onState.mockReturnValue(vi.fn());
@@ -260,6 +267,22 @@ describe("App catalog navigation", () => {
     expect(screen.getByText("Market Watch")).toBeInTheDocument();
   });
 
+  it("resets search and category filters when switching sections", async () => {
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Live TV" })).toBeInTheDocument());
+    fireEvent.change(screen.getByPlaceholderText("Search live channels"), { target: { value: "city" } });
+    fireEvent.click(screen.getByRole("button", { name: "News category" }));
+    fireEvent.change(screen.getByLabelText("Search categories"), { target: { value: "spo" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Movies" }));
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Movies" })).toBeInTheDocument());
+    expect(screen.getByPlaceholderText<HTMLInputElement>("Search movies").value).toBe("");
+    expect(screen.getByLabelText<HTMLInputElement>("Search categories").value).toBe("");
+    await waitFor(() => expect(mockApi.catalog.listMovies).toHaveBeenLastCalledWith("", null));
+  });
+
   it("starts movie playback from the selected movie detail pane", async () => {
     render(<App />);
 
@@ -319,6 +342,15 @@ describe("App catalog navigation", () => {
     expect(screen.getByRole("heading", { name: "1 configured" })).toBeInTheDocument();
     expect(screen.getByText("Xtream Account")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Add an M3U provider" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Auto-refresh"));
+    await waitFor(() =>
+      expect(mockApi.providers.updateAutoRefresh).toHaveBeenCalledWith({
+        providerId: provider.id,
+        enabled: false,
+        intervalHours: 24
+      })
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Delete Xtream Account" }));
 

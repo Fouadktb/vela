@@ -16,6 +16,8 @@ interface ProviderRow {
   created_at: string;
   updated_at: string;
   last_refresh_at: string | null;
+  auto_refresh_enabled: 0 | 1;
+  auto_refresh_interval_hours: number;
 }
 
 export function createProviderRepository(db: SqliteDatabase) {
@@ -35,13 +37,20 @@ export function createProviderRepository(db: SqliteDatabase) {
         password: null,
         createdAt: now,
         updatedAt: now,
-        lastRefreshAt: null
+        lastRefreshAt: null,
+        autoRefreshEnabled: true,
+        autoRefreshIntervalHours: 24
       };
 
       db.prepare(`
-        INSERT INTO providers (id, type, name, source, username, password, created_at, updated_at, last_refresh_at)
-        VALUES (@id, @type, @name, @source, @username, @password, @createdAt, @updatedAt, @lastRefreshAt)
-      `).run(provider);
+        INSERT INTO providers (
+          id, type, name, source, username, password, created_at, updated_at, last_refresh_at,
+          auto_refresh_enabled, auto_refresh_interval_hours
+        ) VALUES (
+          @id, @type, @name, @source, @username, @password, @createdAt, @updatedAt, @lastRefreshAt,
+          @autoRefreshEnabled, @autoRefreshIntervalHours
+        )
+      `).run(toProviderInsertParams(provider));
 
       return provider;
     },
@@ -56,19 +65,34 @@ export function createProviderRepository(db: SqliteDatabase) {
         password: input.password,
         createdAt: now,
         updatedAt: now,
-        lastRefreshAt: null
+        lastRefreshAt: null,
+        autoRefreshEnabled: true,
+        autoRefreshIntervalHours: 24
       };
 
       db.prepare(`
-        INSERT INTO providers (id, type, name, source, username, password, created_at, updated_at, last_refresh_at)
-        VALUES (@id, @type, @name, @source, @username, @password, @createdAt, @updatedAt, @lastRefreshAt)
-      `).run(provider);
+        INSERT INTO providers (
+          id, type, name, source, username, password, created_at, updated_at, last_refresh_at,
+          auto_refresh_enabled, auto_refresh_interval_hours
+        ) VALUES (
+          @id, @type, @name, @source, @username, @password, @createdAt, @updatedAt, @lastRefreshAt,
+          @autoRefreshEnabled, @autoRefreshIntervalHours
+        )
+      `).run(toProviderInsertParams(provider));
 
       return provider;
     },
     markRefreshed(providerId: string): void {
       const now = new Date().toISOString();
       db.prepare("UPDATE providers SET last_refresh_at = ?, updated_at = ? WHERE id = ?").run(now, now, providerId);
+    },
+    updateAutoRefresh(providerId: string, enabled: boolean, intervalHours: number): void {
+      const normalizedIntervalHours = Math.min(Math.max(Math.trunc(intervalHours), 1), 168);
+      db.prepare(`
+        UPDATE providers
+        SET auto_refresh_enabled = ?, auto_refresh_interval_hours = ?, updated_at = ?
+        WHERE id = ?
+      `).run(enabled ? 1 : 0, normalizedIntervalHours, new Date().toISOString(), providerId);
     },
     get(providerId: string): Provider | null {
       const row = db.prepare("SELECT * FROM providers WHERE id = ?").get(providerId) as ProviderRow | undefined;
@@ -123,6 +147,15 @@ function toProvider(row: ProviderRow): Provider {
     password: row.password,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    lastRefreshAt: row.last_refresh_at
+    lastRefreshAt: row.last_refresh_at,
+    autoRefreshEnabled: row.auto_refresh_enabled === 1,
+    autoRefreshIntervalHours: row.auto_refresh_interval_hours
+  };
+}
+
+function toProviderInsertParams(provider: Provider) {
+  return {
+    ...provider,
+    autoRefreshEnabled: provider.autoRefreshEnabled ? 1 : 0
   };
 }

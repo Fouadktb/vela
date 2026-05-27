@@ -255,7 +255,9 @@ function xtreamProvider(): Provider {
     password: "pass",
     createdAt: "2026-05-26T08:00:00.000Z",
     updatedAt: "2026-05-26T08:00:00.000Z",
-    lastRefreshAt: null
+    lastRefreshAt: null,
+    autoRefreshEnabled: true,
+    autoRefreshIntervalHours: 24
   };
 }
 

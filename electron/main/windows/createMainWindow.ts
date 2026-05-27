@@ -9,7 +9,7 @@ export function createMainWindow(): BrowserWindow {
     height: 820,
     minWidth: 980,
     minHeight: 640,
-    title: "IPTV Player",
+    title: "Vela",
     backgroundColor: "#111111",
     webPreferences: {
       preload: preloadPath,

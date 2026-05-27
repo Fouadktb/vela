@@ -49,6 +49,7 @@ export function App() {
   function changeSection(nextSection: AppSection) {
     setActiveSection(nextSection);
     setSelectedItemId(null);
+    data.setQuery("");
     data.setCategory(null);
     if (nextSection === "recent") {
       void data.reloadRecentlyWatched();
@@ -160,6 +161,10 @@ export function App() {
             onRefresh={async (providerId) => {
               await iptvApi.providers.refresh(providerId);
               await data.reloadAll();
+            }}
+            onAutoRefreshChange={async (providerId, enabled, intervalHours) => {
+              await iptvApi.providers.updateAutoRefresh({ providerId, enabled, intervalHours });
+              await data.reloadProviders();
             }}
             onDelete={async (providerId) => {
               await iptvApi.providers.delete(providerId);

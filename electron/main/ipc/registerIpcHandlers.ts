@@ -6,7 +6,8 @@ import type { PlayRequest, SeekRequest } from "../../../src/shared/playback/type
 import {
   toProviderSummary,
   validateCreateM3uProviderInput,
-  validateCreateXtreamProviderInput
+  validateCreateXtreamProviderInput,
+  validateUpdateProviderAutoRefreshInput
 } from "../../../src/shared/providers/types.js";
 import type { importM3uProvider } from "../imports/importM3uProvider.js";
 import type {
@@ -86,6 +87,16 @@ export function registerIpcHandlers(deps: RegisterIpcHandlersDeps): void {
         emitProgress: (progress) => deps.emitToRenderer(ipcChannels.providersImportProgress, progress)
       });
     }
+  });
+
+  ipcMain.handle(ipcChannels.providersUpdateAutoRefresh, (_event, rawInput: unknown) => {
+    const input = validateUpdateProviderAutoRefreshInput(rawInput);
+    deps.providerRepository.updateAutoRefresh(input.providerId, input.enabled, input.intervalHours);
+    const provider = deps.providerRepository.get(input.providerId);
+    if (!provider) {
+      throw new Error(`Provider not found: ${input.providerId}`);
+    }
+    return toProviderSummary(provider);
   });
 
   ipcMain.handle(ipcChannels.providersDelete, (_event, providerId: string) => {

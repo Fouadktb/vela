@@ -11,14 +11,15 @@ export function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <span className="brand-mark">IP</span>
-        <span>IPTV Player</span>
+        <span className="brand-mark">V</span>
+        <span>Vela</span>
       </div>
       <nav className="sidebar-nav" aria-label="Main navigation">
         <button
           className={activeSection === "live" ? "nav-item active" : "nav-item"}
           type="button"
           aria-current={activeSection === "live" ? "page" : undefined}
+          title="Live TV"
           onClick={() => onSectionChange("live")}
         >
           <Tv size={18} aria-hidden="true" />
@@ -28,6 +29,7 @@ export function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
           className={activeSection === "favorites" ? "nav-item active" : "nav-item"}
           type="button"
           aria-current={activeSection === "favorites" ? "page" : undefined}
+          title="Favorites"
           onClick={() => onSectionChange("favorites")}
         >
           <Heart size={18} aria-hidden="true" />
@@ -37,6 +39,7 @@ export function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
           className={activeSection === "recent" ? "nav-item active" : "nav-item"}
           type="button"
           aria-current={activeSection === "recent" ? "page" : undefined}
+          title="Recently Watched"
           onClick={() => onSectionChange("recent")}
         >
           <Clock size={18} aria-hidden="true" />
@@ -46,6 +49,7 @@ export function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
           className={activeSection === "movies" ? "nav-item active" : "nav-item"}
           type="button"
           aria-current={activeSection === "movies" ? "page" : undefined}
+          title="Movies"
           onClick={() => onSectionChange("movies")}
         >
           <Video size={18} aria-hidden="true" />
@@ -55,6 +59,7 @@ export function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
           className={activeSection === "series" ? "nav-item active" : "nav-item"}
           type="button"
           aria-current={activeSection === "series" ? "page" : undefined}
+          title="Series"
           onClick={() => onSectionChange("series")}
         >
           <MonitorPlay size={18} aria-hidden="true" />
@@ -64,6 +69,7 @@ export function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
           className={activeSection === "settings" ? "nav-item active" : "nav-item"}
           type="button"
           aria-current={activeSection === "settings" ? "page" : undefined}
+          title="Settings"
           onClick={() => onSectionChange("settings")}
         >
           <Settings size={18} aria-hidden="true" />

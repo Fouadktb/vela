@@ -7,10 +7,19 @@ interface ProviderSettingsProps {
   providers: ProviderSummary[];
   onCreated(): Promise<void>;
   onRefresh(providerId: string): Promise<void>;
+  onAutoRefreshChange(providerId: string, enabled: boolean, intervalHours: number): Promise<void>;
   onDelete(providerId: string): Promise<void>;
 }
 
-export function ProviderSettings({ providers, onCreated, onRefresh, onDelete }: ProviderSettingsProps) {
+const refreshIntervals = [6, 12, 24, 48, 72];
+
+export function ProviderSettings({
+  providers,
+  onCreated,
+  onRefresh,
+  onAutoRefreshChange,
+  onDelete
+}: ProviderSettingsProps) {
   const [pendingProviderId, setPendingProviderId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -50,6 +59,37 @@ export function ProviderSettings({ providers, onCreated, onRefresh, onDelete }: 
                 <strong>{provider.name}</strong>
                 <span>{provider.type === "xtream" ? "Xtream Codes" : "M3U playlist"}</span>
                 <small>{provider.lastRefreshAt ? `Last refresh ${formatProviderDate(provider.lastRefreshAt)}` : "Not refreshed yet"}</small>
+              </div>
+              <div className="provider-refresh-settings">
+                <label className="provider-toggle">
+                  <input
+                    type="checkbox"
+                    checked={provider.autoRefreshEnabled}
+                    disabled={pendingProviderId === provider.id}
+                    onChange={(event) =>
+                      void runProviderAction(provider.id, () =>
+                        onAutoRefreshChange(provider.id, event.target.checked, provider.autoRefreshIntervalHours)
+                      )
+                    }
+                  />
+                  <span>Auto-refresh</span>
+                </label>
+                <select
+                  aria-label={`${provider.name} auto-refresh interval`}
+                  disabled={pendingProviderId === provider.id || !provider.autoRefreshEnabled}
+                  value={provider.autoRefreshIntervalHours}
+                  onChange={(event) =>
+                    void runProviderAction(provider.id, () =>
+                      onAutoRefreshChange(provider.id, provider.autoRefreshEnabled, Number(event.target.value))
+                    )
+                  }
+                >
+                  {refreshIntervals.map((interval) => (
+                    <option key={interval} value={interval}>
+                      Every {interval}h
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="provider-actions">
                 <button

@@ -24,6 +24,7 @@ const unavailableIptvApi: IptvApi = {
     createM3u: unavailable,
     createXtream: unavailable,
     refresh: unavailable,
+    updateAutoRefresh: unavailable,
     delete: unavailable,
     onImportProgress: () => () => undefined
   },

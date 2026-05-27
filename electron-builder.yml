@@ -1,5 +1,5 @@
 appId: com.fouadktb.iptvplayer
-productName: IPTV Player
+productName: Vela
 afterPack: scripts/after-pack-mac.cjs
 directories:
   output: release

@@ -13,7 +13,8 @@ import type {
   CreateM3uProviderInput,
   CreateXtreamProviderInput,
   ImportProgress,
-  ProviderSummary
+  ProviderSummary,
+  UpdateProviderAutoRefreshInput
 } from "../providers/types.js";
 
 export interface IptvApi {
@@ -22,6 +23,7 @@ export interface IptvApi {
     createM3u(input: CreateM3uProviderInput): Promise<ProviderSummary>;
     createXtream(input: CreateXtreamProviderInput): Promise<ProviderSummary>;
     refresh(providerId: string): Promise<void>;
+    updateAutoRefresh(input: UpdateProviderAutoRefreshInput): Promise<ProviderSummary>;
     delete(providerId: string): Promise<void>;
     onImportProgress(callback: (progress: ImportProgress) => void): () => void;
   };
@@ -58,6 +60,7 @@ export const ipcChannels = {
   providersCreateM3u: "providers:createM3u",
   providersCreateXtream: "providers:createXtream",
   providersRefresh: "providers:refresh",
+  providersUpdateAutoRefresh: "providers:updateAutoRefresh",
   providersDelete: "providers:delete",
   providersImportProgress: "providers:importProgress",
   catalogListLiveChannels: "catalog:listLiveChannels",
