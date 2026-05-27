@@ -50,7 +50,6 @@ Use this checklist for every local Vela release candidate before creating a GitH
 - For cross-platform artifact builds, run the `Build Vela Artifacts` workflow manually from GitHub Actions.
 - Download `vela-macos.zip` and `vela-windows.zip` from the workflow artifacts when both jobs pass.
 - Create or push the release tag after local verification passes.
-- Create a GitHub Release for the tag.
-- Upload the platform zip files manually from `release/`.
+- Confirm the tag workflow creates the GitHub Release automatically.
 - Include verification notes, supported platforms, and known limitations in the release body.
 - Download the uploaded artifacts from GitHub and confirm the files match the local release output.
