@@ -25,6 +25,23 @@ class WatchHistoryRepository {
     return rows.map(_toWatchHistoryEntry).toList();
   }
 
+  Future<void> clearRecentlyWatched({String? providerId}) async {
+    await _db.transaction(() async {
+      if (providerId == null) {
+        await _db.delete(_db.watchHistory).go();
+        await _db.delete(_db.playbackPositions).go();
+        return;
+      }
+
+      await (_db.delete(
+        _db.watchHistory,
+      )..where((row) => row.providerId.equals(providerId))).go();
+      await (_db.delete(
+        _db.playbackPositions,
+      )..where((row) => row.providerId.equals(providerId))).go();
+    });
+  }
+
   Future<void> addOrUpdateWatchHistory(WatchHistoryUpdate update) async {
     final watchedAt = update.watchedAtMs ?? _nowMs();
     final catalogKey = playbackCatalogKey(

@@ -106,6 +106,10 @@ class ProviderRepository {
     return _catalogRepository.replaceProviderCatalog(snapshot);
   }
 
+  Future<void> clearProviderCatalog(String providerId) {
+    return _catalogRepository.clearProviderCatalog(providerId);
+  }
+
   Future<void> deleteProvider(String providerId) {
     return _catalogRepository.deleteProvider(providerId);
   }

@@ -84,6 +84,41 @@ class CatalogRepository {
     )..where((provider) => provider.id.equals(id))).go();
   }
 
+  Future<void> clearProviderCatalog(String providerId) async {
+    await _db.transaction(() async {
+      await (_db.delete(
+        _db.favoriteItems,
+      )..where((row) => row.providerId.equals(providerId))).go();
+      await (_db.delete(
+        _db.favoriteCategories,
+      )..where((row) => row.providerId.equals(providerId))).go();
+      await (_db.delete(
+        _db.categoryOrder,
+      )..where((row) => row.providerId.equals(providerId))).go();
+      await (_db.delete(
+        _db.watchHistory,
+      )..where((row) => row.providerId.equals(providerId))).go();
+      await (_db.delete(
+        _db.playbackPositions,
+      )..where((row) => row.providerId.equals(providerId))).go();
+      await (_db.delete(
+        _db.episodes,
+      )..where((row) => row.providerId.equals(providerId))).go();
+      await (_db.delete(
+        _db.seasons,
+      )..where((row) => row.providerId.equals(providerId))).go();
+      await (_db.delete(
+        _db.series,
+      )..where((row) => row.providerId.equals(providerId))).go();
+      await (_db.delete(
+        _db.catalogItems,
+      )..where((row) => row.providerId.equals(providerId))).go();
+      await (_db.delete(
+        _db.categories,
+      )..where((row) => row.providerId.equals(providerId))).go();
+    });
+  }
+
   Future<ProviderRefreshRun> createRefreshRun({
     required String id,
     required String providerId,

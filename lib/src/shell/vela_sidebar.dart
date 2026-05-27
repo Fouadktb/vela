@@ -1,76 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../app/section_state.dart';
+
 const double velaSidebarCollapsedWidth = 72;
 const double velaSidebarExpandedWidth = 232;
 const double _sidebarHorizontalPadding = 12;
 const double _sidebarIconSlotWidth = 48;
-
-enum VelaSection {
-  live(
-    label: 'Live',
-    icon: LucideIcons.tv,
-    selectedIcon: LucideIcons.tv,
-    emptyTitle: 'Live channels will appear here',
-    emptyCopy:
-        'Provider import and channel browsing arrive in the next migration tasks.',
-  ),
-  movies(
-    label: 'Movies',
-    icon: LucideIcons.film,
-    selectedIcon: LucideIcons.film,
-    emptyTitle: 'Movie library placeholder',
-    emptyCopy:
-        'Vela will group imported video-on-demand items in this section.',
-  ),
-  series(
-    label: 'Series',
-    icon: LucideIcons.library,
-    selectedIcon: LucideIcons.library,
-    emptyTitle: 'Series browser placeholder',
-    emptyCopy:
-        'Episodes, seasons, and progress rails will be added after catalog storage.',
-  ),
-  favorites(
-    label: 'Favorites',
-    icon: LucideIcons.star,
-    selectedIcon: LucideIcons.star,
-    emptyTitle: 'No favorites yet',
-    emptyCopy:
-        'Favorite channels and titles will be available once catalog data exists.',
-  ),
-  recentlyWatched(
-    label: 'Recently Watched',
-    icon: LucideIcons.history,
-    selectedIcon: LucideIcons.history,
-    emptyTitle: 'Nothing watched yet',
-    emptyCopy:
-        'Playback history will populate this view after the player route lands.',
-  ),
-  settings(
-    label: 'Settings',
-    icon: LucideIcons.settings,
-    selectedIcon: LucideIcons.settings,
-    emptyTitle: 'Settings foundation',
-    emptyCopy: 'Provider, playback, and app preferences will live here.',
-  );
-
-  const VelaSection({
-    required this.label,
-    required this.icon,
-    required this.selectedIcon,
-    required this.emptyTitle,
-    required this.emptyCopy,
-  });
-
-  final String label;
-  final IconData icon;
-  final IconData selectedIcon;
-  final String emptyTitle;
-  final String emptyCopy;
-
-  IconData get placeholderIcon => selectedIcon;
-}
 
 class VelaSidebar extends StatefulWidget {
   const VelaSidebar({
@@ -132,9 +68,14 @@ class _VelaSidebarState extends State<VelaSidebar> {
                     section: section,
                     isExpanded: _isExpanded,
                     isSelected: section == widget.selectedSection,
-                    onPressed: () => widget.onSectionSelected(section),
+                    onPressed: () {
+                      widget.onSectionSelected(section);
+                      if (!_isPinned) {
+                        setState(() => _isHovered = false);
+                      }
+                    },
                   ),
-                  if (section == VelaSection.recentlyWatched)
+                  if (section == VelaSection.recent)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       child: Divider(color: theme.dividerColor),
@@ -293,11 +234,7 @@ class _SidebarItem extends StatelessWidget {
                 children: [
                   SizedBox(
                     width: _sidebarIconSlotWidth,
-                    child: Icon(
-                      isSelected ? section.selectedIcon : section.icon,
-                      color: foreground,
-                      size: 21,
-                    ),
+                    child: Icon(section.icon, color: foreground, size: 21),
                   ),
                   Expanded(
                     child: AnimatedOpacity(
