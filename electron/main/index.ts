@@ -35,11 +35,34 @@ async function boot(): Promise<void> {
       }
     }
   };
+  let isQuitting = false;
+  const showMainWindow = () => {
+    if (isQuitting) {
+      return;
+    }
+
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      mainWindow = createMainWindow();
+      mainWindow.on("closed", () => {
+        mainWindow = null;
+        if (!isQuitting && process.platform !== "darwin") {
+          app.quit();
+        }
+      });
+    }
+
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.show();
+    mainWindow.focus();
+  };
   let mpvController: ReturnType<typeof createMpvController> | null = null;
   const playerWindow = createPlayerOverlayWindowController({
     onUserClose: () => {
       void mpvController?.stop();
-    }
+    },
+    onDismiss: showMainWindow
   });
 
   mpvController = createMpvController({
@@ -48,10 +71,7 @@ async function boot(): Promise<void> {
     playerWindow
   });
 
-  mainWindow = createMainWindow();
-  mainWindow.on("closed", () => {
-    mainWindow = null;
-  });
+  showMainWindow();
 
   registerIpcHandlers({
     emitToRenderer,
@@ -72,16 +92,13 @@ async function boot(): Promise<void> {
   });
 
   app.on("before-quit", () => {
+    isQuitting = true;
     void mpvController?.stop();
+    playerWindow.destroy();
   });
 
   app.on("activate", () => {
-    if (!mainWindow) {
-      mainWindow = createMainWindow();
-      mainWindow.on("closed", () => {
-        mainWindow = null;
-      });
-    }
+    showMainWindow();
   });
 }
 

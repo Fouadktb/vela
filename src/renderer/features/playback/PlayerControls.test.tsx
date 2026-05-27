@@ -280,6 +280,20 @@ describe("PlayerControls", () => {
     expect(mockApi.playback.selectAudioTrack).toHaveBeenCalledWith(2);
     expect(mockApi.playback.selectSubtitleTrack).toHaveBeenCalledWith(null);
   });
+
+  it("keeps track menus visible while mpv metadata is still loading", async () => {
+    render(<PlayerControls />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Video: Detecting tracks" }));
+    expect(screen.getByRole<HTMLButtonElement>("menuitem", { name: "Detecting video tracks" }).disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Audio: Detecting tracks" }));
+    expect(screen.getByRole<HTMLButtonElement>("menuitem", { name: "Detecting audio tracks" }).disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Subtitles: Off" }));
+    expect(screen.getByRole("menuitemradio", { name: "Subtitles off" })).not.toBeNull();
+    expect(screen.getByRole<HTMLButtonElement>("menuitem", { name: "No subtitle tracks" }).disabled).toBe(true);
+  });
 });
 
 function firePointerUp(

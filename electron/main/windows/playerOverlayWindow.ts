@@ -2,16 +2,17 @@ import { BrowserWindow, screen } from "electron";
 import path from "node:path";
 
 let playerOverlayWindow: BrowserWindow | null = null;
-let isProgrammaticClose = false;
 
 interface CreatePlayerOverlayWindowControllerOptions {
   onUserClose?(): void;
+  onDismiss?(): void;
 }
 
 export interface PlayerOverlayWindowController {
   open(): void;
   raise(): void;
   close(): void;
+  destroy(): void;
 }
 
 export function createPlayerOverlayWindowController(
@@ -40,10 +41,17 @@ export function createPlayerOverlayWindowController(
         playerOverlayWindow = null;
         return;
       }
+      playerOverlayWindow.hide();
+      options.onDismiss?.();
+    },
+    destroy() {
+      if (!playerOverlayWindow || playerOverlayWindow.isDestroyed()) {
+        playerOverlayWindow = null;
+        return;
+      }
       const window = playerOverlayWindow;
       playerOverlayWindow = null;
-      isProgrammaticClose = true;
-      window.close();
+      window.destroy();
     }
   };
 }
@@ -95,10 +103,6 @@ function ensurePlayerOverlayWindow(options: CreatePlayerOverlayWindowControllerO
   }
 
   playerOverlayWindow.on("close", (event) => {
-    if (isProgrammaticClose) {
-      return;
-    }
-
     event.preventDefault();
     playerOverlayWindow?.hide();
     options.onUserClose?.();
@@ -106,7 +110,6 @@ function ensurePlayerOverlayWindow(options: CreatePlayerOverlayWindowControllerO
 
   playerOverlayWindow.on("closed", () => {
     playerOverlayWindow = null;
-    isProgrammaticClose = false;
   });
 
   return playerOverlayWindow;

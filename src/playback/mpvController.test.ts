@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import type { PlaybackState } from "../shared/playback/types";
 import {
   buildExternalPlayerArgs,
   waitForExternalPlayerLaunch
@@ -243,6 +244,91 @@ describe("mpv playback helpers", () => {
     expect(sanitizePlaybackDiagnostic("x".repeat(1_000))).toHaveLength(300);
   });
 
+  it("keeps video and audio track metadata when mpv has no subtitle selection", async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    const originalMpvPath = process.env.MPV_PATH;
+    process.env.MPV_PATH = "/usr/bin/mpv-test";
+
+    class MockChildProcess extends EventEmitter {
+      public killed = false;
+      public stderr = new EventEmitter();
+
+      kill(): boolean {
+        this.killed = true;
+        this.emit("exit", null, "SIGTERM");
+        return true;
+      }
+    }
+
+    let childProcess: MockChildProcess | null = null;
+    const spawnMock = vi.fn(() => {
+      childProcess = new MockChildProcess();
+      return childProcess;
+    });
+    vi.doMock("node:child_process", () => ({
+      default: { spawn: spawnMock },
+      spawn: spawnMock
+    }));
+    const createConnectionMock = vi.fn(() => createMockMpvSocket());
+    vi.doMock("node:net", () => ({
+      default: { createConnection: createConnectionMock },
+      createConnection: createConnectionMock
+    }));
+
+    try {
+      const { createMpvController } = await import("../../electron/main/playback/mpvController.js");
+      const stateChanges: PlaybackState[] = [];
+      const playerWindow = {
+        open: vi.fn(),
+        raise: vi.fn(),
+        close: vi.fn()
+      };
+      const catalogRepository = {
+        getLiveChannel: vi.fn(() => ({
+          id: "live-1",
+          type: "live",
+          name: "BBC One",
+          stream: { url: "https://example.test/live.m3u8" }
+        })),
+        getMovie: vi.fn(),
+        getEpisode: vi.fn(),
+        markRecentlyWatched: vi.fn()
+      };
+      const controller = createMpvController({
+        catalogRepository: catalogRepository as never,
+        onStateChange: (state) => {
+          stateChanges.push(state);
+        },
+        playerWindow
+      });
+
+      await controller.play({ itemId: "live-1", itemType: "live" });
+      expect(childProcess).toBeInstanceOf(MockChildProcess);
+      (childProcess as unknown as MockChildProcess).emit("spawn");
+      await vi.advanceTimersByTimeAsync(400);
+
+      const stateWithTracks = [...stateChanges]
+        .reverse()
+        .find((state) => state.videoTracks.length > 0 || state.audioTracks.length > 0);
+
+      expect(stateWithTracks?.videoTracks).toHaveLength(1);
+      expect(stateWithTracks?.audioTracks).toHaveLength(1);
+      expect(stateWithTracks?.subtitleTracks).toHaveLength(0);
+
+      await controller.stop();
+    } finally {
+      vi.useRealTimers();
+      vi.doUnmock("node:child_process");
+      vi.doUnmock("node:net");
+      if (originalMpvPath === undefined) {
+        delete process.env.MPV_PATH;
+      } else {
+        process.env.MPV_PATH = originalMpvPath;
+      }
+    }
+  });
+
   it("builds external player arguments without exposing extra data", () => {
     expect(buildExternalPlayerArgs("https://example.test/live.m3u8")).toEqual(["https://example.test/live.m3u8"]);
   });
@@ -256,3 +342,47 @@ describe("mpv playback helpers", () => {
     await expect(launch).rejects.toThrow("External player failed to launch");
   });
 });
+
+function createMockMpvSocket(): EventEmitter & {
+  write(data: string): boolean;
+  end(data?: string, callback?: () => void): void;
+  destroy(): void;
+} {
+  const socket = new EventEmitter() as EventEmitter & {
+    write(data: string): boolean;
+    end(data?: string, callback?: () => void): void;
+    destroy(): void;
+  };
+  socket.write = (data: string) => {
+    const request = JSON.parse(data) as { request_id: number; command: [string, string] };
+    const propertyName = request.command[1];
+    const response =
+      propertyName === "track-list"
+        ? {
+            request_id: request.request_id,
+            error: "success",
+            data: [
+              { id: 1, type: "video", title: "Main Video", selected: true },
+              { id: 1, type: "audio", title: "English", selected: true }
+            ]
+          }
+        : propertyName === "vid" || propertyName === "aid"
+          ? { request_id: request.request_id, error: "success", data: 1 }
+          : { request_id: request.request_id, error: "property unavailable" };
+
+    queueMicrotask(() => {
+      socket.emit("data", Buffer.from(`${JSON.stringify(response)}\n`));
+    });
+    return true;
+  };
+  socket.end = (_data?: string, callback?: () => void) => {
+    callback?.();
+  };
+  socket.destroy = () => undefined;
+
+  queueMicrotask(() => {
+    socket.emit("connect");
+  });
+
+  return socket;
+}

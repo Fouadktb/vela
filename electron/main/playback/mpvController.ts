@@ -331,20 +331,29 @@ export function createMpvController(options: CreateMpvControllerOptions) {
     });
   };
 
-  const refreshTrackState = async (): Promise<void> => {
+  const getMpvProperty = async <T>(propertyName: string): Promise<T | undefined> => {
     try {
-      const rawTracks = (await sendCommandWithResponse<unknown>(["get_property", "track-list"])) ?? [];
-      const selectedVideoTrack = await sendCommandWithResponse<unknown>(["get_property", "vid"]);
-      const selectedAudioTrack = await sendCommandWithResponse<unknown>(["get_property", "aid"]);
-      const selectedSubtitleTrack = await sendCommandWithResponse<unknown>(["get_property", "sid"]);
-      if (Array.isArray(rawTracks)) {
-        setState(
-          toPlaybackTrackState(rawTracks as MpvRawTrack[], selectedVideoTrack, selectedAudioTrack, selectedSubtitleTrack)
-        );
-      }
+      return await sendCommandWithResponse<T>(["get_property", propertyName]);
     } catch {
-      // Track metadata is best-effort because mpv may not expose IPC immediately after spawn.
+      return undefined;
     }
+  };
+
+  const refreshTrackState = async (): Promise<void> => {
+    const rawTracks = await getMpvProperty<unknown>("track-list");
+    if (!Array.isArray(rawTracks)) {
+      return;
+    }
+
+    const [selectedVideoTrack, selectedAudioTrack, selectedSubtitleTrack] = await Promise.all([
+      getMpvProperty<unknown>("vid"),
+      getMpvProperty<unknown>("aid"),
+      getMpvProperty<unknown>("sid")
+    ]);
+
+    setState(
+      toPlaybackTrackState(rawTracks as MpvRawTrack[], selectedVideoTrack, selectedAudioTrack, selectedSubtitleTrack)
+    );
   };
 
   const stopStatePolling = (): void => {
@@ -366,19 +375,18 @@ export function createMpvController(options: CreateMpvControllerOptions) {
       return;
     }
 
-    try {
-      const [position, duration, paused] = await Promise.all([
-        sendCommandWithResponse<unknown>(["get_property", "time-pos"]),
-        sendCommandWithResponse<unknown>(["get_property", "duration"]),
-        sendCommandWithResponse<unknown>(["get_property", "pause"])
-      ]);
+    const [position, duration, paused] = await Promise.all([
+      getMpvProperty<unknown>("time-pos"),
+      getMpvProperty<unknown>("duration"),
+      getMpvProperty<unknown>("pause")
+    ]);
+
+    if (position !== undefined || duration !== undefined || paused !== undefined) {
       setState({
         status: paused === true ? "paused" : "playing",
         positionSeconds: toFiniteSeconds(position) ?? 0,
         durationSeconds: state.isSeekable ? toFiniteSeconds(duration) : null
       });
-    } catch {
-      // Metrics are best-effort. The player process remains authoritative for lifecycle errors.
     }
 
     await refreshTrackState();

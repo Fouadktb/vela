@@ -1178,6 +1178,15 @@ html.player-overlay-root #root {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.track-option:disabled {
+  cursor: default;
+  color: rgba(248, 243, 230, 0.54);
+}
+
+.track-option:disabled:hover {
+  background: transparent;
+}
+
 .track-option span {
   min-width: 0;
   overflow: hidden;

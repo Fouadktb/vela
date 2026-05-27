@@ -215,6 +215,9 @@ export function PlayerControls({
   const selectedVideoTrack = state.videoTracks.find((track) => track.isSelected) ?? null;
   const selectedAudioTrack = state.audioTracks.find((track) => track.isSelected) ?? null;
   const selectedSubtitleTrack = state.subtitleTracks.find((track) => track.isSelected) ?? null;
+  const videoTrackLabel = selectedVideoTrack?.title ?? (state.videoTracks.length > 0 ? "Auto" : "Detecting tracks");
+  const audioTrackLabel = selectedAudioTrack?.title ?? (state.audioTracks.length > 0 ? "Auto" : "Detecting tracks");
+  const subtitleTrackLabel = selectedSubtitleTrack?.title ?? "Off";
   const hasTimeline = state.isSeekable && state.durationSeconds !== null && state.durationSeconds > 0;
   const progressPercent = hasTimeline
     ? Math.min(100, Math.max(0, (state.positionSeconds / (state.durationSeconds ?? 1)) * 100))
@@ -298,21 +301,21 @@ export function PlayerControls({
         </div>
 
         <div className="player-track-actions">
-          {state.videoTracks.length > 0 ? (
-            <div className="track-menu">
-              <button
-                type="button"
-                className="track-menu-trigger"
-                aria-label={`Video: ${selectedVideoTrack?.title ?? "Auto"}`}
-                aria-expanded={openTrackMenu === "video"}
-                onClick={() => setOpenTrackMenu((current) => (current === "video" ? null : "video"))}
-              >
-                <Film size={16} aria-hidden="true" />
-                <span>Video</span>
-              </button>
-              {openTrackMenu === "video" ? (
-                <div className="track-menu-panel" role="menu" aria-label="Video tracks">
-                  {state.videoTracks.map((track) => (
+          <div className="track-menu">
+            <button
+              type="button"
+              className="track-menu-trigger"
+              aria-label={`Video: ${videoTrackLabel}`}
+              aria-expanded={openTrackMenu === "video"}
+              onClick={() => setOpenTrackMenu((current) => (current === "video" ? null : "video"))}
+            >
+              <Film size={16} aria-hidden="true" />
+              <span>Video</span>
+            </button>
+            {openTrackMenu === "video" ? (
+              <div className="track-menu-panel" role="menu" aria-label="Video tracks">
+                {state.videoTracks.length > 0 ? (
+                  state.videoTracks.map((track) => (
                     <button
                       type="button"
                       className={track.isSelected ? "track-option active" : "track-option"}
@@ -327,26 +330,30 @@ export function PlayerControls({
                       <span>{formatTrackTitle(track)}</span>
                       {track.isDefault ? <small>Default</small> : null}
                     </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          {state.audioTracks.length > 0 ? (
-            <div className="track-menu">
-              <button
-                type="button"
-                className="track-menu-trigger"
-                aria-label={`Audio: ${selectedAudioTrack?.title ?? "Auto"}`}
-                aria-expanded={openTrackMenu === "audio"}
-                onClick={() => setOpenTrackMenu((current) => (current === "audio" ? null : "audio"))}
-              >
-                <Languages size={16} aria-hidden="true" />
-                <span>Audio</span>
-              </button>
-              {openTrackMenu === "audio" ? (
-                <div className="track-menu-panel" role="menu" aria-label="Audio tracks">
-                  {state.audioTracks.map((track) => (
+                  ))
+                ) : (
+                  <button type="button" className="track-option disabled" role="menuitem" disabled>
+                    <span>Detecting video tracks</span>
+                  </button>
+                )}
+              </div>
+            ) : null}
+          </div>
+          <div className="track-menu">
+            <button
+              type="button"
+              className="track-menu-trigger"
+              aria-label={`Audio: ${audioTrackLabel}`}
+              aria-expanded={openTrackMenu === "audio"}
+              onClick={() => setOpenTrackMenu((current) => (current === "audio" ? null : "audio"))}
+            >
+              <Languages size={16} aria-hidden="true" />
+              <span>Audio</span>
+            </button>
+            {openTrackMenu === "audio" ? (
+              <div className="track-menu-panel" role="menu" aria-label="Audio tracks">
+                {state.audioTracks.length > 0 ? (
+                  state.audioTracks.map((track) => (
                     <button
                       type="button"
                       className={track.isSelected ? "track-option active" : "track-option"}
@@ -361,38 +368,42 @@ export function PlayerControls({
                       <span>{formatTrackTitle(track)}</span>
                       {track.isDefault ? <small>Default</small> : null}
                     </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          {state.subtitleTracks.length > 0 ? (
-            <div className="track-menu">
-              <button
-                type="button"
-                className="track-menu-trigger"
-                aria-label={`Subtitles: ${selectedSubtitleTrack?.title ?? "Off"}`}
-                aria-expanded={openTrackMenu === "subtitle"}
-                onClick={() => setOpenTrackMenu((current) => (current === "subtitle" ? null : "subtitle"))}
-              >
-                <Captions size={16} aria-hidden="true" />
-                <span>Subtitles</span>
-              </button>
-              {openTrackMenu === "subtitle" ? (
-                <div className="track-menu-panel" role="menu" aria-label="Subtitle tracks">
-                  <button
-                    type="button"
-                    className={selectedSubtitleTrack === null ? "track-option active" : "track-option"}
-                    role="menuitemradio"
-                    aria-checked={selectedSubtitleTrack === null}
-                    onClick={() => {
-                      setOpenTrackMenu(null);
-                      requestSubtitleTrack(null);
-                    }}
-                  >
-                    <span>Subtitles off</span>
+                  ))
+                ) : (
+                  <button type="button" className="track-option disabled" role="menuitem" disabled>
+                    <span>Detecting audio tracks</span>
                   </button>
-                  {state.subtitleTracks.map((track) => (
+                )}
+              </div>
+            ) : null}
+          </div>
+          <div className="track-menu">
+            <button
+              type="button"
+              className="track-menu-trigger"
+              aria-label={`Subtitles: ${subtitleTrackLabel}`}
+              aria-expanded={openTrackMenu === "subtitle"}
+              onClick={() => setOpenTrackMenu((current) => (current === "subtitle" ? null : "subtitle"))}
+            >
+              <Captions size={16} aria-hidden="true" />
+              <span>Subtitles</span>
+            </button>
+            {openTrackMenu === "subtitle" ? (
+              <div className="track-menu-panel" role="menu" aria-label="Subtitle tracks">
+                <button
+                  type="button"
+                  className={selectedSubtitleTrack === null ? "track-option active" : "track-option"}
+                  role="menuitemradio"
+                  aria-checked={selectedSubtitleTrack === null}
+                  onClick={() => {
+                    setOpenTrackMenu(null);
+                    requestSubtitleTrack(null);
+                  }}
+                >
+                  <span>Subtitles off</span>
+                </button>
+                {state.subtitleTracks.length > 0 ? (
+                  state.subtitleTracks.map((track) => (
                     <button
                       type="button"
                       className={track.isSelected ? "track-option active" : "track-option"}
@@ -407,11 +418,15 @@ export function PlayerControls({
                       <span>{formatTrackTitle(track)}</span>
                       {track.isDefault ? <small>Default</small> : null}
                     </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+                  ))
+                ) : (
+                  <button type="button" className="track-option disabled" role="menuitem" disabled>
+                    <span>No subtitle tracks</span>
+                  </button>
+                )}
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

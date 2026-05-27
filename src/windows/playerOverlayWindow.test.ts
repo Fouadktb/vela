@@ -79,17 +79,20 @@ describe("playerOverlayWindow", () => {
     expect(onUserClose).toHaveBeenCalledTimes(1);
   });
 
-  it("allows controller-owned close without re-entering the user close callback", async () => {
+  it("hides controller-owned closes and returns focus to the app without re-entering the user close callback", async () => {
     const onUserClose = vi.fn();
+    const onDismiss = vi.fn();
     const { createPlayerOverlayWindowController } = await import(
       "../../electron/main/windows/playerOverlayWindow.js"
     );
-    const controller = createPlayerOverlayWindowController({ onUserClose });
+    const controller = createPlayerOverlayWindowController({ onUserClose, onDismiss });
 
     controller.open();
     controller.close();
 
-    expect(windows[0].destroyed).toBe(true);
+    expect(windows[0].hide).toHaveBeenCalled();
+    expect(windows[0].destroyed).toBe(false);
     expect(onUserClose).not.toHaveBeenCalled();
+    expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 });
