@@ -9,6 +9,7 @@ import '../../app/navigation_controller.dart';
 import '../../app/section_state.dart';
 import '../../catalog/catalog_models.dart';
 import '../../catalog/catalog_repository.dart';
+import '../../catalog/watch_history_repository.dart';
 import '../../playback/playable_item.dart';
 import '../../providers/xtream/xtream_client.dart';
 import '../../shared/async_value_view.dart';
@@ -34,6 +35,7 @@ final _recentCatalogCardsProvider =
 final _catalogCardsProvider = StreamProvider.autoDispose
     .family<List<CatalogCardItem>, CatalogItemsQuery>((ref, query) {
       final catalogRepository = ref.watch(catalogRepositoryProvider);
+      final historyRepository = ref.watch(watchHistoryRepositoryProvider);
       return catalogRepository
           .watchItems(
             providerId: query.providerId,
@@ -42,7 +44,11 @@ final _catalogCardsProvider = StreamProvider.autoDispose
             favoritesOnly: query.favoritesOnly,
           )
           .asyncMap((items) {
-            return _catalogItemsToCards(catalogRepository, items);
+            return _catalogItemsToCards(
+              catalogRepository,
+              historyRepository,
+              items,
+            );
           });
     });
 
@@ -157,6 +163,8 @@ class _CatalogContent extends ConsumerWidget {
                         child: DetailPanel(
                           item: selected,
                           onPlay: (item) => _openItem(ref, item),
+                          onRestart: (item) =>
+                              _openItem(ref, item, restart: true),
                           onToggleFavorite: (item) =>
                               _toggleItemFavorite(ref, item),
                           onRefreshProvider: () {
@@ -238,9 +246,13 @@ class _CatalogContent extends ConsumerWidget {
     );
   }
 
-  Future<void> _openItem(WidgetRef ref, CatalogCardItem item) async {
+  Future<void> _openItem(
+    WidgetRef ref,
+    CatalogCardItem item, {
+    bool restart = false,
+  }) async {
     try {
-      final target = await _playbackTargetForCard(ref, item);
+      final target = await _playbackTargetForCard(ref, item, restart: restart);
       if (target == null) {
         return;
       }
@@ -346,27 +358,51 @@ AsyncValue<List<CatalogCardItem>> _combineCatalogItems(
 
 Future<List<CatalogCardItem>> _catalogItemsToCards(
   CatalogRepository catalogRepository,
+  WatchHistoryRepository historyRepository,
   List<CatalogItem> items,
 ) async {
   final cards = <CatalogCardItem>[];
   for (final item in items) {
     if (item.contentType != CatalogContentType.series) {
-      cards.add(_catalogItemToCard(item));
+      cards.add(
+        _catalogItemToCard(
+          item,
+          resume: item.contentType == CatalogContentType.movie
+              ? await historyRepository.lookupResumePosition(
+                  providerId: item.providerId,
+                  itemId: item.id,
+                  itemType: PlayableContentType.movie,
+                )
+              : null,
+        ),
+      );
       continue;
     }
+    final latestResume = await historyRepository.lookupLatestResumeForSeries(
+      providerId: item.providerId,
+      seriesId: item.id,
+    );
     final firstPlayableEpisode = await _firstPlayableEpisode(
       catalogRepository,
       providerId: item.providerId,
       seriesId: item.id,
     );
     cards.add(
-      _catalogItemToCard(item, canPlayOverride: firstPlayableEpisode != null),
+      _catalogItemToCard(
+        item,
+        canPlayOverride: firstPlayableEpisode != null,
+        resume: latestResume,
+      ),
     );
   }
   return cards;
 }
 
-CatalogCardItem _catalogItemToCard(CatalogItem item, {bool? canPlayOverride}) {
+CatalogCardItem _catalogItemToCard(
+  CatalogItem item, {
+  bool? canPlayOverride,
+  PlaybackPosition? resume,
+}) {
   return CatalogCardItem(
     id: item.id,
     providerId: item.providerId,
@@ -383,6 +419,8 @@ CatalogCardItem _catalogItemToCard(CatalogItem item, {bool? canPlayOverride}) {
     epgSummary: item.contentType == CatalogContentType.live
         ? item.subtitle ?? item.description ?? item.epgChannelId
         : null,
+    resumePositionSeconds: resume?.positionSeconds ?? 0,
+    resumeDurationSeconds: resume?.durationSeconds,
     isFavorite: item.isFavorite,
     canPlay:
         canPlayOverride ??
@@ -417,6 +455,8 @@ Future<CatalogCardItem> _recentToResolvedCard(
       recentItemType: entry.itemType,
       seriesId: entry.seriesId,
       seasonId: entry.seasonId,
+      resumePositionSeconds: entry.completed ? 0 : entry.positionSeconds,
+      resumeDurationSeconds: entry.durationSeconds,
       isFavorite: card.isFavorite,
       isRecent: true,
       canPlay:
@@ -444,6 +484,8 @@ Future<CatalogCardItem> _recentToResolvedCard(
     recentItemType: entry.itemType,
     seriesId: entry.seriesId,
     seasonId: entry.seasonId,
+    resumePositionSeconds: entry.completed ? 0 : entry.positionSeconds,
+    resumeDurationSeconds: entry.durationSeconds,
     isRecent: true,
     canPlay: false,
   );
@@ -576,44 +618,52 @@ Future<void> _toggleItemFavorite(WidgetRef ref, CatalogCardItem item) {
 
 Future<_PlaybackTarget?> _playbackTargetForCard(
   WidgetRef ref,
-  CatalogCardItem item,
-) async {
+  CatalogCardItem item, {
+  bool restart = false,
+}) async {
   if (item.isRecent) {
-    return _recentPlaybackTarget(ref, item);
+    return _recentPlaybackTarget(ref, item, restart: restart);
   }
 
   if (item.contentType == CatalogContentType.series) {
     final catalogRepository = ref.read(catalogRepositoryProvider);
-    final episode = await _firstPlayableEpisode(
-      catalogRepository,
+    final episodes = await catalogRepository.listEpisodesForSeries(
       providerId: item.providerId,
       seriesId: item.id,
     );
+    final resume = restart
+        ? null
+        : await ref
+              .read(watchHistoryRepositoryProvider)
+              .lookupLatestResumeForSeries(
+                providerId: item.providerId,
+                seriesId: item.id,
+              );
+    final firstPlayableEpisode = episodes
+        .where(_episodeHasPlayableStream)
+        .firstOrNull;
+    final episode = restart
+        ? firstPlayableEpisode
+        : _episodeForResume(episodes, resume) ?? firstPlayableEpisode;
     if (episode == null) return null;
-    final url = await _streamUrl(
+    return _episodePlaybackTarget(
       ref,
-      providerId: episode.providerId,
-      contentType: CatalogContentType.series,
-      streamUrl: episode.streamUrl,
-      streamJson: episode.streamJson,
-    );
-    if (url == null) return null;
-    final playable = _episodePlayable(
       episode: episode,
-      streamUrl: url,
+      episodes: episodes,
       fallbackPosterUrl: item.artworkUrl,
-    );
-    return _PlaybackTarget(
-      playable: playable,
-      history: _episodeHistory(
-        episode: episode,
-        title: episode.title,
-        subtitle: playable.subtitle,
-        artworkUrl: episode.artworkUrl ?? item.artworkUrl,
-      ),
+      resume: restart ? null : resume,
     );
   }
 
+  final resume = !restart && item.contentType == CatalogContentType.movie
+      ? await ref
+            .read(watchHistoryRepositoryProvider)
+            .lookupResumePosition(
+              providerId: item.providerId,
+              itemId: item.id,
+              itemType: PlayableContentType.movie,
+            )
+      : null;
   final url = await _streamUrl(
     ref,
     providerId: item.providerId,
@@ -625,6 +675,7 @@ Future<_PlaybackTarget?> _playbackTargetForCard(
   return _PlaybackTarget(
     playable: PlayableItem(
       id: item.id,
+      providerId: item.providerId,
       title: item.title,
       subtitle: item.subtitle,
       streamUrl: url,
@@ -637,23 +688,30 @@ Future<_PlaybackTarget?> _playbackTargetForCard(
       channelLogoUrl: item.contentType == CatalogContentType.live
           ? item.artworkUrl
           : null,
-    ),
-    history: WatchHistoryUpdate(
-      itemId: item.id,
-      itemType: _playableType(item.contentType),
-      providerId: item.providerId,
-      title: item.title,
-      subtitle: item.subtitle,
-      artworkUrl: item.artworkUrl,
       durationSeconds: item.durationSeconds,
+      resumePosition: resume == null
+          ? Duration.zero
+          : Duration(seconds: resume.positionSeconds),
     ),
+    history: item.contentType == CatalogContentType.live
+        ? WatchHistoryUpdate(
+            itemId: item.id,
+            itemType: PlayableContentType.live,
+            providerId: item.providerId,
+            title: item.title,
+            subtitle: item.subtitle,
+            artworkUrl: item.artworkUrl,
+            durationSeconds: item.durationSeconds,
+          )
+        : null,
   );
 }
 
 Future<_PlaybackTarget?> _recentPlaybackTarget(
   WidgetRef ref,
-  CatalogCardItem item,
-) async {
+  CatalogCardItem item, {
+  bool restart = false,
+}) async {
   final recentType = item.recentItemType;
   if (recentType == null) return null;
 
@@ -668,27 +726,23 @@ Future<_PlaybackTarget?> _recentPlaybackTarget(
           (item.seasonId == null || candidate.seasonId == item.seasonId);
     }).firstOrNull;
     if (episode == null) return null;
-    final url = await _streamUrl(
+    final resume = !restart
+        ? await ref
+              .read(watchHistoryRepositoryProvider)
+              .lookupResumePosition(
+                providerId: episode.providerId,
+                itemId: episode.id,
+                itemType: PlayableContentType.episode,
+                seriesId: episode.seriesId,
+                seasonId: episode.seasonId,
+              )
+        : null;
+    return _episodePlaybackTarget(
       ref,
-      providerId: episode.providerId,
-      contentType: CatalogContentType.series,
-      streamUrl: episode.streamUrl,
-      streamJson: episode.streamJson,
-    );
-    if (url == null) return null;
-    final playable = _episodePlayable(
       episode: episode,
-      streamUrl: url,
+      episodes: episodes,
       fallbackPosterUrl: item.artworkUrl,
-    );
-    return _PlaybackTarget(
-      playable: playable,
-      history: _episodeHistory(
-        episode: episode,
-        title: item.title,
-        subtitle: item.subtitle ?? playable.subtitle,
-        artworkUrl: item.artworkUrl ?? episode.artworkUrl,
-      ),
+      resume: resume,
     );
   }
 
@@ -703,7 +757,87 @@ Future<_PlaybackTarget?> _recentPlaybackTarget(
         id: item.id,
       );
   if (catalogItem == null) return null;
-  return _playbackTargetForCard(ref, _catalogItemToCard(catalogItem));
+  final resume = recentType == PlayableContentType.movie && !restart
+      ? PlaybackPosition(
+          providerId: item.providerId,
+          itemId: item.id,
+          itemType: PlayableContentType.movie,
+          positionSeconds: item.resumePositionSeconds,
+          durationSeconds: item.resumeDurationSeconds,
+          updatedAtMs: 0,
+        )
+      : null;
+  return _playbackTargetForCard(
+    ref,
+    _catalogItemToCard(catalogItem, resume: resume),
+    restart: restart,
+  );
+}
+
+Future<_PlaybackTarget?> _episodePlaybackTarget(
+  WidgetRef ref, {
+  required CatalogEpisode episode,
+  required List<CatalogEpisode> episodes,
+  String? fallbackPosterUrl,
+  PlaybackPosition? resume,
+}) async {
+  final railItems = await _episodePlayableItems(
+    ref,
+    episodes: episodes,
+    fallbackPosterUrl: fallbackPosterUrl,
+  );
+  final current = railItems.where((candidate) {
+    return candidate.id == episode.id && candidate.seasonId == episode.seasonId;
+  }).firstOrNull;
+  if (current == null) return null;
+
+  final playable = current.copyWith(
+    resumePosition: resume == null
+        ? Duration.zero
+        : Duration(seconds: resume.positionSeconds),
+    episodeRailItems: railItems,
+  );
+
+  return _PlaybackTarget(playable: playable, history: null);
+}
+
+Future<List<PlayableItem>> _episodePlayableItems(
+  WidgetRef ref, {
+  required List<CatalogEpisode> episodes,
+  String? fallbackPosterUrl,
+}) async {
+  final items = <PlayableItem>[];
+  for (final episode in episodes.where(_episodeHasPlayableStream)) {
+    final url = await _streamUrl(
+      ref,
+      providerId: episode.providerId,
+      contentType: CatalogContentType.series,
+      streamUrl: episode.streamUrl,
+      streamJson: episode.streamJson,
+    );
+    if (url == null) continue;
+    items.add(
+      _episodePlayable(
+        episode: episode,
+        streamUrl: url,
+        fallbackPosterUrl: fallbackPosterUrl,
+      ),
+    );
+  }
+  return items;
+}
+
+CatalogEpisode? _episodeForResume(
+  List<CatalogEpisode> episodes,
+  PlaybackPosition? resume,
+) {
+  if (resume == null) return null;
+  return episodes.where((episode) {
+    return episode.id == resume.itemId &&
+        episode.seriesId == resume.seriesId &&
+        (resume.seasonId == null || episode.seasonId == resume.seasonId) &&
+        _episodeHasPlayableStream(episode);
+  }).firstOrNull;
 }
 
 PlayableItem _episodePlayable({
@@ -713,32 +847,16 @@ PlayableItem _episodePlayable({
 }) {
   return PlayableItem(
     id: episode.id,
+    providerId: episode.providerId,
     title: episode.title,
     subtitle: 'S${episode.seasonNumber} E${episode.episodeNumber}',
     streamUrl: streamUrl,
     kind: PlayableKind.episode,
     posterUrl: episode.artworkUrl ?? fallbackPosterUrl,
     seriesId: episode.seriesId,
+    seasonId: episode.seasonId,
     seasonNumber: episode.seasonNumber,
     episodeNumber: episode.episodeNumber,
-  );
-}
-
-WatchHistoryUpdate _episodeHistory({
-  required CatalogEpisode episode,
-  required String title,
-  required String? subtitle,
-  required String? artworkUrl,
-}) {
-  return WatchHistoryUpdate(
-    itemId: episode.id,
-    itemType: PlayableContentType.episode,
-    providerId: episode.providerId,
-    title: title,
-    subtitle: subtitle,
-    artworkUrl: artworkUrl,
-    seriesId: episode.seriesId,
-    seasonId: episode.seasonId,
     durationSeconds: episode.durationSeconds,
   );
 }
@@ -835,14 +953,6 @@ String? _subtitleFor(CatalogItem item) {
     return null;
   }
   return parts.join(' / ');
-}
-
-PlayableContentType _playableType(CatalogContentType type) {
-  return switch (type) {
-    CatalogContentType.live => PlayableContentType.live,
-    CatalogContentType.movie => PlayableContentType.movie,
-    CatalogContentType.series => PlayableContentType.episode,
-  };
 }
 
 extension _FirstOrNull<T> on Iterable<T> {

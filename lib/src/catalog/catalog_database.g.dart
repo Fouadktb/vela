@@ -6740,6 +6740,18 @@ class $WatchHistoryTable extends WatchHistory
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _completionPercentageMeta =
+      const VerificationMeta('completionPercentage');
+  @override
+  late final GeneratedColumn<double> completionPercentage =
+      GeneratedColumn<double>(
+        'completion_percentage',
+        aliasedName,
+        false,
+        type: DriftSqlType.double,
+        requiredDuringInsert: false,
+        defaultValue: const Constant(0),
+      );
   static const VerificationMeta _completedMeta = const VerificationMeta(
     'completed',
   );
@@ -6792,6 +6804,7 @@ class $WatchHistoryTable extends WatchHistory
     seasonId,
     positionSeconds,
     durationSeconds,
+    completionPercentage,
     completed,
     lastWatchedAt,
     watchCount,
@@ -6890,6 +6903,15 @@ class $WatchHistoryTable extends WatchHistory
         ),
       );
     }
+    if (data.containsKey('completion_percentage')) {
+      context.handle(
+        _completionPercentageMeta,
+        completionPercentage.isAcceptableOrUnknown(
+          data['completion_percentage']!,
+          _completionPercentageMeta,
+        ),
+      );
+    }
     if (data.containsKey('completed')) {
       context.handle(
         _completedMeta,
@@ -6964,6 +6986,10 @@ class $WatchHistoryTable extends WatchHistory
         DriftSqlType.int,
         data['${effectivePrefix}duration_seconds'],
       ),
+      completionPercentage: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}completion_percentage'],
+      )!,
       completed: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}completed'],
@@ -6997,6 +7023,7 @@ class WatchHistoryRow extends DataClass implements Insertable<WatchHistoryRow> {
   final String? seasonId;
   final int positionSeconds;
   final int? durationSeconds;
+  final double completionPercentage;
   final bool completed;
   final int lastWatchedAt;
   final int watchCount;
@@ -7012,6 +7039,7 @@ class WatchHistoryRow extends DataClass implements Insertable<WatchHistoryRow> {
     this.seasonId,
     required this.positionSeconds,
     this.durationSeconds,
+    required this.completionPercentage,
     required this.completed,
     required this.lastWatchedAt,
     required this.watchCount,
@@ -7040,6 +7068,7 @@ class WatchHistoryRow extends DataClass implements Insertable<WatchHistoryRow> {
     if (!nullToAbsent || durationSeconds != null) {
       map['duration_seconds'] = Variable<int>(durationSeconds);
     }
+    map['completion_percentage'] = Variable<double>(completionPercentage);
     map['completed'] = Variable<bool>(completed);
     map['last_watched_at'] = Variable<int>(lastWatchedAt);
     map['watch_count'] = Variable<int>(watchCount);
@@ -7069,6 +7098,7 @@ class WatchHistoryRow extends DataClass implements Insertable<WatchHistoryRow> {
       durationSeconds: durationSeconds == null && nullToAbsent
           ? const Value.absent()
           : Value(durationSeconds),
+      completionPercentage: Value(completionPercentage),
       completed: Value(completed),
       lastWatchedAt: Value(lastWatchedAt),
       watchCount: Value(watchCount),
@@ -7092,6 +7122,9 @@ class WatchHistoryRow extends DataClass implements Insertable<WatchHistoryRow> {
       seasonId: serializer.fromJson<String?>(json['seasonId']),
       positionSeconds: serializer.fromJson<int>(json['positionSeconds']),
       durationSeconds: serializer.fromJson<int?>(json['durationSeconds']),
+      completionPercentage: serializer.fromJson<double>(
+        json['completionPercentage'],
+      ),
       completed: serializer.fromJson<bool>(json['completed']),
       lastWatchedAt: serializer.fromJson<int>(json['lastWatchedAt']),
       watchCount: serializer.fromJson<int>(json['watchCount']),
@@ -7112,6 +7145,7 @@ class WatchHistoryRow extends DataClass implements Insertable<WatchHistoryRow> {
       'seasonId': serializer.toJson<String?>(seasonId),
       'positionSeconds': serializer.toJson<int>(positionSeconds),
       'durationSeconds': serializer.toJson<int?>(durationSeconds),
+      'completionPercentage': serializer.toJson<double>(completionPercentage),
       'completed': serializer.toJson<bool>(completed),
       'lastWatchedAt': serializer.toJson<int>(lastWatchedAt),
       'watchCount': serializer.toJson<int>(watchCount),
@@ -7130,6 +7164,7 @@ class WatchHistoryRow extends DataClass implements Insertable<WatchHistoryRow> {
     Value<String?> seasonId = const Value.absent(),
     int? positionSeconds,
     Value<int?> durationSeconds = const Value.absent(),
+    double? completionPercentage,
     bool? completed,
     int? lastWatchedAt,
     int? watchCount,
@@ -7147,6 +7182,7 @@ class WatchHistoryRow extends DataClass implements Insertable<WatchHistoryRow> {
     durationSeconds: durationSeconds.present
         ? durationSeconds.value
         : this.durationSeconds,
+    completionPercentage: completionPercentage ?? this.completionPercentage,
     completed: completed ?? this.completed,
     lastWatchedAt: lastWatchedAt ?? this.lastWatchedAt,
     watchCount: watchCount ?? this.watchCount,
@@ -7174,6 +7210,9 @@ class WatchHistoryRow extends DataClass implements Insertable<WatchHistoryRow> {
       durationSeconds: data.durationSeconds.present
           ? data.durationSeconds.value
           : this.durationSeconds,
+      completionPercentage: data.completionPercentage.present
+          ? data.completionPercentage.value
+          : this.completionPercentage,
       completed: data.completed.present ? data.completed.value : this.completed,
       lastWatchedAt: data.lastWatchedAt.present
           ? data.lastWatchedAt.value
@@ -7198,6 +7237,7 @@ class WatchHistoryRow extends DataClass implements Insertable<WatchHistoryRow> {
           ..write('seasonId: $seasonId, ')
           ..write('positionSeconds: $positionSeconds, ')
           ..write('durationSeconds: $durationSeconds, ')
+          ..write('completionPercentage: $completionPercentage, ')
           ..write('completed: $completed, ')
           ..write('lastWatchedAt: $lastWatchedAt, ')
           ..write('watchCount: $watchCount')
@@ -7218,6 +7258,7 @@ class WatchHistoryRow extends DataClass implements Insertable<WatchHistoryRow> {
     seasonId,
     positionSeconds,
     durationSeconds,
+    completionPercentage,
     completed,
     lastWatchedAt,
     watchCount,
@@ -7237,6 +7278,7 @@ class WatchHistoryRow extends DataClass implements Insertable<WatchHistoryRow> {
           other.seasonId == this.seasonId &&
           other.positionSeconds == this.positionSeconds &&
           other.durationSeconds == this.durationSeconds &&
+          other.completionPercentage == this.completionPercentage &&
           other.completed == this.completed &&
           other.lastWatchedAt == this.lastWatchedAt &&
           other.watchCount == this.watchCount);
@@ -7254,6 +7296,7 @@ class WatchHistoryCompanion extends UpdateCompanion<WatchHistoryRow> {
   final Value<String?> seasonId;
   final Value<int> positionSeconds;
   final Value<int?> durationSeconds;
+  final Value<double> completionPercentage;
   final Value<bool> completed;
   final Value<int> lastWatchedAt;
   final Value<int> watchCount;
@@ -7270,6 +7313,7 @@ class WatchHistoryCompanion extends UpdateCompanion<WatchHistoryRow> {
     this.seasonId = const Value.absent(),
     this.positionSeconds = const Value.absent(),
     this.durationSeconds = const Value.absent(),
+    this.completionPercentage = const Value.absent(),
     this.completed = const Value.absent(),
     this.lastWatchedAt = const Value.absent(),
     this.watchCount = const Value.absent(),
@@ -7287,6 +7331,7 @@ class WatchHistoryCompanion extends UpdateCompanion<WatchHistoryRow> {
     this.seasonId = const Value.absent(),
     this.positionSeconds = const Value.absent(),
     this.durationSeconds = const Value.absent(),
+    this.completionPercentage = const Value.absent(),
     this.completed = const Value.absent(),
     this.lastWatchedAt = const Value.absent(),
     this.watchCount = const Value.absent(),
@@ -7308,6 +7353,7 @@ class WatchHistoryCompanion extends UpdateCompanion<WatchHistoryRow> {
     Expression<String>? seasonId,
     Expression<int>? positionSeconds,
     Expression<int>? durationSeconds,
+    Expression<double>? completionPercentage,
     Expression<bool>? completed,
     Expression<int>? lastWatchedAt,
     Expression<int>? watchCount,
@@ -7325,6 +7371,8 @@ class WatchHistoryCompanion extends UpdateCompanion<WatchHistoryRow> {
       if (seasonId != null) 'season_id': seasonId,
       if (positionSeconds != null) 'position_seconds': positionSeconds,
       if (durationSeconds != null) 'duration_seconds': durationSeconds,
+      if (completionPercentage != null)
+        'completion_percentage': completionPercentage,
       if (completed != null) 'completed': completed,
       if (lastWatchedAt != null) 'last_watched_at': lastWatchedAt,
       if (watchCount != null) 'watch_count': watchCount,
@@ -7344,6 +7392,7 @@ class WatchHistoryCompanion extends UpdateCompanion<WatchHistoryRow> {
     Value<String?>? seasonId,
     Value<int>? positionSeconds,
     Value<int?>? durationSeconds,
+    Value<double>? completionPercentage,
     Value<bool>? completed,
     Value<int>? lastWatchedAt,
     Value<int>? watchCount,
@@ -7361,6 +7410,7 @@ class WatchHistoryCompanion extends UpdateCompanion<WatchHistoryRow> {
       seasonId: seasonId ?? this.seasonId,
       positionSeconds: positionSeconds ?? this.positionSeconds,
       durationSeconds: durationSeconds ?? this.durationSeconds,
+      completionPercentage: completionPercentage ?? this.completionPercentage,
       completed: completed ?? this.completed,
       lastWatchedAt: lastWatchedAt ?? this.lastWatchedAt,
       watchCount: watchCount ?? this.watchCount,
@@ -7404,6 +7454,11 @@ class WatchHistoryCompanion extends UpdateCompanion<WatchHistoryRow> {
     if (durationSeconds.present) {
       map['duration_seconds'] = Variable<int>(durationSeconds.value);
     }
+    if (completionPercentage.present) {
+      map['completion_percentage'] = Variable<double>(
+        completionPercentage.value,
+      );
+    }
     if (completed.present) {
       map['completed'] = Variable<bool>(completed.value);
     }
@@ -7433,6 +7488,7 @@ class WatchHistoryCompanion extends UpdateCompanion<WatchHistoryRow> {
           ..write('seasonId: $seasonId, ')
           ..write('positionSeconds: $positionSeconds, ')
           ..write('durationSeconds: $durationSeconds, ')
+          ..write('completionPercentage: $completionPercentage, ')
           ..write('completed: $completed, ')
           ..write('lastWatchedAt: $lastWatchedAt, ')
           ..write('watchCount: $watchCount, ')
@@ -7538,6 +7594,18 @@ class $PlaybackPositionsTable extends PlaybackPositions
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _completionPercentageMeta =
+      const VerificationMeta('completionPercentage');
+  @override
+  late final GeneratedColumn<double> completionPercentage =
+      GeneratedColumn<double>(
+        'completion_percentage',
+        aliasedName,
+        false,
+        type: DriftSqlType.double,
+        requiredDuringInsert: false,
+        defaultValue: const Constant(0),
+      );
   static const VerificationMeta _completedMeta = const VerificationMeta(
     'completed',
   );
@@ -7575,6 +7643,7 @@ class $PlaybackPositionsTable extends PlaybackPositions
     seasonId,
     positionSeconds,
     durationSeconds,
+    completionPercentage,
     completed,
     updatedAt,
   ];
@@ -7652,6 +7721,15 @@ class $PlaybackPositionsTable extends PlaybackPositions
         ),
       );
     }
+    if (data.containsKey('completion_percentage')) {
+      context.handle(
+        _completionPercentageMeta,
+        completionPercentage.isAcceptableOrUnknown(
+          data['completion_percentage']!,
+          _completionPercentageMeta,
+        ),
+      );
+    }
     if (data.containsKey('completed')) {
       context.handle(
         _completedMeta,
@@ -7705,6 +7783,10 @@ class $PlaybackPositionsTable extends PlaybackPositions
         DriftSqlType.int,
         data['${effectivePrefix}duration_seconds'],
       ),
+      completionPercentage: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}completion_percentage'],
+      )!,
       completed: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}completed'],
@@ -7732,6 +7814,7 @@ class PlaybackPositionRow extends DataClass
   final String? seasonId;
   final int positionSeconds;
   final int? durationSeconds;
+  final double completionPercentage;
   final bool completed;
   final int updatedAt;
   const PlaybackPositionRow({
@@ -7743,6 +7826,7 @@ class PlaybackPositionRow extends DataClass
     this.seasonId,
     required this.positionSeconds,
     this.durationSeconds,
+    required this.completionPercentage,
     required this.completed,
     required this.updatedAt,
   });
@@ -7763,6 +7847,7 @@ class PlaybackPositionRow extends DataClass
     if (!nullToAbsent || durationSeconds != null) {
       map['duration_seconds'] = Variable<int>(durationSeconds);
     }
+    map['completion_percentage'] = Variable<double>(completionPercentage);
     map['completed'] = Variable<bool>(completed);
     map['updated_at'] = Variable<int>(updatedAt);
     return map;
@@ -7784,6 +7869,7 @@ class PlaybackPositionRow extends DataClass
       durationSeconds: durationSeconds == null && nullToAbsent
           ? const Value.absent()
           : Value(durationSeconds),
+      completionPercentage: Value(completionPercentage),
       completed: Value(completed),
       updatedAt: Value(updatedAt),
     );
@@ -7803,6 +7889,9 @@ class PlaybackPositionRow extends DataClass
       seasonId: serializer.fromJson<String?>(json['seasonId']),
       positionSeconds: serializer.fromJson<int>(json['positionSeconds']),
       durationSeconds: serializer.fromJson<int?>(json['durationSeconds']),
+      completionPercentage: serializer.fromJson<double>(
+        json['completionPercentage'],
+      ),
       completed: serializer.fromJson<bool>(json['completed']),
       updatedAt: serializer.fromJson<int>(json['updatedAt']),
     );
@@ -7819,6 +7908,7 @@ class PlaybackPositionRow extends DataClass
       'seasonId': serializer.toJson<String?>(seasonId),
       'positionSeconds': serializer.toJson<int>(positionSeconds),
       'durationSeconds': serializer.toJson<int?>(durationSeconds),
+      'completionPercentage': serializer.toJson<double>(completionPercentage),
       'completed': serializer.toJson<bool>(completed),
       'updatedAt': serializer.toJson<int>(updatedAt),
     };
@@ -7833,6 +7923,7 @@ class PlaybackPositionRow extends DataClass
     Value<String?> seasonId = const Value.absent(),
     int? positionSeconds,
     Value<int?> durationSeconds = const Value.absent(),
+    double? completionPercentage,
     bool? completed,
     int? updatedAt,
   }) => PlaybackPositionRow(
@@ -7846,6 +7937,7 @@ class PlaybackPositionRow extends DataClass
     durationSeconds: durationSeconds.present
         ? durationSeconds.value
         : this.durationSeconds,
+    completionPercentage: completionPercentage ?? this.completionPercentage,
     completed: completed ?? this.completed,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -7867,6 +7959,9 @@ class PlaybackPositionRow extends DataClass
       durationSeconds: data.durationSeconds.present
           ? data.durationSeconds.value
           : this.durationSeconds,
+      completionPercentage: data.completionPercentage.present
+          ? data.completionPercentage.value
+          : this.completionPercentage,
       completed: data.completed.present ? data.completed.value : this.completed,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -7883,6 +7978,7 @@ class PlaybackPositionRow extends DataClass
           ..write('seasonId: $seasonId, ')
           ..write('positionSeconds: $positionSeconds, ')
           ..write('durationSeconds: $durationSeconds, ')
+          ..write('completionPercentage: $completionPercentage, ')
           ..write('completed: $completed, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -7899,6 +7995,7 @@ class PlaybackPositionRow extends DataClass
     seasonId,
     positionSeconds,
     durationSeconds,
+    completionPercentage,
     completed,
     updatedAt,
   );
@@ -7914,6 +8011,7 @@ class PlaybackPositionRow extends DataClass
           other.seasonId == this.seasonId &&
           other.positionSeconds == this.positionSeconds &&
           other.durationSeconds == this.durationSeconds &&
+          other.completionPercentage == this.completionPercentage &&
           other.completed == this.completed &&
           other.updatedAt == this.updatedAt);
 }
@@ -7927,6 +8025,7 @@ class PlaybackPositionsCompanion extends UpdateCompanion<PlaybackPositionRow> {
   final Value<String?> seasonId;
   final Value<int> positionSeconds;
   final Value<int?> durationSeconds;
+  final Value<double> completionPercentage;
   final Value<bool> completed;
   final Value<int> updatedAt;
   final Value<int> rowid;
@@ -7939,6 +8038,7 @@ class PlaybackPositionsCompanion extends UpdateCompanion<PlaybackPositionRow> {
     this.seasonId = const Value.absent(),
     this.positionSeconds = const Value.absent(),
     this.durationSeconds = const Value.absent(),
+    this.completionPercentage = const Value.absent(),
     this.completed = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -7952,6 +8052,7 @@ class PlaybackPositionsCompanion extends UpdateCompanion<PlaybackPositionRow> {
     this.seasonId = const Value.absent(),
     this.positionSeconds = const Value.absent(),
     this.durationSeconds = const Value.absent(),
+    this.completionPercentage = const Value.absent(),
     this.completed = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -7968,6 +8069,7 @@ class PlaybackPositionsCompanion extends UpdateCompanion<PlaybackPositionRow> {
     Expression<String>? seasonId,
     Expression<int>? positionSeconds,
     Expression<int>? durationSeconds,
+    Expression<double>? completionPercentage,
     Expression<bool>? completed,
     Expression<int>? updatedAt,
     Expression<int>? rowid,
@@ -7981,6 +8083,8 @@ class PlaybackPositionsCompanion extends UpdateCompanion<PlaybackPositionRow> {
       if (seasonId != null) 'season_id': seasonId,
       if (positionSeconds != null) 'position_seconds': positionSeconds,
       if (durationSeconds != null) 'duration_seconds': durationSeconds,
+      if (completionPercentage != null)
+        'completion_percentage': completionPercentage,
       if (completed != null) 'completed': completed,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
@@ -7996,6 +8100,7 @@ class PlaybackPositionsCompanion extends UpdateCompanion<PlaybackPositionRow> {
     Value<String?>? seasonId,
     Value<int>? positionSeconds,
     Value<int?>? durationSeconds,
+    Value<double>? completionPercentage,
     Value<bool>? completed,
     Value<int>? updatedAt,
     Value<int>? rowid,
@@ -8009,6 +8114,7 @@ class PlaybackPositionsCompanion extends UpdateCompanion<PlaybackPositionRow> {
       seasonId: seasonId ?? this.seasonId,
       positionSeconds: positionSeconds ?? this.positionSeconds,
       durationSeconds: durationSeconds ?? this.durationSeconds,
+      completionPercentage: completionPercentage ?? this.completionPercentage,
       completed: completed ?? this.completed,
       updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
@@ -8042,6 +8148,11 @@ class PlaybackPositionsCompanion extends UpdateCompanion<PlaybackPositionRow> {
     if (durationSeconds.present) {
       map['duration_seconds'] = Variable<int>(durationSeconds.value);
     }
+    if (completionPercentage.present) {
+      map['completion_percentage'] = Variable<double>(
+        completionPercentage.value,
+      );
+    }
     if (completed.present) {
       map['completed'] = Variable<bool>(completed.value);
     }
@@ -8065,6 +8176,7 @@ class PlaybackPositionsCompanion extends UpdateCompanion<PlaybackPositionRow> {
           ..write('seasonId: $seasonId, ')
           ..write('positionSeconds: $positionSeconds, ')
           ..write('durationSeconds: $durationSeconds, ')
+          ..write('completionPercentage: $completionPercentage, ')
           ..write('completed: $completed, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
@@ -13870,6 +13982,7 @@ typedef $$WatchHistoryTableCreateCompanionBuilder =
       Value<String?> seasonId,
       Value<int> positionSeconds,
       Value<int?> durationSeconds,
+      Value<double> completionPercentage,
       Value<bool> completed,
       Value<int> lastWatchedAt,
       Value<int> watchCount,
@@ -13888,6 +14001,7 @@ typedef $$WatchHistoryTableUpdateCompanionBuilder =
       Value<String?> seasonId,
       Value<int> positionSeconds,
       Value<int?> durationSeconds,
+      Value<double> completionPercentage,
       Value<bool> completed,
       Value<int> lastWatchedAt,
       Value<int> watchCount,
@@ -13978,6 +14092,11 @@ class $$WatchHistoryTableFilterComposer
 
   ColumnFilters<int> get durationSeconds => $composableBuilder(
     column: $table.durationSeconds,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get completionPercentage => $composableBuilder(
+    column: $table.completionPercentage,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -14079,6 +14198,11 @@ class $$WatchHistoryTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<double> get completionPercentage => $composableBuilder(
+    column: $table.completionPercentage,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get completed => $composableBuilder(
     column: $table.completed,
     builder: (column) => ColumnOrderings(column),
@@ -14165,6 +14289,11 @@ class $$WatchHistoryTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<double> get completionPercentage => $composableBuilder(
+    column: $table.completionPercentage,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<bool> get completed =>
       $composableBuilder(column: $table.completed, builder: (column) => column);
 
@@ -14243,6 +14372,7 @@ class $$WatchHistoryTableTableManager
                 Value<String?> seasonId = const Value.absent(),
                 Value<int> positionSeconds = const Value.absent(),
                 Value<int?> durationSeconds = const Value.absent(),
+                Value<double> completionPercentage = const Value.absent(),
                 Value<bool> completed = const Value.absent(),
                 Value<int> lastWatchedAt = const Value.absent(),
                 Value<int> watchCount = const Value.absent(),
@@ -14259,6 +14389,7 @@ class $$WatchHistoryTableTableManager
                 seasonId: seasonId,
                 positionSeconds: positionSeconds,
                 durationSeconds: durationSeconds,
+                completionPercentage: completionPercentage,
                 completed: completed,
                 lastWatchedAt: lastWatchedAt,
                 watchCount: watchCount,
@@ -14277,6 +14408,7 @@ class $$WatchHistoryTableTableManager
                 Value<String?> seasonId = const Value.absent(),
                 Value<int> positionSeconds = const Value.absent(),
                 Value<int?> durationSeconds = const Value.absent(),
+                Value<double> completionPercentage = const Value.absent(),
                 Value<bool> completed = const Value.absent(),
                 Value<int> lastWatchedAt = const Value.absent(),
                 Value<int> watchCount = const Value.absent(),
@@ -14293,6 +14425,7 @@ class $$WatchHistoryTableTableManager
                 seasonId: seasonId,
                 positionSeconds: positionSeconds,
                 durationSeconds: durationSeconds,
+                completionPercentage: completionPercentage,
                 completed: completed,
                 lastWatchedAt: lastWatchedAt,
                 watchCount: watchCount,
@@ -14375,6 +14508,7 @@ typedef $$PlaybackPositionsTableCreateCompanionBuilder =
       Value<String?> seasonId,
       Value<int> positionSeconds,
       Value<int?> durationSeconds,
+      Value<double> completionPercentage,
       Value<bool> completed,
       Value<int> updatedAt,
       Value<int> rowid,
@@ -14389,6 +14523,7 @@ typedef $$PlaybackPositionsTableUpdateCompanionBuilder =
       Value<String?> seasonId,
       Value<int> positionSeconds,
       Value<int?> durationSeconds,
+      Value<double> completionPercentage,
       Value<bool> completed,
       Value<int> updatedAt,
       Value<int> rowid,
@@ -14474,6 +14609,11 @@ class $$PlaybackPositionsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<double> get completionPercentage => $composableBuilder(
+    column: $table.completionPercentage,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnFilters<bool> get completed => $composableBuilder(
     column: $table.completed,
     builder: (column) => ColumnFilters(column),
@@ -14552,6 +14692,11 @@ class $$PlaybackPositionsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<double> get completionPercentage => $composableBuilder(
+    column: $table.completionPercentage,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get completed => $composableBuilder(
     column: $table.completed,
     builder: (column) => ColumnOrderings(column),
@@ -14619,6 +14764,11 @@ class $$PlaybackPositionsTableAnnotationComposer
 
   GeneratedColumn<int> get durationSeconds => $composableBuilder(
     column: $table.durationSeconds,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get completionPercentage => $composableBuilder(
+    column: $table.completionPercentage,
     builder: (column) => column,
   );
 
@@ -14693,6 +14843,7 @@ class $$PlaybackPositionsTableTableManager
                 Value<String?> seasonId = const Value.absent(),
                 Value<int> positionSeconds = const Value.absent(),
                 Value<int?> durationSeconds = const Value.absent(),
+                Value<double> completionPercentage = const Value.absent(),
                 Value<bool> completed = const Value.absent(),
                 Value<int> updatedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -14705,6 +14856,7 @@ class $$PlaybackPositionsTableTableManager
                 seasonId: seasonId,
                 positionSeconds: positionSeconds,
                 durationSeconds: durationSeconds,
+                completionPercentage: completionPercentage,
                 completed: completed,
                 updatedAt: updatedAt,
                 rowid: rowid,
@@ -14719,6 +14871,7 @@ class $$PlaybackPositionsTableTableManager
                 Value<String?> seasonId = const Value.absent(),
                 Value<int> positionSeconds = const Value.absent(),
                 Value<int?> durationSeconds = const Value.absent(),
+                Value<double> completionPercentage = const Value.absent(),
                 Value<bool> completed = const Value.absent(),
                 Value<int> updatedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -14731,6 +14884,7 @@ class $$PlaybackPositionsTableTableManager
                 seasonId: seasonId,
                 positionSeconds: positionSeconds,
                 durationSeconds: durationSeconds,
+                completionPercentage: completionPercentage,
                 completed: completed,
                 updatedAt: updatedAt,
                 rowid: rowid,

@@ -496,6 +496,7 @@ class WatchHistoryEntry {
     this.seasonId,
     this.positionSeconds = 0,
     this.durationSeconds,
+    this.completionPercentage = 0,
     this.completed = false,
   });
 
@@ -509,9 +510,16 @@ class WatchHistoryEntry {
   final String? seasonId;
   final int positionSeconds;
   final int? durationSeconds;
+  final double completionPercentage;
   final bool completed;
   final int lastWatchedAtMs;
   final int watchCount;
+
+  double get derivedCompletionPercentage {
+    final duration = durationSeconds;
+    if (duration == null || duration <= 0) return 0;
+    return (positionSeconds / duration).clamp(0, 1).toDouble();
+  }
 }
 
 class WatchHistoryUpdate {
@@ -526,8 +534,10 @@ class WatchHistoryUpdate {
     this.seasonId,
     this.positionSeconds = 0,
     this.durationSeconds,
+    this.completionPercentage = 0,
     this.completed = false,
     this.watchedAtMs,
+    this.incrementWatchCount = true,
   });
 
   final String itemId;
@@ -540,8 +550,16 @@ class WatchHistoryUpdate {
   final String? seasonId;
   final int positionSeconds;
   final int? durationSeconds;
+  final double completionPercentage;
   final bool completed;
   final int? watchedAtMs;
+  final bool incrementWatchCount;
+
+  double get derivedCompletionPercentage {
+    final duration = durationSeconds;
+    if (duration == null || duration <= 0) return 0;
+    return (positionSeconds / duration).clamp(0, 1).toDouble();
+  }
 }
 
 class PlaybackPosition {
@@ -554,6 +572,7 @@ class PlaybackPosition {
     this.seriesId,
     this.seasonId,
     this.durationSeconds,
+    this.completionPercentage = 0,
     this.completed = false,
   });
 
@@ -564,6 +583,13 @@ class PlaybackPosition {
   final String? seasonId;
   final int positionSeconds;
   final int? durationSeconds;
+  final double completionPercentage;
   final bool completed;
   final int updatedAtMs;
+
+  double get derivedCompletionPercentage {
+    final duration = durationSeconds;
+    if (duration == null || duration <= 0) return 0;
+    return (positionSeconds / duration).clamp(0, 1).toDouble();
+  }
 }

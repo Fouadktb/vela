@@ -327,6 +327,8 @@ class WatchHistory extends Table {
   TextColumn get seasonId => text().nullable()();
   IntColumn get positionSeconds => integer().withDefault(const Constant(0))();
   IntColumn get durationSeconds => integer().nullable()();
+  RealColumn get completionPercentage =>
+      real().withDefault(const Constant(0))();
   BoolColumn get completed => boolean().withDefault(const Constant(false))();
   IntColumn get lastWatchedAt => integer().clientDefault(_nowMs)();
   IntColumn get watchCount => integer().withDefault(const Constant(1))();
@@ -339,6 +341,7 @@ class WatchHistory extends Table {
     "CHECK (item_type IN ('live', 'movie', 'episode'))",
     'CHECK (position_seconds >= 0)',
     'CHECK (duration_seconds IS NULL OR duration_seconds >= 0)',
+    'CHECK (completion_percentage BETWEEN 0 AND 1)',
     'CHECK (watch_count >= 1)',
   ];
 }
@@ -357,6 +360,8 @@ class PlaybackPositions extends Table {
   TextColumn get seasonId => text().nullable()();
   IntColumn get positionSeconds => integer().withDefault(const Constant(0))();
   IntColumn get durationSeconds => integer().nullable()();
+  RealColumn get completionPercentage =>
+      real().withDefault(const Constant(0))();
   BoolColumn get completed => boolean().withDefault(const Constant(false))();
   IntColumn get updatedAt => integer().clientDefault(_nowMs)();
 
@@ -368,6 +373,7 @@ class PlaybackPositions extends Table {
     "CHECK (item_type IN ('live', 'movie', 'episode'))",
     'CHECK (position_seconds >= 0)',
     'CHECK (duration_seconds IS NULL OR duration_seconds >= 0)',
+    'CHECK (completion_percentage BETWEEN 0 AND 1)',
   ];
 }
 
@@ -406,7 +412,7 @@ class CatalogDatabase extends _$CatalogDatabase {
     : super(executor ?? driftDatabase(name: 'vela_catalog'));
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -424,6 +430,33 @@ class CatalogDatabase extends _$CatalogDatabase {
           'UPDATE providers '
           'SET auto_refresh_interval_minutes = auto_refresh_interval_hours * 60 '
           'WHERE auto_refresh_interval_hours IS NOT NULL',
+        );
+      }
+      if (from < 3) {
+        await m.addColumn(watchHistory, watchHistory.completionPercentage);
+        await m.addColumn(
+          playbackPositions,
+          playbackPositions.completionPercentage,
+        );
+        await customStatement(
+          'UPDATE watch_history '
+          'SET completion_percentage = '
+          'CASE '
+          'WHEN completed = 1 THEN 1 '
+          'WHEN duration_seconds IS NOT NULL AND duration_seconds > 0 THEN '
+          'MIN(1.0, CAST(position_seconds AS REAL) / duration_seconds) '
+          'ELSE 0 '
+          'END',
+        );
+        await customStatement(
+          'UPDATE playback_positions '
+          'SET completion_percentage = '
+          'CASE '
+          'WHEN completed = 1 THEN 1 '
+          'WHEN duration_seconds IS NOT NULL AND duration_seconds > 0 THEN '
+          'MIN(1.0, CAST(position_seconds AS REAL) / duration_seconds) '
+          'ELSE 0 '
+          'END',
         );
       }
     },

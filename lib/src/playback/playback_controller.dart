@@ -54,6 +54,10 @@ class PlaybackController extends ChangeNotifier {
 
     try {
       await _player.open(media_kit.Media(item.streamUrl), play: true);
+      if (item.kind != PlayableKind.live &&
+          item.resumePosition > Duration.zero) {
+        await _player.seek(item.resumePosition);
+      }
       _emit(
         _state.copyWith(
           status: VelaPlaybackStatus.ready,

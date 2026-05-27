@@ -44,6 +44,9 @@ class WatchHistoryRepository {
 
   Future<void> addOrUpdateWatchHistory(WatchHistoryUpdate update) async {
     final watchedAt = update.watchedAtMs ?? _nowMs();
+    final completionPercentage = update.completed
+        ? 1.0
+        : _normalizedCompletionPercentage(update.completionPercentage);
     final catalogKey = playbackCatalogKey(
       itemId: update.itemId,
       itemType: update.itemType,
@@ -77,11 +80,15 @@ class WatchHistoryRepository {
                 seasonId: Value(update.seasonId),
                 positionSeconds: Value(update.positionSeconds),
                 durationSeconds: Value(update.durationSeconds),
+                completionPercentage: Value(completionPercentage),
                 completed: Value(update.completed),
                 lastWatchedAt: Value(watchedAt),
               ),
             );
       } else {
+        final watchCount = update.incrementWatchCount
+            ? existing.watchCount + 1
+            : existing.watchCount;
         await (_db.update(_db.watchHistory)..where(
               (history) =>
                   history.providerId.equals(update.providerId) &
@@ -98,9 +105,10 @@ class WatchHistoryRepository {
                 seasonId: Value(update.seasonId),
                 positionSeconds: Value(update.positionSeconds),
                 durationSeconds: Value(update.durationSeconds),
+                completionPercentage: Value(completionPercentage),
                 completed: Value(update.completed),
                 lastWatchedAt: Value(watchedAt),
-                watchCount: Value(existing.watchCount + 1),
+                watchCount: Value(watchCount),
               ),
             );
       }
@@ -117,6 +125,7 @@ class WatchHistoryRepository {
               seasonId: Value(update.seasonId),
               positionSeconds: Value(update.positionSeconds),
               durationSeconds: Value(update.durationSeconds),
+              completionPercentage: Value(completionPercentage),
               completed: Value(update.completed),
               updatedAt: Value(watchedAt),
             ),
@@ -158,6 +167,41 @@ class WatchHistoryRepository {
       seasonId: row.seasonId,
       positionSeconds: row.positionSeconds,
       durationSeconds: row.durationSeconds,
+      completionPercentage: row.completionPercentage,
+      completed: row.completed,
+      updatedAtMs: row.updatedAt,
+    );
+  }
+
+  Future<PlaybackPosition?> lookupLatestResumeForSeries({
+    required String providerId,
+    required String seriesId,
+  }) async {
+    final row =
+        await (_db.select(_db.playbackPositions)
+              ..where(
+                (position) =>
+                    position.providerId.equals(providerId) &
+                    position.itemType.equals(PlayableContentType.episode.name) &
+                    position.seriesId.equals(seriesId) &
+                    position.completed.equals(false) &
+                    position.positionSeconds.isBiggerThanValue(0),
+              )
+              ..orderBy([(position) => OrderingTerm.desc(position.updatedAt)])
+              ..limit(1))
+            .getSingleOrNull();
+
+    if (row == null) return null;
+
+    return PlaybackPosition(
+      providerId: row.providerId,
+      itemId: row.itemId,
+      itemType: PlayableContentType.fromDb(row.itemType),
+      seriesId: row.seriesId,
+      seasonId: row.seasonId,
+      positionSeconds: row.positionSeconds,
+      durationSeconds: row.durationSeconds,
+      completionPercentage: row.completionPercentage,
       completed: row.completed,
       updatedAtMs: row.updatedAt,
     );
@@ -198,10 +242,16 @@ WatchHistoryEntry _toWatchHistoryEntry(WatchHistoryRow row) {
     seasonId: row.seasonId,
     positionSeconds: row.positionSeconds,
     durationSeconds: row.durationSeconds,
+    completionPercentage: row.completionPercentage,
     completed: row.completed,
     lastWatchedAtMs: row.lastWatchedAt,
     watchCount: row.watchCount,
   );
+}
+
+double _normalizedCompletionPercentage(double value) {
+  if (value.isNaN || value.isInfinite) return 0;
+  return value.clamp(0, 1).toDouble();
 }
 
 int _nowMs() => DateTime.now().millisecondsSinceEpoch;

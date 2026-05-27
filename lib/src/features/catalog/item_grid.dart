@@ -22,6 +22,8 @@ class CatalogCardItem {
     this.recentItemType,
     this.seriesId,
     this.seasonId,
+    this.resumePositionSeconds = 0,
+    this.resumeDurationSeconds,
     this.isFavorite = false,
     this.isRecent = false,
   });
@@ -42,11 +44,26 @@ class CatalogCardItem {
   final PlayableContentType? recentItemType;
   final String? seriesId;
   final String? seasonId;
+  final int resumePositionSeconds;
+  final int? resumeDurationSeconds;
   final bool isFavorite;
   final bool isRecent;
   final bool canPlay;
 
   bool get hasArtwork => artworkUrl?.trim().isNotEmpty == true;
+  bool get hasResume {
+    return contentType != CatalogContentType.live && resumePositionSeconds > 0;
+  }
+
+  bool get hasResumeProgress {
+    return hasResume && (resumeDurationSeconds ?? durationSeconds ?? 0) > 0;
+  }
+
+  double get resumeProgress {
+    final duration = resumeDurationSeconds ?? durationSeconds;
+    if (duration == null || duration <= 0) return 0;
+    return (resumePositionSeconds / duration).clamp(0, 1).toDouble();
+  }
 }
 
 class ItemGrid extends StatelessWidget {
@@ -291,6 +308,20 @@ class _Artwork extends StatelessWidget {
               Icon(icon, color: const Color(0xFF716D66), size: 30),
             if (item.canPlay)
               const Positioned(right: 8, bottom: 8, child: _PlayDot()),
+            if (item.hasResumeProgress)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: LinearProgressIndicator(
+                  minHeight: 3,
+                  value: item.resumeProgress,
+                  backgroundColor: const Color(0x66000000),
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+              ),
           ],
         ),
       ),

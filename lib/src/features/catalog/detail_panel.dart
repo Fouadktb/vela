@@ -8,6 +8,7 @@ class DetailPanel extends StatelessWidget {
   const DetailPanel({
     required this.item,
     required this.onPlay,
+    required this.onRestart,
     required this.onToggleFavorite,
     required this.onRefreshProvider,
     super.key,
@@ -15,6 +16,7 @@ class DetailPanel extends StatelessWidget {
 
   final CatalogCardItem? item;
   final ValueChanged<CatalogCardItem> onPlay;
+  final ValueChanged<CatalogCardItem> onRestart;
   final ValueChanged<CatalogCardItem> onToggleFavorite;
   final VoidCallback onRefreshProvider;
 
@@ -36,6 +38,9 @@ class DetailPanel extends StatelessWidget {
               : _SelectedDetails(
                   item: selected,
                   onPlay: selected.canPlay ? () => onPlay(selected) : null,
+                  onRestart: selected.canPlay && selected.hasResume
+                      ? () => onRestart(selected)
+                      : null,
                   onToggleFavorite: () => onToggleFavorite(selected),
                   onRefreshProvider: onRefreshProvider,
                 ),
@@ -79,12 +84,14 @@ class _SelectedDetails extends StatelessWidget {
   const _SelectedDetails({
     required this.item,
     required this.onPlay,
+    required this.onRestart,
     required this.onToggleFavorite,
     required this.onRefreshProvider,
   });
 
   final CatalogCardItem item;
   final VoidCallback? onPlay;
+  final VoidCallback? onRestart;
   final VoidCallback onToggleFavorite;
   final VoidCallback onRefreshProvider;
 
@@ -165,6 +172,10 @@ class _SelectedDetails extends StatelessWidget {
           const SizedBox(height: 16),
           _InfoBlock(title: 'Overview', body: item.description!),
         ],
+        if (item.hasResume) ...[
+          const SizedBox(height: 16),
+          _ResumeBlock(item: item),
+        ],
         const Spacer(),
         Row(
           children: [
@@ -175,12 +186,22 @@ class _SelectedDetails extends StatelessWidget {
                 label: Text(
                   !item.canPlay
                       ? 'Unavailable'
+                      : item.hasResume
+                      ? 'Resume ${_duration(item.resumePositionSeconds)}'
                       : item.contentType == CatalogContentType.series
                       ? 'Play First Episode'
                       : 'Play',
                 ),
               ),
             ),
+            if (onRestart != null) ...[
+              const SizedBox(width: 10),
+              OutlinedButton.icon(
+                onPressed: onRestart,
+                icon: const Icon(LucideIcons.rotateCcw, size: 18),
+                label: const Text('Restart'),
+              ),
+            ],
             const SizedBox(width: 10),
             IconButton(
               tooltip: item.isFavorite ? 'Remove favorite' : 'Add favorite',
@@ -199,6 +220,50 @@ class _SelectedDetails extends StatelessWidget {
             ),
           ],
         ),
+      ],
+    );
+  }
+}
+
+class _ResumeBlock extends StatelessWidget {
+  const _ResumeBlock({required this.item});
+
+  final CatalogCardItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final progress = item.hasResumeProgress
+        ? (item.resumeProgress * 100).round().clamp(1, 100)
+        : null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          progress == null
+              ? 'Resume from ${_duration(item.resumePositionSeconds)}'
+              : '$progress% watched',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.primary,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0,
+          ),
+        ),
+        if (item.hasResumeProgress) ...[
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              minHeight: 6,
+              value: item.resumeProgress,
+              backgroundColor: const Color(0xFF292D31),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                theme.colorScheme.primary,
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }

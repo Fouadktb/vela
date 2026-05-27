@@ -376,6 +376,50 @@ class CatalogRepository {
     return rows.map(_toEpisode).toList();
   }
 
+  Future<CatalogEpisode?> resolveNextEpisode({
+    required String providerId,
+    required String seriesId,
+    required int seasonNumber,
+    required int episodeNumber,
+  }) async {
+    final sameSeason =
+        await (_db.select(_db.episodes)
+              ..where(
+                (episode) =>
+                    episode.providerId.equals(providerId) &
+                    episode.seriesId.equals(seriesId) &
+                    episode.seasonNumber.equals(seasonNumber) &
+                    episode.episodeNumber.isBiggerThanValue(episodeNumber) &
+                    episode.isStale.equals(false),
+              )
+              ..orderBy([
+                (episode) => OrderingTerm.asc(episode.episodeNumber),
+                (episode) => OrderingTerm.asc(episode.normalizedTitle),
+              ])
+              ..limit(1))
+            .getSingleOrNull();
+    if (sameSeason != null) return _toEpisode(sameSeason);
+
+    final nextSeason =
+        await (_db.select(_db.episodes)
+              ..where(
+                (episode) =>
+                    episode.providerId.equals(providerId) &
+                    episode.seriesId.equals(seriesId) &
+                    episode.seasonNumber.isBiggerThanValue(seasonNumber) &
+                    episode.isStale.equals(false),
+              )
+              ..orderBy([
+                (episode) => OrderingTerm.asc(episode.seasonNumber),
+                (episode) => OrderingTerm.asc(episode.episodeNumber),
+                (episode) => OrderingTerm.asc(episode.normalizedTitle),
+              ])
+              ..limit(1))
+            .getSingleOrNull();
+
+    return nextSeason == null ? null : _toEpisode(nextSeason);
+  }
+
   Selectable<QueryRow> _selectEpisodesForCatalogItem({
     required String providerId,
     required String catalogItemId,
