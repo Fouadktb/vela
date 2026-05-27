@@ -12,7 +12,12 @@ import 'track_models.dart';
 
 class PlaybackController extends ChangeNotifier {
   PlaybackController() {
-    _player = media_kit.Player();
+    _player = media_kit.Player(
+      configuration: const media_kit.PlayerConfiguration(
+        title: 'Vela',
+        bufferSize: 128 * 1024 * 1024,
+      ),
+    );
     videoController = VideoController(_player);
     _tracks = _player.state.tracks;
     _selectedTrack = _player.state.track;
@@ -20,6 +25,8 @@ class PlaybackController extends ChangeNotifier {
       volume: _player.state.volume,
       playbackSpeed: _player.state.rate,
       buffering: _player.state.buffering,
+      buffer: _player.state.buffer,
+      bufferingPercentage: _player.state.bufferingPercentage,
       playing: _player.state.playing,
       duration: _player.state.duration,
       position: _player.state.position,
@@ -47,13 +54,18 @@ class PlaybackController extends ChangeNotifier {
         status: VelaPlaybackStatus.opening,
         position: Duration.zero,
         duration: Duration.zero,
+        buffer: Duration.zero,
+        bufferingPercentage: 0,
         completed: false,
         errorMessage: null,
       ),
     );
 
     try {
-      await _player.open(media_kit.Media(item.streamUrl), play: true);
+      await _player.open(
+        media_kit.Media(item.streamUrl, httpHeaders: _mediaHttpHeaders),
+        play: true,
+      );
       if (item.kind != PlayableKind.live &&
           item.resumePosition > Duration.zero) {
         await _player.seek(item.resumePosition);
@@ -162,6 +174,8 @@ class PlaybackController extends ChangeNotifier {
         completed: false,
         position: Duration.zero,
         duration: Duration.zero,
+        buffer: Duration.zero,
+        bufferingPercentage: 0,
         errorMessage: null,
       ),
     );
@@ -187,6 +201,16 @@ class PlaybackController extends ChangeNotifier {
       ..add(
         _player.stream.duration.listen((value) {
           _emit(_state.copyWith(duration: value));
+        }),
+      )
+      ..add(
+        _player.stream.buffer.listen((value) {
+          _emit(_state.copyWith(buffer: value));
+        }),
+      )
+      ..add(
+        _player.stream.bufferingPercentage.listen((value) {
+          _emit(_state.copyWith(bufferingPercentage: value.clamp(0, 100)));
         }),
       )
       ..add(
@@ -318,6 +342,12 @@ class PlaybackController extends ChangeNotifier {
     notifyListeners();
   }
 }
+
+const _mediaHttpHeaders = {
+  'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+  'Accept':
+      'video/*, audio/*, application/vnd.apple.mpegurl, application/x-mpegURL, */*',
+};
 
 extension _FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull {

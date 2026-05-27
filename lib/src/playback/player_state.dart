@@ -9,6 +9,8 @@ class VelaPlayerState {
     this.status = VelaPlaybackStatus.idle,
     this.position = Duration.zero,
     this.duration = Duration.zero,
+    this.buffer = Duration.zero,
+    this.bufferingPercentage = 0,
     this.buffering = false,
     this.playing = false,
     this.completed = false,
@@ -26,6 +28,8 @@ class VelaPlayerState {
   final VelaPlaybackStatus status;
   final Duration position;
   final Duration duration;
+  final Duration buffer;
+  final double bufferingPercentage;
   final bool buffering;
   final bool playing;
   final bool completed;
@@ -53,6 +57,8 @@ class VelaPlayerState {
     VelaPlaybackStatus? status,
     Duration? position,
     Duration? duration,
+    Duration? buffer,
+    double? bufferingPercentage,
     bool? buffering,
     bool? playing,
     bool? completed,
@@ -70,6 +76,8 @@ class VelaPlayerState {
       status: status ?? this.status,
       position: position ?? this.position,
       duration: duration ?? this.duration,
+      buffer: buffer ?? this.buffer,
+      bufferingPercentage: bufferingPercentage ?? this.bufferingPercentage,
       buffering: buffering ?? this.buffering,
       playing: playing ?? this.playing,
       completed: completed ?? this.completed,

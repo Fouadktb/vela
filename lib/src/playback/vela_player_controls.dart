@@ -152,6 +152,11 @@ class _Timeline extends StatelessWidget {
     final value = state.position.inMilliseconds
         .clamp(0, max.toInt())
         .toDouble();
+    final bufferValue = canSeek && state.buffer > Duration.zero
+        ? state.buffer.inMilliseconds
+              .clamp(value.round(), max.round())
+              .toDouble()
+        : null;
 
     return Row(
       children: [
@@ -164,6 +169,7 @@ class _Timeline extends StatelessWidget {
               thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
               overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
               activeTrackColor: Colors.white,
+              secondaryActiveTrackColor: const Color(0x66FFFFFF),
               inactiveTrackColor: const Color(0x66FFFFFF),
               thumbColor: Colors.white,
               overlayColor: const Color(0x33FFFFFF),
@@ -172,6 +178,7 @@ class _Timeline extends StatelessWidget {
               min: 0,
               max: max,
               value: value,
+              secondaryTrackValue: bufferValue,
               onChanged: canSeek
                   ? (next) {
                       controller.seekTo(Duration(milliseconds: next.round()));
@@ -327,6 +334,7 @@ class _AudioMenu extends StatelessWidget {
       icon: LucideIcons.audioLines,
       emptyLabel: 'No audio tracks',
       items: tracks,
+      compactLabel: _selectedTrackLabel(tracks, fallback: 'Audio'),
       labelFor: (track) => _trackLabel(track.title, track.language),
       valueFor: (track) => track.id,
       selectedFor: (track) => track.isSelected,
@@ -352,6 +360,7 @@ class _SubtitleMenu extends StatelessWidget {
       tooltip: 'Subtitle tracks',
       color: const Color(0xFF17191C),
       elevation: 8,
+      constraints: const BoxConstraints(minWidth: 260, maxWidth: 360),
       onSelected: (value) {
         if (value == 'off') {
           controller.turnSubtitlesOff();
@@ -376,7 +385,12 @@ class _SubtitleMenu extends StatelessWidget {
             ),
         ];
       },
-      child: const _MenuIcon(icon: LucideIcons.subtitles),
+      child: _MenuIcon(
+        icon: LucideIcons.subtitles,
+        compactLabel: offSelected
+            ? 'Subtitles off'
+            : _selectedTrackLabel(tracks, fallback: 'Subtitles'),
+      ),
     );
   }
 }
@@ -394,6 +408,7 @@ class _VideoMenu extends StatelessWidget {
       icon: LucideIcons.monitorPlay,
       emptyLabel: 'No video tracks',
       items: tracks,
+      compactLabel: _selectedTrackLabel(tracks, fallback: 'Video'),
       labelFor: (track) => _trackLabel(track.title, track.language),
       valueFor: (track) => track.id,
       selectedFor: (track) => track.isSelected,
@@ -443,6 +458,7 @@ class _MenuButton<T> extends StatelessWidget {
     required this.icon,
     required this.emptyLabel,
     required this.items,
+    required this.compactLabel,
     required this.labelFor,
     required this.valueFor,
     required this.selectedFor,
@@ -453,6 +469,7 @@ class _MenuButton<T> extends StatelessWidget {
   final IconData icon;
   final String emptyLabel;
   final List<T> items;
+  final String compactLabel;
   final String Function(T item) labelFor;
   final String Function(T item) valueFor;
   final bool Function(T item) selectedFor;
@@ -464,6 +481,7 @@ class _MenuButton<T> extends StatelessWidget {
       tooltip: tooltip,
       color: const Color(0xFF17191C),
       elevation: 8,
+      constraints: const BoxConstraints(minWidth: 260, maxWidth: 360),
       enabled: items.isNotEmpty,
       onSelected: onSelected,
       itemBuilder: (context) {
@@ -481,7 +499,7 @@ class _MenuButton<T> extends StatelessWidget {
             ),
         ];
       },
-      child: _MenuIcon(icon: icon),
+      child: _MenuIcon(icon: icon, compactLabel: compactLabel),
     );
   }
 }
@@ -497,6 +515,7 @@ class _MenuIcon extends StatelessWidget {
     return Container(
       height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 12),
+      constraints: const BoxConstraints(minWidth: 44, maxWidth: 190),
       decoration: _controlDecoration(),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -504,12 +523,16 @@ class _MenuIcon extends StatelessWidget {
           Icon(icon, size: 20, color: Colors.white),
           if (compactLabel != null) ...[
             const SizedBox(width: 6),
-            Text(
-              compactLabel!,
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0,
+            Flexible(
+              child: Text(
+                compactLabel!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0,
+                ),
               ),
             ),
           ],
@@ -628,6 +651,27 @@ BoxDecoration _controlDecoration() {
 String _trackLabel(String title, String? language) {
   if (language == null || language.trim().isEmpty) return title;
   return '$title (${language.trim()})';
+}
+
+String _selectedTrackLabel<T>(List<T> tracks, {required String fallback}) {
+  for (final track in tracks) {
+    final isSelected = switch (track) {
+      PlaybackAudioTrack item => item.isSelected,
+      PlaybackSubtitleTrack item => item.isSelected,
+      PlaybackVideoTrack item => item.isSelected,
+      _ => false,
+    };
+    if (!isSelected) {
+      continue;
+    }
+    return switch (track) {
+      PlaybackAudioTrack item => _trackLabel(item.title, item.language),
+      PlaybackSubtitleTrack item => _trackLabel(item.title, item.language),
+      PlaybackVideoTrack item => _trackLabel(item.title, item.language),
+      _ => fallback,
+    };
+  }
+  return fallback;
 }
 
 String _formatDuration(Duration duration) {

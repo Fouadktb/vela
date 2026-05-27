@@ -15,6 +15,7 @@ class XmltvParser {
     final document = XmlDocument.parse(input);
     final fromMs = now.subtract(pastWindow).millisecondsSinceEpoch;
     final toMs = now.add(futureWindow).millisecondsSinceEpoch;
+    final channelAliases = _channelAliases(document);
     final programs = <EpgProgramInput>[];
 
     for (final node in document.findAllElements('programme')) {
@@ -34,17 +35,20 @@ class XmltvParser {
         continue;
       }
 
-      programs.add(
-        EpgProgramInput(
-          providerId: providerId,
-          channelId: channelId,
-          startAtMs: startAt.millisecondsSinceEpoch,
-          endAtMs: endAt.millisecondsSinceEpoch,
-          title: title,
-          description: _childText(node, 'desc'),
-          category: _childText(node, 'category'),
-        ),
-      );
+      final aliases = channelAliases[channelId] ?? [channelId];
+      for (final alias in aliases) {
+        programs.add(
+          EpgProgramInput(
+            providerId: providerId,
+            channelId: alias,
+            startAtMs: startAt.millisecondsSinceEpoch,
+            endAtMs: endAt.millisecondsSinceEpoch,
+            title: title,
+            description: _childText(node, 'desc'),
+            category: _childText(node, 'category'),
+          ),
+        );
+      }
     }
 
     programs.sort((a, b) {
@@ -54,6 +58,25 @@ class XmltvParser {
     });
     return programs;
   }
+}
+
+Map<String, List<String>> _channelAliases(XmlDocument document) {
+  final aliases = <String, List<String>>{};
+  for (final node in document.findAllElements('channel')) {
+    final id = node.getAttribute('id')?.trim();
+    if (id == null || id.isEmpty) {
+      continue;
+    }
+    final values = <String>{id};
+    for (final displayName in node.findElements('display-name')) {
+      final value = displayName.innerText.trim();
+      if (value.isNotEmpty) {
+        values.add(value);
+      }
+    }
+    aliases[id] = values.toList(growable: false);
+  }
+  return aliases;
 }
 
 String? _childText(XmlElement element, String name) {

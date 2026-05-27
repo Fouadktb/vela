@@ -15,18 +15,22 @@ class XtreamImporter {
     onProgress?.call('Checking Xtream login');
     await client.getPlayerApiInfo();
 
-    onProgress?.call('Importing live TV categories');
-    final liveCategories = await client.getLiveCategories();
-    onProgress?.call('Importing live TV channels');
-    final liveStreams = await client.getLiveStreams();
-    onProgress?.call('Importing movie categories');
-    final vodCategories = await client.getVodCategories();
-    onProgress?.call('Importing movies');
-    final vodStreams = await client.getVodStreams();
-    onProgress?.call('Importing series categories');
-    final seriesCategories = await client.getSeriesCategories();
-    onProgress?.call('Importing series');
-    final seriesItems = await client.getSeries();
+    onProgress?.call('Importing live TV, movies, and series');
+    final liveCategoriesFuture = client.getLiveCategories();
+    final liveStreamsFuture = client.getLiveStreams();
+    final vodCategoriesFuture = client.getVodCategories();
+    final vodStreamsFuture = client.getVodStreams();
+    final seriesCategoriesFuture = client.getSeriesCategories();
+    final seriesItemsFuture = client.getSeries();
+
+    final liveCategories = await liveCategoriesFuture;
+    final liveStreams = await liveStreamsFuture;
+    final vodCategories = await vodCategoriesFuture;
+    final vodStreams = await vodStreamsFuture;
+    final seriesCategories = await seriesCategoriesFuture;
+    final seriesItems = await seriesItemsFuture;
+
+    onProgress?.call('Preparing catalog');
 
     final categories = <CatalogCategoryInput>[
       ..._categoryInputs(providerId, CatalogContentType.live, liveCategories),

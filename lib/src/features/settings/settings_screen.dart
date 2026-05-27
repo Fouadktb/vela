@@ -421,7 +421,7 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
                 OutlinedButton.icon(
                   onPressed: _busy ? null : _refresh,
                   icon: const Icon(LucideIcons.refreshCw, size: 17),
-                  label: const Text('Refresh'),
+                  label: const Text('Refresh Catalog'),
                 ),
                 OutlinedButton.icon(
                   onPressed: _busy ? null : _clearCatalog,

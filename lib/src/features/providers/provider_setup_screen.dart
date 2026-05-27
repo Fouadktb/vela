@@ -18,22 +18,30 @@ class ProviderSetupImportController extends ChangeNotifier {
   bool _isImporting = false;
   String? _statusMessage;
   String? _errorMessage;
+  ProviderImportStep _step = ProviderImportStep.idle;
+  ProviderImportStep _failedStep = ProviderImportStep.idle;
 
   bool get isImporting => _isImporting;
   String? get statusMessage => _statusMessage;
   String? get errorMessage => _errorMessage;
+  ProviderImportStep get step => _step;
+  ProviderImportStep get failedStep => _failedStep;
   bool get shouldKeepSetupVisible => _isImporting || _errorMessage != null;
 
   void start(String message) {
     _isImporting = true;
     _statusMessage = message;
     _errorMessage = null;
+    _step = _stepForMessage(message);
+    _failedStep = ProviderImportStep.idle;
     notifyListeners();
   }
 
   void progress(String message) {
     _statusMessage = message;
     _errorMessage = null;
+    _step = _stepForMessage(message);
+    _failedStep = ProviderImportStep.idle;
     notifyListeners();
   }
 
@@ -41,6 +49,8 @@ class ProviderSetupImportController extends ChangeNotifier {
     _isImporting = false;
     _statusMessage = message;
     _errorMessage = null;
+    _step = ProviderImportStep.finished;
+    _failedStep = ProviderImportStep.idle;
     notifyListeners();
   }
 
@@ -48,8 +58,51 @@ class ProviderSetupImportController extends ChangeNotifier {
     _isImporting = false;
     _statusMessage = null;
     _errorMessage = message;
+    _failedStep = switch (_step) {
+      ProviderImportStep.idle ||
+      ProviderImportStep.finished ||
+      ProviderImportStep.failed => ProviderImportStep.loadingCatalog,
+      _ => _step,
+    };
+    _step = ProviderImportStep.failed;
     notifyListeners();
   }
+}
+
+enum ProviderImportStep {
+  idle,
+  savingProvider,
+  checkingSource,
+  loadingCatalog,
+  preparingCatalog,
+  savingCatalog,
+  finished,
+  failed,
+}
+
+ProviderImportStep _stepForMessage(String message) {
+  final value = message.toLowerCase();
+  if (value.contains('saving provider')) {
+    return ProviderImportStep.savingProvider;
+  }
+  if (value.contains('checking') || value.contains('login')) {
+    return ProviderImportStep.checkingSource;
+  }
+  if (value.contains('loading') ||
+      value.contains('reading') ||
+      value.contains('importing')) {
+    return ProviderImportStep.loadingCatalog;
+  }
+  if (value.contains('parsing') || value.contains('preparing')) {
+    return ProviderImportStep.preparingCatalog;
+  }
+  if (value.contains('saving catalog')) {
+    return ProviderImportStep.savingCatalog;
+  }
+  if (value.contains('imported')) {
+    return ProviderImportStep.finished;
+  }
+  return ProviderImportStep.loadingCatalog;
 }
 
 class ProviderSetupScreen extends ConsumerStatefulWidget {
@@ -272,6 +325,16 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
                           message: importState.statusMessage!,
                           color: theme.colorScheme.primary,
                         ),
+                      if (importState.isImporting ||
+                          importState.step == ProviderImportStep.finished ||
+                          importState.step == ProviderImportStep.failed) ...[
+                        const SizedBox(height: 12),
+                        _ImportStepper(
+                          currentStep: importState.step,
+                          failedStep: importState.failedStep,
+                          isImporting: importState.isImporting,
+                        ),
+                      ],
                       const SizedBox(height: 18),
                       Align(
                         alignment: Alignment.centerRight,
@@ -366,6 +429,136 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
     }
     return null;
   }
+}
+
+class _ImportStepper extends StatelessWidget {
+  const _ImportStepper({
+    required this.currentStep,
+    required this.failedStep,
+    required this.isImporting,
+  });
+
+  final ProviderImportStep currentStep;
+  final ProviderImportStep failedStep;
+  final bool isImporting;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final activeIndex = _stepIndex(
+      currentStep == ProviderImportStep.failed ? failedStep : currentStep,
+    );
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F1012),
+        border: Border.all(color: const Color(0xFF292D31)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            for (var index = 0; index < _importStepLabels.length; index += 1)
+              _ImportStepRow(
+                label: _importStepLabels[index],
+                isActive: isImporting && index == activeIndex,
+                isComplete:
+                    currentStep == ProviderImportStep.finished ||
+                    (currentStep != ProviderImportStep.failed &&
+                        index < activeIndex),
+                isFailed:
+                    currentStep == ProviderImportStep.failed &&
+                    index == activeIndex,
+                accent: theme.colorScheme.primary,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ImportStepRow extends StatelessWidget {
+  const _ImportStepRow({
+    required this.label,
+    required this.isActive,
+    required this.isComplete,
+    required this.isFailed,
+    required this.accent,
+  });
+
+  final String label;
+  final bool isActive;
+  final bool isComplete;
+  final bool isFailed;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final iconColor = isFailed
+        ? const Color(0xFFE26D5A)
+        : isComplete || isActive
+        ? accent
+        : const Color(0xFF5D5A54);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 24,
+            height: 24,
+            child: isActive
+                ? CircularProgressIndicator(strokeWidth: 2, color: iconColor)
+                : Icon(
+                    isFailed
+                        ? LucideIcons.circleAlert
+                        : isComplete
+                        ? LucideIcons.circleCheck
+                        : LucideIcons.circle,
+                    size: 18,
+                    color: iconColor,
+                  ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: isActive || isComplete
+                    ? const Color(0xFFF4F0E8)
+                    : const Color(0xFF8E8980),
+                fontWeight: isActive ? FontWeight.w800 : FontWeight.w500,
+                letterSpacing: 0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+const _importStepLabels = [
+  'Save provider',
+  'Check credentials',
+  'Load live TV, movies, and series',
+  'Prepare catalog',
+  'Save catalog',
+];
+
+int _stepIndex(ProviderImportStep step) {
+  return switch (step) {
+    ProviderImportStep.idle => 0,
+    ProviderImportStep.savingProvider => 0,
+    ProviderImportStep.checkingSource => 1,
+    ProviderImportStep.loadingCatalog => 2,
+    ProviderImportStep.preparingCatalog => 3,
+    ProviderImportStep.savingCatalog => 4,
+    ProviderImportStep.finished => _importStepLabels.length,
+    ProviderImportStep.failed => 2,
+  };
 }
 
 class _StatusBanner extends StatelessWidget {

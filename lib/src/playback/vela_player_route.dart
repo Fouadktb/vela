@@ -503,7 +503,7 @@ class _PlayerSurface extends StatelessWidget {
           onCenterDoubleTap: onCenterDoubleTap,
         ),
         if (state.buffering || state.status == VelaPlaybackStatus.opening)
-          const _BufferingIndicator(),
+          _BufferingIndicator(state: state),
         if (state.status == VelaPlaybackStatus.error)
           _ErrorOverlay(message: state.errorMessage),
         if (seekFeedback != null)
@@ -527,15 +527,47 @@ class _PlayerSurface extends StatelessWidget {
 }
 
 class _BufferingIndicator extends StatelessWidget {
-  const _BufferingIndicator();
+  const _BufferingIndicator({required this.state});
+
+  final VelaPlayerState state;
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: SizedBox(
-        width: 48,
-        height: 48,
-        child: CircularProgressIndicator(strokeWidth: 3, color: Colors.white),
+    final percentage = state.bufferingPercentage.round();
+    final hasPercentage = percentage > 0 && percentage < 100;
+
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xB0000000),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0x33FFFFFF)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(
+                strokeWidth: 3,
+                color: Colors.white,
+              ),
+            ),
+            if (hasPercentage) ...[
+              const SizedBox(width: 12),
+              Text(
+                'Buffering $percentage%',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0,
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

@@ -21,6 +21,7 @@ import 'detail_panel.dart';
 import 'item_grid.dart';
 
 const _catalogCacheDuration = Duration(minutes: 10);
+final _forcedEpgRefreshProviders = <String>{};
 
 final _recentCatalogCardsProvider =
     StreamProvider.autoDispose<List<CatalogCardItem>>((ref) {
@@ -221,7 +222,8 @@ class _CatalogContent extends ConsumerWidget {
                       Expanded(
                         child: Padding(
                           padding: EdgeInsets.only(
-                            left: section.contentType == null ? 18 : 0,
+                            left: section.contentType == null ? 30 : 0,
+                            right: section.contentType == null ? 6 : 0,
                           ),
                           child: visible.isEmpty
                               ? EmptyState(
@@ -580,10 +582,11 @@ void _refreshEpgIfNeeded(
       return;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      final force = _forcedEpgRefreshProviders.add(selected.providerId);
       unawaited(
         ref
             .read(providerRefreshServiceProvider)
-            .refreshProviderEpg(selected.providerId)
+            .refreshProviderEpg(selected.providerId, force: force)
             .catchError((Object error, StackTrace stackTrace) {
               debugPrint('Failed to load channel schedule: $error');
               debugPrintStack(stackTrace: stackTrace);
@@ -597,6 +600,7 @@ List<String> _epgChannelAliases(CatalogCardItem item) {
   final aliases = <String>[
     if (item.epgChannelId?.trim().isNotEmpty == true) item.epgChannelId!.trim(),
     if (item.externalId?.trim().isNotEmpty == true) item.externalId!.trim(),
+    if (item.title.trim().isNotEmpty) item.title.trim(),
     _trailingCatalogId(item.id),
   ];
   return aliases.where((value) => value.trim().isNotEmpty).toSet().toList();

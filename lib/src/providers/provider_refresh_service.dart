@@ -210,17 +210,23 @@ class ProviderRefreshService {
   Future<void> refreshProviderEpg(
     String providerId, {
     void Function(String message)? onProgress,
+    bool force = false,
   }) async {
-    final existing = _inFlightEpgRefreshes[providerId];
+    final refreshKey = force ? '$providerId|force' : providerId;
+    final existing = _inFlightEpgRefreshes[refreshKey];
     if (existing != null) {
       return existing;
     }
-    final refresh = _refreshProviderEpg(providerId, onProgress: onProgress);
-    _inFlightEpgRefreshes[providerId] = refresh;
+    final refresh = _refreshProviderEpg(
+      providerId,
+      onProgress: onProgress,
+      force: force,
+    );
+    _inFlightEpgRefreshes[refreshKey] = refresh;
     unawaited(
       refresh.whenComplete(() {
-        if (identical(_inFlightEpgRefreshes[providerId], refresh)) {
-          _inFlightEpgRefreshes.remove(providerId);
+        if (identical(_inFlightEpgRefreshes[refreshKey], refresh)) {
+          _inFlightEpgRefreshes.remove(refreshKey);
         }
       }),
     );
@@ -230,8 +236,9 @@ class ProviderRefreshService {
   Future<void> _refreshProviderEpg(
     String providerId, {
     void Function(String message)? onProgress,
+    bool force = false,
   }) async {
-    if (await _providerRepository.hasAnyEpgPrograms(providerId)) {
+    if (!force && await _providerRepository.hasAnyEpgPrograms(providerId)) {
       return;
     }
     final provider = await _providerRepository.getProvider(providerId);
