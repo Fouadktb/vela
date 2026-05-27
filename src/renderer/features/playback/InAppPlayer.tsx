@@ -262,7 +262,7 @@ async function attachPlaybackEngine(
       hls.on(HlsRuntime.Events.MEDIA_ATTACHED, () => hls.loadSource(source.url));
       hls.on(HlsRuntime.Events.MANIFEST_PARSED, () => {
         updateFromVideo(getHlsTrackState(hls));
-        void video.play().catch(startFallback);
+        void playVideo(video).catch(startFallback);
       });
       hls.on(HlsRuntime.Events.AUDIO_TRACKS_UPDATED, () => updateFromVideo(getHlsTrackState(hls)));
       hls.on(HlsRuntime.Events.AUDIO_TRACK_SWITCHED, () => updateFromVideo(getHlsTrackState(hls)));
@@ -278,7 +278,7 @@ async function attachPlaybackEngine(
 
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = source.url;
-      void video.play().catch(startFallback);
+      void playVideo(video).catch(startFallback);
       return null;
     }
 
@@ -311,13 +311,13 @@ async function attachPlaybackEngine(
     player.attachMediaElement(video);
     player.on(mpegtsRuntime.Events.ERROR, startFallback);
     player.load();
-    void video.play().catch(startFallback);
+    void playVideo(video).catch(startFallback);
     return { type: "mpegts", instance: player };
   }
 
   video.src = source.url;
   safeMediaCall(() => video.load());
-  void video.play().catch(startFallback);
+  void playVideo(video).catch(startFallback);
   return null;
 }
 
@@ -371,7 +371,7 @@ function toggleVideoPlayback(
   }
 
   if (video.paused) {
-    void video.play();
+    void playVideo(video);
     setState((current) => (current ? { ...current, status: "playing" } : current));
     return;
   }
@@ -501,5 +501,13 @@ function safeMediaCall(callback: () => void): void {
     callback();
   } catch {
     // jsdom does not implement media methods; real browser failures are surfaced by media events.
+  }
+}
+
+function playVideo(video: HTMLVideoElement): Promise<void> {
+  try {
+    return Promise.resolve(video.play()).then(() => undefined);
+  } catch (error) {
+    return Promise.reject(error);
   }
 }
