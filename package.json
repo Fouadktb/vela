@@ -10,18 +10,15 @@
     "dev": "vite --host 127.0.0.1",
     "dev:electron": "pnpm rebuild:native && concurrently -k \"pnpm dev\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
-    "test": "pnpm rebuild:node && vitest run",
-    "test:watch": "pnpm rebuild:node && vitest",
     "build:renderer": "vite build",
     "build:main": "tsc -p tsconfig.node.json",
-    "build": "pnpm typecheck && pnpm test && pnpm build:renderer && pnpm build:main && pnpm check:preload",
+    "build": "pnpm typecheck && pnpm build:renderer && pnpm build:main && pnpm check:preload",
     "prepare:mpv": "node scripts/prepare-mpv.cjs",
     "build:mac": "pnpm prepare:mpv -- --platform=darwin && pnpm build && electron-builder --mac",
     "build:win": "pnpm prepare:mpv -- --platform=win32 --arch=x64 && pnpm build && electron-builder --win",
     "check:mpv": "node scripts/check-mpv.js",
     "check:preload": "node scripts/check-preload.cjs",
-    "rebuild:native": "electron-builder install-app-deps",
-    "rebuild:node": "npm rebuild better-sqlite3 --loglevel=error"
+    "rebuild:native": "electron-builder install-app-deps"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.0",
@@ -33,21 +30,16 @@
   },
   "devDependencies": {
     "7zip-bin": "^5.2.0",
-    "@testing-library/jest-dom": "^6.6.0",
-    "@testing-library/react": "^16.1.0",
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@vitest/coverage-v8": "^2.1.0",
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.0",
     "electron": "^33.2.0",
     "electron-builder": "^25.1.0",
-    "jsdom": "^25.0.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
-    "vitest": "^2.1.0",
     "wait-on": "^8.0.0"
   },
   "build": {

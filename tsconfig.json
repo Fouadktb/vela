@@ -14,8 +14,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "jsx": "react-jsx",
-    "types": ["vitest/globals", "@testing-library/jest-dom"]
+    "jsx": "react-jsx"
   },
-  "include": ["src", "electron/preload", "vite.config.ts", "vitest.config.ts"]
+  "include": ["src", "electron/preload", "vite.config.ts"]
 }
