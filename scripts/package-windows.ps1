@@ -11,7 +11,13 @@ if (-not $VersionLine) {
     throw "Could not read app version from $PubspecPath"
 }
 $AppVersion = ($VersionLine.Matches[0].Groups[1].Value -split '\+')[0]
-$InstallerBaseName = "vela-windows-v$AppVersion-setup"
+$InstallerVersion = if ($env:VELA_RELEASE_VERSION) {
+    ($env:VELA_RELEASE_VERSION).TrimStart('v', 'V')
+}
+else {
+    $AppVersion
+}
+$InstallerBaseName = "vela-windows-v$InstallerVersion-setup"
 $InstallerPath = Join-Path $ReleaseRoot "$InstallerBaseName.exe"
 
 function Resolve-InnoSetupCompiler {

@@ -62,9 +62,11 @@ winget install JRSoftware.InnoSetup
 .\scripts\package-windows.ps1
 ```
 
+Or run the manual `Build Windows Installer` GitHub workflow. It builds on a Windows runner and uploads `vela-windows-vX.Y.Z-setup.exe` as a workflow artifact.
+
 ## Manual Release Upload
 
-Flutter desktop apps are built on the target operating system. Build macOS on macOS, build Windows on Windows, then upload the zips to the GitHub Release.
+Flutter desktop apps are built on the target operating system. Build macOS on macOS, build Windows on Windows, then upload the artifacts to the GitHub Release.
 
 Expected release assets:
 

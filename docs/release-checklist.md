@@ -46,6 +46,7 @@ Use this checklist for every local Vela release candidate before creating a GitH
 - Run the generated `release/vela-windows-vX.Y.Z-setup.exe` installer.
 - Confirm Vela launches from the installed Start menu shortcut.
 - Confirm `release/vela-windows-vX.Y.Z-setup.exe` is ready for GitHub upload.
+- If no Windows machine is available, run the manual `Build Windows Installer` GitHub workflow for the release tag and download its installer artifact.
 - Keep code signing and notarization separate until the playable Flutter app is validated on both macOS and Windows.
 
 ## GitHub Release Upload
