@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../app/app_version.dart';
 import '../app/section_state.dart';
 
 const double velaSidebarCollapsedWidth = 72;
@@ -85,7 +86,7 @@ class _VelaSidebarState extends State<VelaSidebar> {
                   opacity: _isExpanded ? 1 : 0,
                   duration: const Duration(milliseconds: 120),
                   child: Text(
-                    'Vela 0.2',
+                    'Vela $velaVersion',
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: const Color(0xFF716D66),

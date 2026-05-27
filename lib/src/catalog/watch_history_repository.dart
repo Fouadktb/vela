@@ -207,6 +207,64 @@ class WatchHistoryRepository {
     );
   }
 
+  Future<Map<({String providerId, String itemId}), PlaybackPosition>>
+  listActiveResumePositions({
+    required PlayableContentType itemType,
+    Iterable<String>? providerIds,
+  }) async {
+    final ids = _normalizedProviderIds(providerIds);
+    final query = _db.select(_db.playbackPositions)
+      ..where((position) {
+        Expression<bool> predicate =
+            position.itemType.equals(itemType.name) &
+            position.completed.equals(false) &
+            position.positionSeconds.isBiggerThanValue(0);
+        if (ids.isNotEmpty) {
+          predicate = predicate & position.providerId.isIn(ids);
+        }
+        return predicate;
+      });
+    final rows = await query.get();
+
+    return {
+      for (final row in rows)
+        (providerId: row.providerId, itemId: row.itemId): _toPlaybackPosition(
+          row,
+        ),
+    };
+  }
+
+  Future<Map<({String providerId, String seriesId}), PlaybackPosition>>
+  listLatestResumePositionsBySeries({Iterable<String>? providerIds}) async {
+    final ids = _normalizedProviderIds(providerIds);
+    final query = _db.select(_db.playbackPositions)
+      ..where((position) {
+        Expression<bool> predicate =
+            position.itemType.equals(PlayableContentType.episode.name) &
+            position.completed.equals(false) &
+            position.positionSeconds.isBiggerThanValue(0);
+        if (ids.isNotEmpty) {
+          predicate = predicate & position.providerId.isIn(ids);
+        }
+        return predicate;
+      })
+      ..orderBy([(position) => OrderingTerm.desc(position.updatedAt)]);
+    final rows = await query.get();
+    final positions =
+        <({String providerId, String seriesId}), PlaybackPosition>{};
+
+    for (final row in rows) {
+      final seriesId = row.seriesId;
+      if (seriesId == null || seriesId.trim().isEmpty) {
+        continue;
+      }
+      final key = (providerId: row.providerId, seriesId: seriesId);
+      positions.putIfAbsent(key, () => _toPlaybackPosition(row));
+    }
+
+    return positions;
+  }
+
   Stream<List<PlaybackPosition>> watchEpisodePositionsForSeries({
     required String providerId,
     required String seriesId,
@@ -244,6 +302,14 @@ class WatchHistoryRepository {
         ))
         .go();
   }
+}
+
+List<String> _normalizedProviderIds(Iterable<String>? providerIds) {
+  return providerIds
+          ?.where((value) => value.trim().isNotEmpty)
+          .toSet()
+          .toList(growable: false) ??
+      const [];
 }
 
 PlaybackPosition _toPlaybackPosition(PlaybackPositionRow row) {

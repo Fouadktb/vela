@@ -81,7 +81,7 @@ AppId={{81E24D76-145B-4AA1-A4DC-2871AE31A2AD}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={localappdata}\Programs\Vela
+DefaultDirName={autopf}\Vela
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=$EscapedReleaseRoot
@@ -89,8 +89,9 @@ OutputBaseFilename=$InstallerBaseName
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 ArchitecturesAllowed=x64
+ArchitecturesInstallIn64BitMode=x64
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Languages]

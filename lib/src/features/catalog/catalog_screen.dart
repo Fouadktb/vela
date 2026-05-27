@@ -20,8 +20,11 @@ import 'content_detail_screen.dart';
 import 'detail_panel.dart';
 import 'item_grid.dart';
 
+const _catalogCacheDuration = Duration(minutes: 10);
+
 final _recentCatalogCardsProvider =
     StreamProvider.autoDispose<List<CatalogCardItem>>((ref) {
+      _keepCatalogProviderWarm(ref);
       final historyRepository = ref.watch(watchHistoryRepositoryProvider);
       final catalogRepository = ref.watch(catalogRepositoryProvider);
       return historyRepository.watchRecentlyWatched().asyncMap((entries) async {
@@ -49,6 +52,7 @@ final _recentCatalogCardsProvider =
 
 final _catalogCardsProvider = StreamProvider.autoDispose
     .family<List<CatalogCardItem>, CatalogItemsQuery>((ref, query) {
+      _keepCatalogProviderWarm(ref);
       final catalogRepository = ref.watch(catalogRepositoryProvider);
       final historyRepository = ref.watch(watchHistoryRepositoryProvider);
       ref.watch(recentlyWatchedProvider);
@@ -70,6 +74,7 @@ final _catalogCardsProvider = StreamProvider.autoDispose
 
 final _seriesEpisodesProvider = StreamProvider.autoDispose
     .family<List<CatalogEpisode>, _SeriesEpisodesQuery>((ref, query) {
+      _keepCatalogProviderWarm(ref);
       return ref
           .watch(catalogRepositoryProvider)
           .watchEpisodesForSeries(
@@ -80,6 +85,7 @@ final _seriesEpisodesProvider = StreamProvider.autoDispose
 
 final _seriesEpisodePositionsProvider = StreamProvider.autoDispose
     .family<List<PlaybackPosition>, _SeriesEpisodesQuery>((ref, query) {
+      _keepCatalogProviderWarm(ref);
       return ref
           .watch(watchHistoryRepositoryProvider)
           .watchEpisodePositionsForSeries(
@@ -624,6 +630,24 @@ Future<List<CatalogCardItem>> _catalogItemsToCards(
   WatchHistoryRepository historyRepository,
   List<CatalogItem> items,
 ) async {
+  final providerIds = items.map((item) => item.providerId).toSet();
+  final hasMovies = items.any(
+    (item) => item.contentType == CatalogContentType.movie,
+  );
+  final hasSeries = items.any(
+    (item) => item.contentType == CatalogContentType.series,
+  );
+  final movieResumes = hasMovies
+      ? await historyRepository.listActiveResumePositions(
+          itemType: PlayableContentType.movie,
+          providerIds: providerIds,
+        )
+      : <({String providerId, String itemId}), PlaybackPosition>{};
+  final seriesResumes = hasSeries
+      ? await historyRepository.listLatestResumePositionsBySeries(
+          providerIds: providerIds,
+        )
+      : <({String providerId, String seriesId}), PlaybackPosition>{};
   final cards = <CatalogCardItem>[];
   for (final item in items) {
     if (item.contentType != CatalogContentType.series) {
@@ -631,20 +655,14 @@ Future<List<CatalogCardItem>> _catalogItemsToCards(
         _catalogItemToCard(
           item,
           resume: item.contentType == CatalogContentType.movie
-              ? await historyRepository.lookupResumePosition(
-                  providerId: item.providerId,
-                  itemId: item.id,
-                  itemType: PlayableContentType.movie,
-                )
+              ? movieResumes[(providerId: item.providerId, itemId: item.id)]
               : null,
         ),
       );
       continue;
     }
-    final latestResume = await historyRepository.lookupLatestResumeForSeries(
-      providerId: item.providerId,
-      seriesId: item.id,
-    );
+    final latestResume =
+        seriesResumes[(providerId: item.providerId, seriesId: item.id)];
     final resumeEpisode = latestResume == null
         ? null
         : await _episodeForPosition(
@@ -663,6 +681,22 @@ Future<List<CatalogCardItem>> _catalogItemsToCards(
     );
   }
   return cards;
+}
+
+void _keepCatalogProviderWarm(Ref ref) {
+  final link = ref.keepAlive();
+  Timer? disposeTimer;
+
+  ref.onCancel(() {
+    disposeTimer = Timer(_catalogCacheDuration, link.close);
+  });
+  ref.onResume(() {
+    disposeTimer?.cancel();
+    disposeTimer = null;
+  });
+  ref.onDispose(() {
+    disposeTimer?.cancel();
+  });
 }
 
 CatalogCardItem _catalogItemToCard(

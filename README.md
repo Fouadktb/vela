@@ -1,8 +1,8 @@
 # Vela
 
-Vela is a private desktop IPTV player for macOS and Windows. The app is being migrated to Flutter with an embedded `media_kit` video surface, local catalog storage, provider import, and watch continuity.
+Vela is a desktop IPTV player for macOS and Windows. The app uses Flutter with an embedded `media_kit` video surface, local catalog storage, provider import, and watch continuity.
 
-This repository is intended for private distribution for now. Release artifacts are built locally on each target operating system and uploaded manually to GitHub Releases.
+The repository is public so installed builds can check GitHub Releases for newer versions without authentication. Vela does not auto-update and is not code-signed; when an update is available, the app opens the release page and the user downloads and installs the new build manually.
 
 ## Flutter Setup
 
@@ -64,9 +64,11 @@ winget install JRSoftware.InnoSetup
 
 Or run the manual `Build Windows Installer` GitHub workflow. It builds on a Windows runner and uploads `vela-windows-vX.Y.Z-setup.exe` as a workflow artifact.
 
-## Manual Release Upload
+## Manual Updates And Release Upload
 
-Flutter desktop apps are built on the target operating system. Build macOS on macOS, build Windows on Windows, then upload the artifacts to the GitHub Release.
+Flutter desktop apps are built on the target operating system. Build macOS on macOS, build Windows on Windows or the manual GitHub workflow, then upload the artifacts to the GitHub Release.
+
+The app checks `https://api.github.com/repos/Fouadktb/vela/releases/latest`. Keep release tags aligned with `pubspec.yaml` using `vX.Y.Z`; otherwise installed apps cannot compare versions correctly.
 
 Expected release assets:
 
@@ -80,4 +82,4 @@ Example upload:
 gh release upload vX.Y.Z release/vela-macos-vX.Y.Z.dmg release/SHA256SUMS-vX.Y.Z.txt --clobber
 ```
 
-Code signing and notarization are intentionally deferred until the playable Flutter app has been validated on both macOS and Windows.
+Code signing, notarization, and automatic updates are intentionally out of scope. Users will see OS warnings for unsigned builds and install updates manually from GitHub Releases.

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +14,8 @@ import '../providers/provider_models.dart';
 import '../providers/provider_refresh_service.dart';
 import '../providers/provider_repository.dart';
 import 'section_state.dart';
+
+const _providerCacheDuration = Duration(minutes: 10);
 
 final navigationControllerProvider =
     ChangeNotifierProvider<NavigationController>((ref) {
@@ -64,6 +68,7 @@ final providersProvider = StreamProvider<List<IptvProvider>>((ref) {
 
 final categoriesProvider = StreamProvider.autoDispose
     .family<List<CatalogCategory>, CategoryQuery>((ref, query) {
+      _keepAutoDisposeProviderWarm(ref);
       return ref
           .watch(categoryRepositoryProvider)
           .watchCategories(
@@ -75,6 +80,7 @@ final categoriesProvider = StreamProvider.autoDispose
 
 final catalogItemsProvider = StreamProvider.autoDispose
     .family<List<CatalogItem>, CatalogItemsQuery>((ref, query) {
+      _keepAutoDisposeProviderWarm(ref);
       return ref
           .watch(catalogRepositoryProvider)
           .watchItems(
@@ -87,6 +93,7 @@ final catalogItemsProvider = StreamProvider.autoDispose
 
 final epgProgramsProvider = StreamProvider.autoDispose
     .family<List<EpgProgram>, EpgProgramsQuery>((ref, query) {
+      _keepAutoDisposeProviderWarm(ref);
       return ref
           .watch(catalogRepositoryProvider)
           .watchEpgPrograms(
@@ -124,7 +131,6 @@ class NavigationController extends ChangeNotifier {
       return;
     }
     _selectedSection = section;
-    _states[section] = const SectionState();
     notifyListeners();
   }
 
@@ -159,6 +165,22 @@ class NavigationController extends ChangeNotifier {
     _states[_selectedSection] = next;
     notifyListeners();
   }
+}
+
+void _keepAutoDisposeProviderWarm(Ref ref) {
+  final link = ref.keepAlive();
+  Timer? disposeTimer;
+
+  ref.onCancel(() {
+    disposeTimer = Timer(_providerCacheDuration, link.close);
+  });
+  ref.onResume(() {
+    disposeTimer?.cancel();
+    disposeTimer = null;
+  });
+  ref.onDispose(() {
+    disposeTimer?.cancel();
+  });
 }
 
 class CategoryQuery {

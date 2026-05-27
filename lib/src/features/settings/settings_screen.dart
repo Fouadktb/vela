@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../app/app_version.dart';
 import '../../app/navigation_controller.dart';
 import '../../catalog/catalog_models.dart';
 import '../../providers/provider_models.dart';
 import '../../providers/refresh_interval.dart';
 import '../../shared/async_value_view.dart';
 import '../../shared/empty_state.dart';
+import '../../updates/update_checker.dart';
 import '../providers/provider_setup_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -27,7 +29,9 @@ class SettingsScreen extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _SettingsHeader(settings: settings),
-              const SizedBox(height: 22),
+              const SizedBox(height: 16),
+              const _UpdateCard(),
+              const SizedBox(height: 18),
               Expanded(
                 child: AsyncValueView(
                   value: providers,
@@ -133,12 +137,155 @@ class _SettingsHeader extends ConsumerWidget {
         ),
         const SizedBox(width: 14),
         Text(
-          'Vela 0.2.0 (1)',
+          'Vela $velaVersion ($velaBuildNumber)',
           style: theme.textTheme.bodySmall?.copyWith(
             color: const Color(0xFF8E8980),
             letterSpacing: 0,
           ),
         ),
+      ],
+    );
+  }
+}
+
+class _UpdateCard extends ConsumerWidget {
+  const _UpdateCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final value = ref.watch(updateStatusProvider);
+    final theme = Theme.of(context);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF151719),
+        border: Border.all(color: const Color(0xFF292D31)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
+        child: value.when(
+          loading: () => _UpdateCardContent(
+            icon: LucideIcons.loaderCircle,
+            title: 'Checking for updates',
+            message: 'Looking at the latest Vela release on GitHub.',
+            trailing: const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+          error: (error, _) => _UpdateCardContent(
+            icon: LucideIcons.cloudOff,
+            title: 'Update check unavailable',
+            message: error.toString(),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: 'Check again',
+                  onPressed: () => ref.invalidate(updateStatusProvider),
+                  icon: const Icon(LucideIcons.refreshCw, size: 18),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    await openExternalUrl(velaReleasesUrl);
+                  },
+                  icon: const Icon(LucideIcons.externalLink, size: 17),
+                  label: const Text('Releases'),
+                ),
+              ],
+            ),
+          ),
+          data: (status) {
+            final hasUpdate = status.hasUpdate;
+            return _UpdateCardContent(
+              icon: hasUpdate ? LucideIcons.sparkles : LucideIcons.checkCircle2,
+              title: hasUpdate ? 'Update available' : 'Up to date',
+              message: hasUpdate
+                  ? 'Vela ${status.latestVersion} is available. Download and install it manually from GitHub.'
+                  : 'Installed version ${status.currentVersion} is the latest GitHub release.',
+              iconColor: hasUpdate
+                  ? theme.colorScheme.primary
+                  : const Color(0xFF8FB7B0),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Check again',
+                    onPressed: () => ref.invalidate(updateStatusProvider),
+                    icon: const Icon(LucideIcons.refreshCw, size: 18),
+                  ),
+                  if (hasUpdate) ...[
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: () async {
+                        await openExternalUrl(status.releaseUrl);
+                      },
+                      icon: const Icon(LucideIcons.download, size: 17),
+                      label: const Text('Download'),
+                    ),
+                  ],
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _UpdateCardContent extends StatelessWidget {
+  const _UpdateCardContent({
+    required this.icon,
+    required this.title,
+    required this.message,
+    required this.trailing,
+    this.iconColor,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final Widget trailing;
+  final Color? iconColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Row(
+      children: [
+        Icon(icon, color: iconColor ?? theme.colorScheme.primary, size: 24),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                message,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFFA9A39A),
+                  letterSpacing: 0,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 16),
+        trailing,
       ],
     );
   }
