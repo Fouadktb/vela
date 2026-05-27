@@ -10,6 +10,7 @@ const mockApi = vi.hoisted(() => ({
     pause: vi.fn(),
     stop: vi.fn(),
     seek: vi.fn(),
+    selectVideoTrack: vi.fn(),
     selectAudioTrack: vi.fn(),
     selectSubtitleTrack: vi.fn(),
     openExternal: vi.fn(),
@@ -30,8 +31,10 @@ const playingState: PlaybackState = {
   positionSeconds: 0,
   durationSeconds: null,
   isSeekable: true,
+  videoTracks: [],
   audioTracks: [],
   subtitleTracks: [],
+  selectedVideoTrackId: null,
   selectedAudioTrackId: null,
   selectedSubtitleTrackId: null,
   errorMessage: null
@@ -211,9 +214,27 @@ describe("PlayerControls", () => {
     expect(mockApi.playback.seek).toHaveBeenCalledWith({ offsetSeconds: -10 });
   });
 
-  it("opens track menus and selects audio and subtitle tracks", async () => {
+  it("opens track menus and selects video, audio, and subtitle tracks", async () => {
     mockApi.playback.getState.mockResolvedValue({
       ...playingState,
+      videoTracks: [
+        {
+          id: 1,
+          type: "video",
+          title: "Main Video",
+          language: null,
+          isDefault: true,
+          isSelected: true
+        },
+        {
+          id: 4,
+          type: "video",
+          title: "Alternate Angle",
+          language: null,
+          isDefault: false,
+          isSelected: false
+        }
+      ],
       audioTracks: [
         {
           id: 1,
@@ -242,16 +263,20 @@ describe("PlayerControls", () => {
           isSelected: true
         }
       ],
+      selectedVideoTrackId: 1,
       selectedAudioTrackId: 1,
       selectedSubtitleTrackId: 3
     });
     render(<PlayerControls />);
 
+    fireEvent.click(await screen.findByRole("button", { name: "Video: Main Video" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Alternate Angle" }));
     fireEvent.click(await screen.findByRole("button", { name: "Audio: English Stereo" }));
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Director Commentary" }));
     fireEvent.click(screen.getByRole("button", { name: "Subtitles: English CC" }));
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Subtitles off" }));
 
+    expect(mockApi.playback.selectVideoTrack).toHaveBeenCalledWith(4);
     expect(mockApi.playback.selectAudioTrack).toHaveBeenCalledWith(2);
     expect(mockApi.playback.selectSubtitleTrack).toHaveBeenCalledWith(null);
   });

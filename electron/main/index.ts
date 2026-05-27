@@ -20,6 +20,8 @@ import { createPlayerOverlayWindowController } from "./windows/playerOverlayWind
 app.setName("Vela");
 app.setPath("userData", path.join(app.getPath("appData"), "IPTV Player"));
 
+let mainWindow: BrowserWindow | null = null;
+
 async function boot(): Promise<void> {
   await app.whenReady();
 
@@ -33,13 +35,23 @@ async function boot(): Promise<void> {
       }
     }
   };
-  const mpvController = createMpvController({
-    catalogRepository,
-    onStateChange: (state) => emitToRenderer(ipcChannels.playbackState, state),
-    playerWindow: createPlayerOverlayWindowController()
+  let mpvController: ReturnType<typeof createMpvController> | null = null;
+  const playerWindow = createPlayerOverlayWindowController({
+    onUserClose: () => {
+      void mpvController?.stop();
+    }
   });
 
-  createMainWindow();
+  mpvController = createMpvController({
+    catalogRepository,
+    onStateChange: (state) => emitToRenderer(ipcChannels.playbackState, state),
+    playerWindow
+  });
+
+  mainWindow = createMainWindow();
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
 
   registerIpcHandlers({
     emitToRenderer,
@@ -60,12 +72,15 @@ async function boot(): Promise<void> {
   });
 
   app.on("before-quit", () => {
-    void mpvController.stop();
+    void mpvController?.stop();
   });
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
+    if (!mainWindow) {
+      mainWindow = createMainWindow();
+      mainWindow.on("closed", () => {
+        mainWindow = null;
+      });
     }
   });
 }

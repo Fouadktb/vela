@@ -48,6 +48,7 @@ const unavailableIptvApi: IptvApi = {
     pause: unavailable,
     stop: unavailable,
     seek: unavailable,
+    selectVideoTrack: unavailable,
     selectAudioTrack: unavailable,
     selectSubtitleTrack: unavailable,
     openExternal: unavailable,

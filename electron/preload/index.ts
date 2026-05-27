@@ -41,6 +41,7 @@ const api: IptvApi = {
     pause: () => ipcRenderer.invoke(ipcChannels.playbackPause),
     stop: () => ipcRenderer.invoke(ipcChannels.playbackStop),
     seek: (request) => ipcRenderer.invoke(ipcChannels.playbackSeek, request),
+    selectVideoTrack: (trackId) => ipcRenderer.invoke(ipcChannels.playbackSelectVideoTrack, trackId),
     selectAudioTrack: (trackId) => ipcRenderer.invoke(ipcChannels.playbackSelectAudioTrack, trackId),
     selectSubtitleTrack: (trackId) => ipcRenderer.invoke(ipcChannels.playbackSelectSubtitleTrack, trackId),
     openExternal: (request) => ipcRenderer.invoke(ipcChannels.playbackOpenExternal, request),

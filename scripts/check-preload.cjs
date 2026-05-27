@@ -47,6 +47,7 @@ if (
   !iptvApi?.catalog?.listEpisodesForSeries ||
   !iptvApi?.catalog?.listRecentlyWatched ||
   !iptvApi?.playback?.play ||
+  !iptvApi?.playback?.selectVideoTrack ||
   !iptvApi?.playback?.getState ||
   !iptvApi?.playback?.onState
 ) {

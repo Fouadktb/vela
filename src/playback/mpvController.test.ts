@@ -149,18 +149,30 @@ describe("mpv playback helpers", () => {
     expect(buildMpvIpcCommand(["seek", 10, "relative"])).toBe('{"command":["seek",10,"relative"]}\n');
   });
 
-  it("normalizes mpv audio and subtitle tracks for renderer menus", () => {
+  it("normalizes mpv video, audio, and subtitle tracks for renderer menus", () => {
     expect(
       toPlaybackTrackState(
         [
+          { id: 1, type: "video", title: "Main Video", default: true, selected: true },
           { id: 1, type: "audio", title: "English Stereo", lang: "eng", default: true, selected: false },
           { id: 2, type: "audio", title: "Director Commentary", lang: "eng", default: false, selected: true },
           { id: 3, type: "sub", title: "English CC", lang: "eng", selected: false }
         ],
+        1,
         2,
         "no"
       )
     ).toEqual({
+      videoTracks: [
+        {
+          id: 1,
+          type: "video",
+          title: "Main Video",
+          language: null,
+          isDefault: true,
+          isSelected: true
+        }
+      ],
       audioTracks: [
         {
           id: 1,
@@ -189,6 +201,7 @@ describe("mpv playback helpers", () => {
           isSelected: false
         }
       ],
+      selectedVideoTrackId: 1,
       selectedAudioTrackId: 2,
       selectedSubtitleTrackId: null
     });

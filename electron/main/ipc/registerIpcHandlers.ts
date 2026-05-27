@@ -212,6 +212,11 @@ export function registerIpcHandlers(deps: RegisterIpcHandlersDeps): void {
     emitPlaybackState(deps);
   });
 
+  ipcMain.handle(ipcChannels.playbackSelectVideoTrack, async (_event, trackId: number) => {
+    await deps.mpvController.selectVideoTrack(trackId);
+    emitPlaybackState(deps);
+  });
+
   ipcMain.handle(ipcChannels.playbackSelectAudioTrack, async (_event, trackId: number) => {
     await deps.mpvController.selectAudioTrack(trackId);
     emitPlaybackState(deps);

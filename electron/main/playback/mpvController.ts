@@ -187,11 +187,24 @@ export function sanitizePlaybackDiagnostic(message: string): string {
 
 export function toPlaybackTrackState(
   rawTracks: MpvRawTrack[],
+  selectedVideoTrack: unknown,
   selectedAudioTrack: unknown,
   selectedSubtitleTrack: unknown
-): Pick<PlaybackState, "audioTracks" | "subtitleTracks" | "selectedAudioTrackId" | "selectedSubtitleTrackId"> {
+): Pick<
+  PlaybackState,
+  | "videoTracks"
+  | "audioTracks"
+  | "subtitleTracks"
+  | "selectedVideoTrackId"
+  | "selectedAudioTrackId"
+  | "selectedSubtitleTrackId"
+> {
+  const selectedVideoTrackId = toTrackId(selectedVideoTrack);
   const selectedAudioTrackId = toTrackId(selectedAudioTrack);
   const selectedSubtitleTrackId = toTrackId(selectedSubtitleTrack);
+  const videoTracks = rawTracks
+    .map((track) => toPlaybackTrack(track, "video", selectedVideoTrackId))
+    .filter((track): track is PlaybackTrack => track !== null);
   const audioTracks = rawTracks
     .map((track) => toPlaybackTrack(track, "audio", selectedAudioTrackId))
     .filter((track): track is PlaybackTrack => track !== null);
@@ -200,8 +213,10 @@ export function toPlaybackTrackState(
     .filter((track): track is PlaybackTrack => track !== null);
 
   return {
+    videoTracks,
     audioTracks,
     subtitleTracks,
+    selectedVideoTrackId,
     selectedAudioTrackId,
     selectedSubtitleTrackId
   };
@@ -319,10 +334,13 @@ export function createMpvController(options: CreateMpvControllerOptions) {
   const refreshTrackState = async (): Promise<void> => {
     try {
       const rawTracks = (await sendCommandWithResponse<unknown>(["get_property", "track-list"])) ?? [];
+      const selectedVideoTrack = await sendCommandWithResponse<unknown>(["get_property", "vid"]);
       const selectedAudioTrack = await sendCommandWithResponse<unknown>(["get_property", "aid"]);
       const selectedSubtitleTrack = await sendCommandWithResponse<unknown>(["get_property", "sid"]);
       if (Array.isArray(rawTracks)) {
-        setState(toPlaybackTrackState(rawTracks as MpvRawTrack[], selectedAudioTrack, selectedSubtitleTrack));
+        setState(
+          toPlaybackTrackState(rawTracks as MpvRawTrack[], selectedVideoTrack, selectedAudioTrack, selectedSubtitleTrack)
+        );
       }
     } catch {
       // Track metadata is best-effort because mpv may not expose IPC immediately after spawn.
@@ -362,6 +380,8 @@ export function createMpvController(options: CreateMpvControllerOptions) {
     } catch {
       // Metrics are best-effort. The player process remains authoritative for lifecycle errors.
     }
+
+    await refreshTrackState();
   };
 
   const terminateProcess = (input: { closePlayerWindow?: boolean } = {}): void => {
@@ -415,8 +435,10 @@ export function createMpvController(options: CreateMpvControllerOptions) {
       positionSeconds: 0,
       durationSeconds: null,
       isSeekable: itemType !== "live",
+      videoTracks: [],
       audioTracks: [],
       subtitleTracks: [],
+      selectedVideoTrackId: null,
       selectedAudioTrackId: null,
       selectedSubtitleTrackId: null,
       errorMessage: null
@@ -508,6 +530,10 @@ export function createMpvController(options: CreateMpvControllerOptions) {
         await refreshPlaybackMetrics();
       }
     },
+    async selectVideoTrack(trackId: number): Promise<void> {
+      await sendCommandWithResponse(["set_property", "vid", trackId]);
+      await refreshTrackState();
+    },
     async selectAudioTrack(trackId: number): Promise<void> {
       await sendCommandWithResponse(["set_property", "aid", trackId]);
       await refreshTrackState();
@@ -543,7 +569,8 @@ function toPlaybackTrack(
     return null;
   }
 
-  const trackType = rawTrack.type === "audio" ? "audio" : rawTrack.type === "sub" ? "subtitle" : null;
+  const trackType =
+    rawTrack.type === "video" ? "video" : rawTrack.type === "audio" ? "audio" : rawTrack.type === "sub" ? "subtitle" : null;
   if (trackType !== expectedType) {
     return null;
   }
@@ -581,6 +608,10 @@ function toTrackTitle(rawTitle: unknown, language: string | null, trackType: Pla
 
   if (language) {
     return language;
+  }
+
+  if (trackType === "video") {
+    return `Video ${id}`;
   }
 
   return trackType === "audio" ? `Audio ${id}` : `Subtitle ${id}`;
@@ -665,8 +696,10 @@ function createIdleState(): PlaybackState {
     positionSeconds: 0,
     durationSeconds: null,
     isSeekable: false,
+    videoTracks: [],
     audioTracks: [],
     subtitleTracks: [],
+    selectedVideoTrackId: null,
     selectedAudioTrackId: null,
     selectedSubtitleTrackId: null,
     errorMessage: null

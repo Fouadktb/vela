@@ -44,6 +44,7 @@ const mockApi = vi.hoisted(() => ({
     pause: vi.fn(),
     stop: vi.fn(),
     seek: vi.fn(),
+    selectVideoTrack: vi.fn(),
     selectAudioTrack: vi.fn(),
     selectSubtitleTrack: vi.fn(),
     openExternal: vi.fn(),
@@ -133,8 +134,10 @@ const idlePlaybackState: PlaybackState = {
   positionSeconds: 0,
   durationSeconds: null,
   isSeekable: false,
+  videoTracks: [],
   audioTracks: [],
   subtitleTracks: [],
+  selectedVideoTrackId: null,
   selectedAudioTrackId: null,
   selectedSubtitleTrackId: null,
   errorMessage: null

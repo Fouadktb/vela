@@ -47,6 +47,7 @@ export interface IptvApi {
     pause(): Promise<void>;
     stop(): Promise<void>;
     seek(request: SeekRequest): Promise<void>;
+    selectVideoTrack(trackId: number): Promise<void>;
     selectAudioTrack(trackId: number): Promise<void>;
     selectSubtitleTrack(trackId: number | null): Promise<void>;
     openExternal(request: PlayRequest): Promise<void>;
@@ -80,6 +81,7 @@ export const ipcChannels = {
   playbackPause: "playback:pause",
   playbackStop: "playback:stop",
   playbackSeek: "playback:seek",
+  playbackSelectVideoTrack: "playback:selectVideoTrack",
   playbackSelectAudioTrack: "playback:selectAudioTrack",
   playbackSelectSubtitleTrack: "playback:selectSubtitleTrack",
   playbackOpenExternal: "playback:openExternal",

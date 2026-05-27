@@ -9,7 +9,7 @@ export type PlaybackStatus = "idle" | "loading" | "playing" | "paused" | "error"
 
 export interface PlaybackTrack {
   id: number;
-  type: "audio" | "subtitle";
+  type: "video" | "audio" | "subtitle";
   title: string;
   language: string | null;
   isDefault: boolean;
@@ -24,8 +24,10 @@ export interface PlaybackState {
   positionSeconds: number;
   durationSeconds: number | null;
   isSeekable: boolean;
+  videoTracks: PlaybackTrack[];
   audioTracks: PlaybackTrack[];
   subtitleTracks: PlaybackTrack[];
+  selectedVideoTrackId: number | null;
   selectedAudioTrackId: number | null;
   selectedSubtitleTrackId: number | null;
   errorMessage: string | null;

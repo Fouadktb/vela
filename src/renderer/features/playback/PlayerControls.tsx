@@ -1,4 +1,4 @@
-import { Captions, FastForward, Languages, Pause, Play, Rewind, Square } from "lucide-react";
+import { Captions, FastForward, Film, Languages, Pause, Play, Rewind, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent, PointerEvent } from "react";
 import { iptvApi } from "../../app/api";
@@ -20,6 +20,7 @@ interface PlayerControlsProps {
   onPause?(): void;
   onStop?(): void;
   onSeek?(offsetSeconds: -10 | 10): void;
+  onSelectVideoTrack?(trackId: number): void;
   onSelectAudioTrack?(trackId: number): void;
   onSelectSubtitleTrack?(trackId: number | null): void;
 }
@@ -29,11 +30,12 @@ export function PlayerControls({
   onPause,
   onStop,
   onSeek,
+  onSelectVideoTrack,
   onSelectAudioTrack,
   onSelectSubtitleTrack
 }: PlayerControlsProps = {}) {
   const [ipcState, setIpcState] = useState<PlaybackState | null>(null);
-  const [openTrackMenu, setOpenTrackMenu] = useState<"audio" | "subtitle" | null>(null);
+  const [openTrackMenu, setOpenTrackMenu] = useState<"video" | "audio" | "subtitle" | null>(null);
   const lastTapRef = useRef<TapSnapshot | null>(null);
   const isControlled = controlledState !== undefined;
   const state = isControlled ? controlledState : ipcState;
@@ -94,6 +96,14 @@ export function PlayerControls({
       return;
     }
     void iptvApi.playback.seek({ offsetSeconds });
+  };
+
+  const requestVideoTrack = (trackId: number) => {
+    if (onSelectVideoTrack) {
+      onSelectVideoTrack(trackId);
+      return;
+    }
+    void iptvApi.playback.selectVideoTrack(trackId);
   };
 
   const requestAudioTrack = (trackId: number) => {
@@ -202,6 +212,7 @@ export function PlayerControls({
   const canTogglePlayPause = state.status === "playing" || state.status === "paused";
   const canSeek = canSeekPlayback(state);
   const playPauseLabel = isPlaying ? "Pause playback" : "Resume playback";
+  const selectedVideoTrack = state.videoTracks.find((track) => track.isSelected) ?? null;
   const selectedAudioTrack = state.audioTracks.find((track) => track.isSelected) ?? null;
   const selectedSubtitleTrack = state.subtitleTracks.find((track) => track.isSelected) ?? null;
   const hasTimeline = state.isSeekable && state.durationSeconds !== null && state.durationSeconds > 0;
@@ -287,6 +298,40 @@ export function PlayerControls({
         </div>
 
         <div className="player-track-actions">
+          {state.videoTracks.length > 0 ? (
+            <div className="track-menu">
+              <button
+                type="button"
+                className="track-menu-trigger"
+                aria-label={`Video: ${selectedVideoTrack?.title ?? "Auto"}`}
+                aria-expanded={openTrackMenu === "video"}
+                onClick={() => setOpenTrackMenu((current) => (current === "video" ? null : "video"))}
+              >
+                <Film size={16} aria-hidden="true" />
+                <span>Video</span>
+              </button>
+              {openTrackMenu === "video" ? (
+                <div className="track-menu-panel" role="menu" aria-label="Video tracks">
+                  {state.videoTracks.map((track) => (
+                    <button
+                      type="button"
+                      className={track.isSelected ? "track-option active" : "track-option"}
+                      role="menuitemradio"
+                      aria-checked={track.isSelected}
+                      key={track.id}
+                      onClick={() => {
+                        setOpenTrackMenu(null);
+                        requestVideoTrack(track.id);
+                      }}
+                    >
+                      <span>{formatTrackTitle(track)}</span>
+                      {track.isDefault ? <small>Default</small> : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {state.audioTracks.length > 0 ? (
             <div className="track-menu">
               <button

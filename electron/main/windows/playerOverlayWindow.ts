@@ -2,6 +2,11 @@ import { BrowserWindow, screen } from "electron";
 import path from "node:path";
 
 let playerOverlayWindow: BrowserWindow | null = null;
+let isProgrammaticClose = false;
+
+interface CreatePlayerOverlayWindowControllerOptions {
+  onUserClose?(): void;
+}
 
 export interface PlayerOverlayWindowController {
   open(): void;
@@ -9,10 +14,12 @@ export interface PlayerOverlayWindowController {
   close(): void;
 }
 
-export function createPlayerOverlayWindowController(): PlayerOverlayWindowController {
+export function createPlayerOverlayWindowController(
+  options: CreatePlayerOverlayWindowControllerOptions = {}
+): PlayerOverlayWindowController {
   return {
     open() {
-      const window = ensurePlayerOverlayWindow();
+      const window = ensurePlayerOverlayWindow(options);
       if (window.isMinimized()) {
         window.restore();
       }
@@ -35,12 +42,13 @@ export function createPlayerOverlayWindowController(): PlayerOverlayWindowContro
       }
       const window = playerOverlayWindow;
       playerOverlayWindow = null;
+      isProgrammaticClose = true;
       window.close();
     }
   };
 }
 
-function ensurePlayerOverlayWindow(): BrowserWindow {
+function ensurePlayerOverlayWindow(options: CreatePlayerOverlayWindowControllerOptions): BrowserWindow {
   if (playerOverlayWindow && !playerOverlayWindow.isDestroyed()) {
     return playerOverlayWindow;
   }
@@ -86,8 +94,19 @@ function ensurePlayerOverlayWindow(): BrowserWindow {
     });
   }
 
+  playerOverlayWindow.on("close", (event) => {
+    if (isProgrammaticClose) {
+      return;
+    }
+
+    event.preventDefault();
+    playerOverlayWindow?.hide();
+    options.onUserClose?.();
+  });
+
   playerOverlayWindow.on("closed", () => {
     playerOverlayWindow = null;
+    isProgrammaticClose = false;
   });
 
   return playerOverlayWindow;
