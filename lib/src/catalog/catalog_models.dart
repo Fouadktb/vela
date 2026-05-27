@@ -322,6 +322,58 @@ class CatalogItemInput {
   final String? containerExtension;
 }
 
+class CatalogItemDetailsInput {
+  const CatalogItemDetailsInput({
+    required this.providerId,
+    required this.itemId,
+    required this.contentType,
+    this.description,
+    this.artworkUrl,
+    this.year,
+    this.rating,
+    this.durationSeconds,
+  });
+
+  final String providerId;
+  final String itemId;
+  final CatalogContentType contentType;
+  final String? description;
+  final String? artworkUrl;
+  final int? year;
+  final String? rating;
+  final int? durationSeconds;
+
+  bool get hasChanges {
+    return description?.trim().isNotEmpty == true ||
+        artworkUrl?.trim().isNotEmpty == true ||
+        year != null ||
+        rating?.trim().isNotEmpty == true ||
+        durationSeconds != null;
+  }
+}
+
+class SeriesDetailsInput {
+  const SeriesDetailsInput({
+    required this.providerId,
+    required this.seriesId,
+    this.overview,
+    this.posterUrl,
+    this.backdropUrl,
+  });
+
+  final String providerId;
+  final String seriesId;
+  final String? overview;
+  final String? posterUrl;
+  final String? backdropUrl;
+
+  bool get hasChanges {
+    return overview?.trim().isNotEmpty == true ||
+        posterUrl?.trim().isNotEmpty == true ||
+        backdropUrl?.trim().isNotEmpty == true;
+  }
+}
+
 class EpgProgram {
   const EpgProgram({
     required this.providerId,

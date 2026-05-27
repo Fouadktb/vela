@@ -332,6 +332,22 @@ class CatalogRepository {
     ).watch().map(_mapItemRows);
   }
 
+  Stream<CatalogItem?> watchItem({
+    required String providerId,
+    required CatalogContentType contentType,
+    required String id,
+  }) {
+    return _selectItem(
+      providerId: providerId,
+      contentType: contentType,
+      id: id,
+    ).watchSingleOrNull().map((row) {
+      if (row == null) return null;
+      final items = _mapItemRows([row]);
+      return items.isEmpty ? null : items.first;
+    });
+  }
+
   Future<List<CatalogItem>> searchItems({
     String? providerId,
     required CatalogContentType section,
@@ -355,16 +371,60 @@ class CatalogRepository {
     required CatalogContentType contentType,
     required String id,
   }) async {
-    final row =
-        await (_db.select(_db.catalogItems)..where(
-              (item) =>
-                  item.providerId.equals(providerId) &
-                  item.contentType.equals(contentType.name) &
-                  item.id.equals(id) &
-                  item.isStale.equals(false),
-            ))
-            .getSingleOrNull();
-    return row == null ? null : _toCatalogItem(row);
+    final row = await _selectItem(
+      providerId: providerId,
+      contentType: contentType,
+      id: id,
+    ).getSingleOrNull();
+    if (row == null) return null;
+    final items = _mapItemRows([row]);
+    return items.isEmpty ? null : items.first;
+  }
+
+  Future<void> updateCatalogItemDetails(CatalogItemDetailsInput input) async {
+    if (!input.hasChanges) {
+      return;
+    }
+    final now = _nowMs();
+    await (_db.update(_db.catalogItems)..where(
+          (item) =>
+              item.providerId.equals(input.providerId) &
+              item.contentType.equals(input.contentType.name) &
+              item.id.equals(input.itemId) &
+              item.isStale.equals(false),
+        ))
+        .write(
+          CatalogItemsCompanion(
+            description: _valueIfPresent(input.description),
+            artworkUrl: _valueIfPresent(input.artworkUrl),
+            year: _valueIfPresent(input.year),
+            rating: _valueIfPresent(input.rating),
+            durationSeconds: _valueIfPresent(input.durationSeconds),
+            updatedAt: Value(now),
+          ),
+        );
+  }
+
+  Future<void> updateSeriesDetails(SeriesDetailsInput input) async {
+    if (!input.hasChanges) {
+      return;
+    }
+    final now = _nowMs();
+    await (_db.update(_db.series)..where(
+          (series) =>
+              series.providerId.equals(input.providerId) &
+              (series.id.equals(input.seriesId) |
+                  series.catalogItemId.equals(input.seriesId)) &
+              series.isStale.equals(false),
+        ))
+        .write(
+          SeriesCompanion(
+            overview: _valueIfPresent(input.overview),
+            posterUrl: _valueIfPresent(input.posterUrl),
+            backdropUrl: _valueIfPresent(input.backdropUrl),
+            updatedAt: Value(now),
+          ),
+        );
   }
 
   Future<bool> toggleItemFavorite({
@@ -601,6 +661,34 @@ class CatalogRepository {
       ORDER BY i.normalized_title ASC
       ''',
       variables: variables,
+      readsFrom: {_db.catalogItems, _db.favoriteItems},
+    );
+  }
+
+  Selectable<QueryRow> _selectItem({
+    required String providerId,
+    required CatalogContentType contentType,
+    required String id,
+  }) {
+    return _db.customSelect(
+      '''
+      SELECT i.*, CASE WHEN fi.item_id IS NULL THEN 0 ELSE 1 END AS is_favorite
+      FROM catalog_items AS i
+      LEFT JOIN favorite_items AS fi
+        ON fi.provider_id = i.provider_id
+        AND fi.item_id = i.id
+        AND fi.item_type = i.content_type
+      WHERE i.provider_id = ?
+        AND i.content_type = ?
+        AND i.id = ?
+        AND i.is_stale = 0
+      LIMIT 1
+      ''',
+      variables: [
+        Variable<String>(providerId),
+        Variable<String>(contentType.name),
+        Variable<String>(id),
+      ],
       readsFrom: {_db.catalogItems, _db.favoriteItems},
     );
   }
@@ -1081,6 +1169,10 @@ void _validateSnapshot(ProviderCatalogSnapshot snapshot) {
       }
     }
   }
+}
+
+Value<T?> _valueIfPresent<T>(T? value) {
+  return value == null ? const Value.absent() : Value(value);
 }
 
 CatalogProvider _toProvider(CatalogProviderRow row) {

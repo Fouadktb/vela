@@ -14,6 +14,7 @@ class DetailPanel extends StatelessWidget {
     required this.onPlay,
     required this.onRestart,
     required this.onOpenEpisode,
+    required this.onOpenDetails,
     required this.onToggleFavorite,
     super.key,
   });
@@ -25,6 +26,7 @@ class DetailPanel extends StatelessWidget {
   final ValueChanged<CatalogCardItem> onRestart;
   final void Function(CatalogCardItem item, CatalogEpisode episode)
   onOpenEpisode;
+  final ValueChanged<CatalogCardItem> onOpenDetails;
   final ValueChanged<CatalogCardItem> onToggleFavorite;
 
   @override
@@ -51,6 +53,9 @@ class DetailPanel extends StatelessWidget {
                       ? () => onRestart(selected)
                       : null,
                   onOpenEpisode: (episode) => onOpenEpisode(selected, episode),
+                  onOpenDetails: selected.contentType == CatalogContentType.live
+                      ? null
+                      : () => onOpenDetails(selected),
                   onToggleFavorite: () => onToggleFavorite(selected),
                 ),
         ),
@@ -97,6 +102,7 @@ class _SelectedDetails extends StatelessWidget {
     required this.onPlay,
     required this.onRestart,
     required this.onOpenEpisode,
+    required this.onOpenDetails,
     required this.onToggleFavorite,
   });
 
@@ -106,6 +112,7 @@ class _SelectedDetails extends StatelessWidget {
   final VoidCallback? onPlay;
   final VoidCallback? onRestart;
   final ValueChanged<CatalogEpisode> onOpenEpisode;
+  final VoidCallback? onOpenDetails;
   final VoidCallback onToggleFavorite;
 
   @override
@@ -221,6 +228,7 @@ class _SelectedDetails extends StatelessWidget {
           item: item,
           onPlay: onPlay,
           onRestart: onRestart,
+          onOpenDetails: onOpenDetails,
           onToggleFavorite: onToggleFavorite,
         ),
       ],
@@ -233,12 +241,14 @@ class _ActionBar extends StatelessWidget {
     required this.item,
     required this.onPlay,
     required this.onRestart,
+    required this.onOpenDetails,
     required this.onToggleFavorite,
   });
 
   final CatalogCardItem item;
   final VoidCallback? onPlay;
   final VoidCallback? onRestart;
+  final VoidCallback? onOpenDetails;
   final VoidCallback onToggleFavorite;
 
   @override
@@ -256,6 +266,18 @@ class _ActionBar extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
           ),
         ),
+        if (onOpenDetails != null) ...[
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: onOpenDetails,
+            icon: const Icon(LucideIcons.panelTopOpen, size: 18),
+            label: const Text(
+              'Open Details',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
         const SizedBox(height: 10),
         Row(
           children: [

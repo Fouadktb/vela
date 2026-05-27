@@ -29,6 +29,7 @@ class ProviderRefreshService {
   final int maxPlaylistBytes;
   final Map<String, Future<ProviderRefreshSummary>> _inFlightRefreshes = {};
   final Map<String, Future<void>> _inFlightEpgRefreshes = {};
+  final Map<String, Future<void>> _inFlightItemDetailRefreshes = {};
   final Map<String, Future<void>> _inFlightSeriesEpisodeRefreshes = {};
   Future<List<ProviderRefreshSummary>>? _staleRefresh;
   Timer? _timer;
@@ -73,6 +74,82 @@ class ProviderRefreshService {
     return refresh;
   }
 
+  Future<void> refreshCatalogItemDetails({
+    required String providerId,
+    required String itemId,
+    required CatalogContentType contentType,
+    required String? externalId,
+    void Function(String message)? onProgress,
+  }) async {
+    if (contentType == CatalogContentType.live) {
+      return;
+    }
+    final cleanExternalId = externalId?.trim();
+    if (cleanExternalId == null || cleanExternalId.isEmpty) {
+      return;
+    }
+    final key = '$providerId|${contentType.name}|$itemId';
+    final existing = _inFlightItemDetailRefreshes[key];
+    if (existing != null) {
+      return existing;
+    }
+    final refresh = switch (contentType) {
+      CatalogContentType.movie => _refreshMovieDetails(
+        providerId: providerId,
+        itemId: itemId,
+        externalMovieId: cleanExternalId,
+        onProgress: onProgress,
+      ),
+      CatalogContentType.series => refreshSeriesEpisodeDetails(
+        providerId: providerId,
+        seriesId: itemId,
+        externalSeriesId: cleanExternalId,
+        onProgress: onProgress,
+      ),
+      CatalogContentType.live => Future<void>.value(),
+    };
+    _inFlightItemDetailRefreshes[key] = refresh;
+    unawaited(
+      refresh.whenComplete(() {
+        if (identical(_inFlightItemDetailRefreshes[key], refresh)) {
+          _inFlightItemDetailRefreshes.remove(key);
+        }
+      }),
+    );
+    return refresh;
+  }
+
+  Future<void> _refreshMovieDetails({
+    required String providerId,
+    required String itemId,
+    required String externalMovieId,
+    void Function(String message)? onProgress,
+  }) async {
+    final provider = await _providerRepository.getProvider(providerId);
+    if (provider == null || provider.type != ProviderType.xtream) {
+      return;
+    }
+    final client = _xtreamClientForProvider(provider);
+    if (client == null) {
+      return;
+    }
+    onProgress?.call('Loading movie details');
+    final info = await client.getVodInfo(externalMovieId);
+    onProgress?.call('Saving movie details');
+    await _providerRepository.updateCatalogItemDetails(
+      CatalogItemDetailsInput(
+        providerId: providerId,
+        itemId: itemId,
+        contentType: CatalogContentType.movie,
+        description: info.description,
+        artworkUrl: info.artworkUrl,
+        rating: info.rating,
+        year: info.year,
+        durationSeconds: info.durationSeconds,
+      ),
+    );
+  }
+
   Future<void> _refreshSeriesEpisodeDetails({
     required String providerId,
     required String seriesId,
@@ -86,32 +163,36 @@ class ProviderRefreshService {
     if (provider.type != ProviderType.xtream) {
       return;
     }
-    final serverUrl = provider.serverUrl?.trim();
-    final username = provider.username?.trim();
-    final password = provider.password?.trim();
-    if (serverUrl == null ||
-        serverUrl.isEmpty ||
-        username == null ||
-        username.isEmpty ||
-        password == null ||
-        password.isEmpty ||
-        externalSeriesId.trim().isEmpty) {
+    final client = _xtreamClientForProvider(provider);
+    if (client == null || externalSeriesId.trim().isEmpty) {
       throw const ProviderRefreshFailure(
         'Xtream provider details are incomplete',
       );
     }
 
     onProgress?.call('Loading episode details');
-    final client = XtreamClient(
-      credentials: XtreamCredentials(
-        serverUrl: serverUrl,
-        username: username,
-        password: password,
-      ),
-      httpClient: _httpClient,
-      timeout: playlistTimeout,
-    );
     final info = await client.getSeriesInfo(externalSeriesId.trim());
+    await _providerRepository.updateCatalogItemDetails(
+      CatalogItemDetailsInput(
+        providerId: providerId,
+        itemId: seriesId,
+        contentType: CatalogContentType.series,
+        description: info.overview,
+        artworkUrl: info.cover,
+        rating: info.rating,
+        year: info.year,
+        durationSeconds: info.durationSeconds,
+      ),
+    );
+    await _providerRepository.updateSeriesDetails(
+      SeriesDetailsInput(
+        providerId: providerId,
+        seriesId: seriesId,
+        overview: info.overview,
+        posterUrl: info.cover,
+        backdropUrl: info.backdropUrl,
+      ),
+    );
     final details = xtreamSeriesEpisodeDetails(
       providerId: providerId,
       seriesItemId: seriesId,
@@ -355,12 +436,38 @@ class ProviderRefreshService {
     if (_inFlightEpgRefreshes.isNotEmpty) {
       await Future.wait(_inFlightEpgRefreshes.values);
     }
+    if (_inFlightItemDetailRefreshes.isNotEmpty) {
+      await Future.wait(_inFlightItemDetailRefreshes.values);
+    }
     if (_inFlightSeriesEpisodeRefreshes.isNotEmpty) {
       await Future.wait(_inFlightSeriesEpisodeRefreshes.values);
     }
     if (_ownsHttpClient) {
       _httpClient.close();
     }
+  }
+
+  XtreamClient? _xtreamClientForProvider(IptvProvider provider) {
+    final serverUrl = provider.serverUrl?.trim();
+    final username = provider.username?.trim();
+    final password = provider.password?.trim();
+    if (serverUrl == null ||
+        serverUrl.isEmpty ||
+        username == null ||
+        username.isEmpty ||
+        password == null ||
+        password.isEmpty) {
+      return null;
+    }
+    return XtreamClient(
+      credentials: XtreamCredentials(
+        serverUrl: serverUrl,
+        username: username,
+        password: password,
+      ),
+      httpClient: _httpClient,
+      timeout: playlistTimeout,
+    );
   }
 
   Future<_ProviderImportResult> _snapshotFor(

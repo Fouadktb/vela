@@ -16,6 +16,7 @@ import '../../shared/async_value_view.dart';
 import '../../shared/empty_state.dart';
 import '../providers/provider_setup_screen.dart';
 import 'category_list.dart';
+import 'content_detail_screen.dart';
 import 'detail_panel.dart';
 import 'item_grid.dart';
 
@@ -204,6 +205,8 @@ class _CatalogContent extends ConsumerWidget {
                               _openItem(ref, item, restart: true),
                           onOpenEpisode: (item, episode) =>
                               _openEpisode(ref, item, episode),
+                          onOpenDetails: (item) =>
+                              _openDetails(context, ref, item),
                           onToggleFavorite: (item) =>
                               _toggleItemFavorite(ref, item),
                         ),
@@ -337,6 +340,29 @@ class _CatalogContent extends ConsumerWidget {
       debugPrint('Failed to open episode: $error');
       debugPrintStack(stackTrace: stackTrace);
     }
+  }
+
+  Future<void> _openDetails(
+    BuildContext context,
+    WidgetRef ref,
+    CatalogCardItem item,
+  ) async {
+    if (item.contentType == CatalogContentType.live) {
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ContentDetailScreen(
+          initialItem: item,
+          onPlayItem: (target, {restart = false}) {
+            return _openItem(ref, target, restart: restart);
+          },
+          onOpenEpisode: (target, episode) {
+            return _openEpisode(ref, target, episode);
+          },
+        ),
+      ),
+    );
   }
 }
 

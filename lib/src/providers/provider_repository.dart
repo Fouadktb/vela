@@ -120,6 +120,14 @@ class ProviderRepository {
     );
   }
 
+  Future<void> updateCatalogItemDetails(CatalogItemDetailsInput input) {
+    return _catalogRepository.updateCatalogItemDetails(input);
+  }
+
+  Future<void> updateSeriesDetails(SeriesDetailsInput input) {
+    return _catalogRepository.updateSeriesDetails(input);
+  }
+
   Future<void> replaceProviderEpg({
     required String providerId,
     required List<EpgProgramInput> programs,

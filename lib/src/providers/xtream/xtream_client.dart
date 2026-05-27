@@ -72,6 +72,21 @@ class XtreamClient {
         .toList();
   }
 
+  Future<XtreamVodInfo> getVodInfo(String vodId) async {
+    final data = await _getJson(
+      action: 'get_vod_info',
+      extraParams: {'vod_id': vodId},
+    );
+    if (data is! Map<String, dynamic>) {
+      throw const XtreamClientException(
+        'Xtream server returned an unexpected response',
+      );
+    }
+    _throwIfInvalidLogin(data);
+    _throwIfErrorResponse(data);
+    return XtreamVodInfo.fromJson(data);
+  }
+
   Future<List<XtreamCategory>> getSeriesCategories() {
     return _getCategories('get_series_categories');
   }
@@ -372,6 +387,55 @@ class XtreamVodStream {
   final String? directSource;
 }
 
+class XtreamVodInfo {
+  const XtreamVodInfo({
+    this.title,
+    this.description,
+    this.artworkUrl,
+    this.rating,
+    this.year,
+    this.durationSeconds,
+    this.containerExtension,
+  });
+
+  factory XtreamVodInfo.fromJson(Map<String, dynamic> json) {
+    final info = _mapValue(json['info']);
+    final movieData = _mapValue(json['movie_data']);
+    return XtreamVodInfo(
+      title:
+          _stringValue(info['name']) ??
+          _stringValue(info['title']) ??
+          _stringValue(movieData['name']),
+      description:
+          _stringValue(info['plot']) ??
+          _stringValue(info['description']) ??
+          _stringValue(info['overview']),
+      artworkUrl:
+          _httpUrlValue(info['movie_image']) ??
+          _httpUrlValue(info['cover_big']) ??
+          _httpUrlValue(info['cover']) ??
+          _httpUrlValue(movieData['stream_icon']),
+      rating: _stringValue(info['rating']),
+      year:
+          _yearValue(info['releasedate']) ??
+          _yearValue(info['releaseDate']) ??
+          _yearValue(info['year']),
+      durationSeconds:
+          _durationSeconds(info['duration_secs']) ??
+          _durationSeconds(info['duration']),
+      containerExtension: _containerExtension(movieData['container_extension']),
+    );
+  }
+
+  final String? title;
+  final String? description;
+  final String? artworkUrl;
+  final String? rating;
+  final int? year;
+  final int? durationSeconds;
+  final String? containerExtension;
+}
+
 class XtreamSeriesItem {
   const XtreamSeriesItem({
     required this.seriesId,
@@ -396,17 +460,60 @@ class XtreamSeriesItem {
 }
 
 class XtreamSeriesInfo {
-  const XtreamSeriesInfo({required this.seasons, required this.episodes});
+  const XtreamSeriesInfo({
+    required this.seasons,
+    required this.episodes,
+    this.title,
+    this.overview,
+    this.cover,
+    this.backdropUrl,
+    this.rating,
+    this.year,
+    this.durationSeconds,
+  });
 
   factory XtreamSeriesInfo.fromJson(Map<String, dynamic> json) {
+    final info = _mapValue(json['info']);
     return XtreamSeriesInfo(
       seasons: _parseSeasons(json['seasons']),
       episodes: _parseEpisodes(json['episodes']),
+      title:
+          _stringValue(info['name']) ??
+          _stringValue(info['title']) ??
+          _stringValue(json['name']),
+      overview:
+          _stringValue(info['plot']) ??
+          _stringValue(info['description']) ??
+          _stringValue(info['overview']),
+      cover:
+          _httpUrlValue(info['cover']) ??
+          _httpUrlValue(info['movie_image']) ??
+          _httpUrlValue(json['cover']),
+      backdropUrl:
+          _firstHttpUrl(info['backdrop_path']) ??
+          _firstHttpUrl(info['backdrop']) ??
+          _firstHttpUrl(json['backdrop_path']),
+      rating: _stringValue(info['rating']),
+      year:
+          _yearValue(info['releaseDate']) ??
+          _yearValue(info['releasedate']) ??
+          _yearValue(info['year']),
+      durationSeconds:
+          _durationSeconds(info['episode_run_time']) ??
+          _durationSeconds(info['duration_secs']) ??
+          _durationSeconds(info['duration']),
     );
   }
 
   final List<XtreamSeason> seasons;
   final List<XtreamEpisode> episodes;
+  final String? title;
+  final String? overview;
+  final String? cover;
+  final String? backdropUrl;
+  final String? rating;
+  final int? year;
+  final int? durationSeconds;
 }
 
 class XtreamSeason {
@@ -624,6 +731,23 @@ String? _httpUrlValue(dynamic value) {
     return null;
   }
   return uri.scheme == 'http' || uri.scheme == 'https' ? uri.toString() : null;
+}
+
+String? _firstHttpUrl(dynamic value) {
+  if (value is List) {
+    for (final item in value) {
+      final url = _httpUrlValue(item);
+      if (url != null) {
+        return url;
+      }
+    }
+    return null;
+  }
+  return _httpUrlValue(value);
+}
+
+Map<String, dynamic> _mapValue(dynamic value) {
+  return value is Map<String, dynamic> ? value : const <String, dynamic>{};
 }
 
 String? _containerExtension(dynamic value) {
