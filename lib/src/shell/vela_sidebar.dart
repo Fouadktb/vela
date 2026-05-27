@@ -180,13 +180,16 @@ class _SidebarHeader extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final canShowAction = constraints.maxWidth >= 128;
+        final iconSlotWidth = constraints.maxWidth < _sidebarIconSlotWidth
+            ? constraints.maxWidth
+            : _sidebarIconSlotWidth;
 
         return SizedBox(
           height: 40,
           child: Row(
             children: [
               SizedBox(
-                width: _sidebarIconSlotWidth,
+                width: iconSlotWidth,
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: Container(
