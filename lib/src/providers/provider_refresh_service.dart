@@ -42,6 +42,59 @@ class ProviderRefreshService {
     return refresh(provider, onProgress: onProgress);
   }
 
+  Future<void> refreshSeriesEpisodeDetails({
+    required String providerId,
+    required String seriesId,
+    required String externalSeriesId,
+    void Function(String message)? onProgress,
+  }) async {
+    final provider = await _providerRepository.getProvider(providerId);
+    if (provider == null) {
+      throw const ProviderRefreshFailure('Provider was not found');
+    }
+    if (provider.type != ProviderType.xtream) {
+      return;
+    }
+    final serverUrl = provider.serverUrl?.trim();
+    final username = provider.username?.trim();
+    final password = provider.password?.trim();
+    if (serverUrl == null ||
+        serverUrl.isEmpty ||
+        username == null ||
+        username.isEmpty ||
+        password == null ||
+        password.isEmpty ||
+        externalSeriesId.trim().isEmpty) {
+      throw const ProviderRefreshFailure(
+        'Xtream provider details are incomplete',
+      );
+    }
+
+    onProgress?.call('Loading episode details');
+    final client = XtreamClient(
+      credentials: XtreamCredentials(
+        serverUrl: serverUrl,
+        username: username,
+        password: password,
+      ),
+      httpClient: _httpClient,
+      timeout: playlistTimeout,
+    );
+    final info = await client.getSeriesInfo(externalSeriesId.trim());
+    final details = xtreamSeriesEpisodeDetails(
+      providerId: providerId,
+      seriesItemId: seriesId,
+      info: info,
+    );
+    onProgress?.call('Saving episode details');
+    await _providerRepository.replaceSeriesEpisodeDetails(
+      providerId: providerId,
+      seriesId: seriesId,
+      seasons: details.seasons,
+      episodes: details.episodes,
+    );
+  }
+
   Future<ProviderRefreshSummary> refresh(
     IptvProvider provider, {
     void Function(String message)? onProgress,
@@ -359,16 +412,11 @@ class _ProviderImportResult {
 }
 
 int _snapshotItemCount(ProviderCatalogSnapshot snapshot) {
-  final playableItems = snapshot.items.where((item) {
-    if (item.contentType == CatalogContentType.series) {
-      return false;
-    }
-    return _hasPlayableStream(item.streamUrl, item.streamJson);
-  }).length;
+  final catalogItems = snapshot.items.length;
   final playableEpisodes = snapshot.episodes.where((episode) {
     return _hasPlayableStream(episode.streamUrl, episode.streamJson);
   }).length;
-  return playableItems + playableEpisodes;
+  return catalogItems + playableEpisodes;
 }
 
 String _successMessage(int itemCount, String? warningMessage) {

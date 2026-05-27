@@ -215,6 +215,38 @@ class CatalogRepository {
     });
   }
 
+  Future<void> replaceSeriesEpisodeDetails({
+    required String providerId,
+    required String seriesId,
+    required List<SeasonInput> seasons,
+    required List<EpisodeInput> episodes,
+  }) async {
+    final now = _nowMs();
+    for (final season in seasons) {
+      if (season.providerId != providerId || season.seriesId != seriesId) {
+        throw ArgumentError('Cannot replace seasons outside series scope');
+      }
+    }
+    for (final episode in episodes) {
+      if (episode.providerId != providerId || episode.seriesId != seriesId) {
+        throw ArgumentError('Cannot replace episodes outside series scope');
+      }
+    }
+
+    await _db.transaction(() async {
+      await _markEpisodeDetailsStaleForSeries(
+        providerId: providerId,
+        seriesIds: {seriesId},
+      );
+      for (final season in seasons) {
+        await _upsertSeason(season, now);
+      }
+      for (final episode in episodes) {
+        await _upsertEpisode(episode, now);
+      }
+    });
+  }
+
   Stream<List<CatalogItem>> watchItems({
     String? providerId,
     required CatalogContentType section,

@@ -106,6 +106,20 @@ class ProviderRepository {
     return _catalogRepository.replaceProviderCatalog(snapshot);
   }
 
+  Future<void> replaceSeriesEpisodeDetails({
+    required String providerId,
+    required String seriesId,
+    required List<SeasonInput> seasons,
+    required List<EpisodeInput> episodes,
+  }) {
+    return _catalogRepository.replaceSeriesEpisodeDetails(
+      providerId: providerId,
+      seriesId: seriesId,
+      seasons: seasons,
+      episodes: episodes,
+    );
+  }
+
   Future<void> clearProviderCatalog(String providerId) {
     return _catalogRepository.clearProviderCatalog(providerId);
   }

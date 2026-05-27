@@ -53,11 +53,6 @@ class XtreamImporter {
           _seriesCatalogItem(providerId, item, seriesCategoryNames),
     ];
     final series = <SeriesInput>[];
-    final seasons = <SeasonInput>[];
-    final episodes = <EpisodeInput>[];
-    final refreshedEpisodeSeriesIds = <String>{};
-    var skippedSeriesDetails = 0;
-    var completedSeriesDetails = 0;
     final seriesWithIds = seriesItems
         .where((item) => item.seriesId.isNotEmpty)
         .toList();
@@ -76,114 +71,14 @@ class XtreamImporter {
       );
     }
 
-    onProgress?.call('Loading episode details 0 of ${seriesWithIds.length}');
-    final workerCount = seriesWithIds.length < 6 ? seriesWithIds.length : 6;
-    var nextIndex = 0;
-    Future<void> importNextSeriesDetails() async {
-      while (true) {
-        final index = nextIndex;
-        nextIndex += 1;
-        if (index >= seriesWithIds.length) {
-          return;
-        }
-        final item = seriesWithIds[index];
-        final seriesItemId = _seriesItemId(providerId, item.seriesId);
-        late final XtreamSeriesInfo info;
-        try {
-          info = await client.getSeriesInfo(item.seriesId);
-        } on XtreamClientException {
-          skippedSeriesDetails += 1;
-          completedSeriesDetails += 1;
-          _reportSeriesDetailProgress(
-            onProgress,
-            completedSeriesDetails,
-            seriesWithIds.length,
-          );
-          continue;
-        }
-        refreshedEpisodeSeriesIds.add(seriesItemId);
-
-        final seasonByNumber = {
-          for (final season in info.seasons) season.seasonNumber: season,
-        };
-        final episodeSeasonNumbers = info.episodes
-            .map((episode) => episode.seasonNumber)
-            .toSet();
-        final allSeasonNumbers = <int>{
-          ...seasonByNumber.keys,
-          ...episodeSeasonNumbers,
-        }.toList()..sort();
-
-        for (final seasonNumber in allSeasonNumbers) {
-          final season = seasonByNumber[seasonNumber];
-          seasons.add(
-            SeasonInput(
-              id: seasonNumber.toString(),
-              providerId: providerId,
-              seriesId: seriesItemId,
-              seasonNumber: seasonNumber,
-              title: season?.name ?? 'Season $seasonNumber',
-              overview: season?.overview,
-              posterUrl: season?.cover,
-            ),
-          );
-        }
-
-        for (final episode in info.episodes) {
-          if (episode.id.isEmpty) {
-            continue;
-          }
-          final extension = episode.containerExtension ?? 'mp4';
-          episodes.add(
-            EpisodeInput(
-              id: _episodeItemId(providerId, episode.id),
-              providerId: providerId,
-              seriesId: seriesItemId,
-              seasonId: episode.seasonNumber.toString(),
-              seasonNumber: episode.seasonNumber,
-              episodeNumber: episode.episodeNumber,
-              title: episode.title.isEmpty
-                  ? 'Episode ${episode.episodeNumber == 0 ? episode.id : episode.episodeNumber}'
-                  : episode.title,
-              description: episode.description,
-              artworkUrl: episode.artworkUrl,
-              streamJson: _streamJson(
-                providerType: 'xtream',
-                streamId: episode.id,
-                containerExtension: extension,
-              ),
-              externalId: episode.id,
-              durationSeconds: episode.durationSeconds,
-            ),
-          );
-        }
-        completedSeriesDetails += 1;
-        _reportSeriesDetailProgress(
-          onProgress,
-          completedSeriesDetails,
-          seriesWithIds.length,
-        );
-      }
-    }
-
-    if (workerCount > 0) {
-      await Future.wait([
-        for (var index = 0; index < workerCount; index++)
-          importNextSeriesDetails(),
-      ]);
-    }
-
     return XtreamImportResult(
       snapshot: ProviderCatalogSnapshot(
         providerId: providerId,
         categories: categories,
         items: items,
         series: series,
-        seasons: seasons,
-        episodes: episodes,
-        refreshedEpisodeSeriesIds: refreshedEpisodeSeriesIds,
+        refreshedEpisodeSeriesIds: const {},
       ),
-      warningMessage: _seriesDetailsWarning(skippedSeriesDetails),
     );
   }
 }
@@ -322,20 +217,77 @@ String _episodeItemId(String providerId, String episodeId) {
   return '$providerId:episode:$episodeId';
 }
 
-String? _seriesDetailsWarning(int skippedCount) {
-  if (skippedCount == 0) {
-    return null;
+XtreamSeriesEpisodeDetails xtreamSeriesEpisodeDetails({
+  required String providerId,
+  required String seriesItemId,
+  required XtreamSeriesInfo info,
+}) {
+  final seasons = <SeasonInput>[];
+  final episodes = <EpisodeInput>[];
+  final seasonByNumber = {
+    for (final season in info.seasons) season.seasonNumber: season,
+  };
+  final episodeSeasonNumbers = info.episodes
+      .map((episode) => episode.seasonNumber)
+      .toSet();
+  final allSeasonNumbers = <int>{
+    ...seasonByNumber.keys,
+    ...episodeSeasonNumbers,
+  }.toList()..sort();
+
+  for (final seasonNumber in allSeasonNumbers) {
+    final season = seasonByNumber[seasonNumber];
+    seasons.add(
+      SeasonInput(
+        id: seasonNumber.toString(),
+        providerId: providerId,
+        seriesId: seriesItemId,
+        seasonNumber: seasonNumber,
+        title: season?.name ?? 'Season $seasonNumber',
+        overview: season?.overview,
+        posterUrl: season?.cover,
+      ),
+    );
   }
-  final noun = skippedCount == 1 ? 'series' : 'series';
-  return 'Skipped episode details for $skippedCount $noun because the provider returned incomplete series metadata';
+
+  for (final episode in info.episodes) {
+    if (episode.id.isEmpty) {
+      continue;
+    }
+    final extension = episode.containerExtension ?? 'mp4';
+    episodes.add(
+      EpisodeInput(
+        id: _episodeItemId(providerId, episode.id),
+        providerId: providerId,
+        seriesId: seriesItemId,
+        seasonId: episode.seasonNumber.toString(),
+        seasonNumber: episode.seasonNumber,
+        episodeNumber: episode.episodeNumber,
+        title: episode.title.isEmpty
+            ? 'Episode ${episode.episodeNumber == 0 ? episode.id : episode.episodeNumber}'
+            : episode.title,
+        description: episode.description,
+        artworkUrl: episode.artworkUrl,
+        streamJson: _streamJson(
+          providerType: 'xtream',
+          streamId: episode.id,
+          containerExtension: extension,
+        ),
+        externalId: episode.id,
+        durationSeconds: episode.durationSeconds,
+      ),
+    );
+  }
+
+  return XtreamSeriesEpisodeDetails(seasons: seasons, episodes: episodes);
 }
 
-void _reportSeriesDetailProgress(
-  void Function(String message)? onProgress,
-  int completed,
-  int total,
-) {
-  if (completed == total || completed == 1 || completed % 10 == 0) {
-    onProgress?.call('Loading episode details $completed of $total');
-  }
+class XtreamSeriesEpisodeDetails {
+  const XtreamSeriesEpisodeDetails({
+    required this.seasons,
+    required this.episodes,
+  });
+
+  final List<SeasonInput> seasons;
+  final List<EpisodeInput> episodes;
 }

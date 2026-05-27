@@ -44,11 +44,7 @@ final _catalogCardsProvider = StreamProvider.autoDispose
             favoritesOnly: query.favoritesOnly,
           )
           .asyncMap((items) {
-            return _catalogItemsToCards(
-              catalogRepository,
-              historyRepository,
-              items,
-            );
+            return _catalogItemsToCards(historyRepository, items);
           });
     });
 
@@ -360,7 +356,6 @@ AsyncValue<List<CatalogCardItem>> _combineCatalogItems(
 }
 
 Future<List<CatalogCardItem>> _catalogItemsToCards(
-  CatalogRepository catalogRepository,
   WatchHistoryRepository historyRepository,
   List<CatalogItem> items,
 ) async {
@@ -385,17 +380,8 @@ Future<List<CatalogCardItem>> _catalogItemsToCards(
       providerId: item.providerId,
       seriesId: item.id,
     );
-    final firstPlayableEpisode = await _firstPlayableEpisode(
-      catalogRepository,
-      providerId: item.providerId,
-      seriesId: item.id,
-    );
     cards.add(
-      _catalogItemToCard(
-        item,
-        canPlayOverride: firstPlayableEpisode != null,
-        resume: latestResume,
-      ),
+      _catalogItemToCard(item, canPlayOverride: true, resume: latestResume),
     );
   }
   return cards;
@@ -411,6 +397,7 @@ CatalogCardItem _catalogItemToCard(
     providerId: item.providerId,
     contentType: item.contentType,
     title: item.title,
+    externalId: item.externalId,
     subtitle: _subtitleFor(item),
     description: item.description,
     artworkUrl: item.artworkUrl,
@@ -446,6 +433,7 @@ Future<CatalogCardItem> _recentToResolvedCard(
       providerId: card.providerId,
       contentType: card.contentType,
       title: card.title,
+      externalId: card.externalId,
       subtitle: entry.subtitle ?? card.subtitle,
       description: card.description,
       artworkUrl: entry.artworkUrl ?? card.artworkUrl,
@@ -629,11 +617,7 @@ Future<_PlaybackTarget?> _playbackTargetForCard(
   }
 
   if (item.contentType == CatalogContentType.series) {
-    final catalogRepository = ref.read(catalogRepositoryProvider);
-    final episodes = await catalogRepository.listEpisodesForSeries(
-      providerId: item.providerId,
-      seriesId: item.id,
-    );
+    final episodes = await _episodesForSeries(ref, item);
     final resume = restart
         ? null
         : await ref
@@ -708,6 +692,47 @@ Future<_PlaybackTarget?> _playbackTargetForCard(
           )
         : null,
   );
+}
+
+Future<List<CatalogEpisode>> _episodesForSeries(
+  WidgetRef ref,
+  CatalogCardItem item,
+) async {
+  final catalogRepository = ref.read(catalogRepositoryProvider);
+  var episodes = await catalogRepository.listEpisodesForSeries(
+    providerId: item.providerId,
+    seriesId: item.id,
+  );
+  if (episodes.any(_episodeHasPlayableStream)) {
+    return episodes;
+  }
+
+  final externalSeriesId =
+      item.externalId ??
+      _externalSeriesIdFromCatalogId(item.providerId, item.id);
+  if (externalSeriesId == null) {
+    return episodes;
+  }
+
+  try {
+    await ref
+        .read(providerRefreshServiceProvider)
+        .refreshSeriesEpisodeDetails(
+          providerId: item.providerId,
+          seriesId: item.id,
+          externalSeriesId: externalSeriesId,
+        );
+  } catch (error, stackTrace) {
+    debugPrint('Failed to lazy-load series episodes: $error');
+    debugPrintStack(stackTrace: stackTrace);
+    return episodes;
+  }
+
+  episodes = await catalogRepository.listEpisodesForSeries(
+    providerId: item.providerId,
+    seriesId: item.id,
+  );
+  return episodes;
 }
 
 Future<_PlaybackTarget?> _recentPlaybackTarget(
@@ -864,18 +889,6 @@ PlayableItem _episodePlayable({
   );
 }
 
-Future<CatalogEpisode?> _firstPlayableEpisode(
-  CatalogRepository catalogRepository, {
-  required String providerId,
-  required String seriesId,
-}) async {
-  final episodes = await catalogRepository.listEpisodesForSeries(
-    providerId: providerId,
-    seriesId: seriesId,
-  );
-  return episodes.where(_episodeHasPlayableStream).firstOrNull;
-}
-
 bool _episodeHasPlayableStream(CatalogEpisode episode) {
   return _hasPlayableStream(
     streamUrl: episode.streamUrl,
@@ -886,6 +899,15 @@ bool _episodeHasPlayableStream(CatalogEpisode episode) {
 bool _hasPlayableStream({String? streamUrl, String? streamJson}) {
   return streamUrl?.trim().isNotEmpty == true ||
       streamJson?.trim().isNotEmpty == true;
+}
+
+String? _externalSeriesIdFromCatalogId(String providerId, String itemId) {
+  final prefix = '$providerId:series:';
+  if (!itemId.startsWith(prefix)) {
+    return null;
+  }
+  final externalId = itemId.substring(prefix.length).trim();
+  return externalId.isEmpty ? null : externalId;
 }
 
 Future<String?> _streamUrl(

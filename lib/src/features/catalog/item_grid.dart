@@ -10,6 +10,7 @@ class CatalogCardItem {
     required this.contentType,
     required this.title,
     required this.canPlay,
+    this.externalId,
     this.subtitle,
     this.description,
     this.artworkUrl,
@@ -32,6 +33,7 @@ class CatalogCardItem {
   final String providerId;
   final CatalogContentType contentType;
   final String title;
+  final String? externalId;
   final String? subtitle;
   final String? description;
   final String? artworkUrl;
