@@ -16,7 +16,7 @@ class ProviderRefreshService {
     required ProviderRepository providerRepository,
     http.Client? httpClient,
     this.playlistTimeout = const Duration(seconds: 15),
-    this.maxPlaylistBytes = 20 * 1024 * 1024,
+    this.maxPlaylistBytes = 100 * 1024 * 1024,
   }) : _providerRepository = providerRepository,
        _httpClient = httpClient ?? http.Client(),
        _ownsHttpClient = httpClient == null;
@@ -332,13 +332,50 @@ class ProviderRefreshService {
       httpClient: _httpClient,
       timeout: playlistTimeout,
     );
-    final result = await XtreamImporter(
-      client,
-    ).importProvider(providerId: provider.id, onProgress: onProgress);
+    final result = await XtreamImporter(client)
+        .importProvider(providerId: provider.id, onProgress: onProgress)
+        .onError<XtreamClientException>((error, stackTrace) async {
+          if (error.statusCode == null) {
+            throw error;
+          }
+          return _importXtreamGeneratedPlaylist(
+            providerId: provider.id,
+            client: client,
+            originalError: error,
+            onProgress: onProgress,
+          );
+        });
     return _ProviderImportResult(
       snapshot: result.snapshot,
       warningMessage: result.warningMessage,
     );
+  }
+
+  Future<XtreamImportResult> _importXtreamGeneratedPlaylist({
+    required String providerId,
+    required XtreamClient client,
+    required XtreamClientException originalError,
+    void Function(String message)? onProgress,
+  }) async {
+    onProgress?.call('Xtream API was rejected; loading generated M3U playlist');
+    try {
+      final playlist = await _loadPlaylistUrl(
+        client.buildM3uPlaylistUri().toString(),
+      );
+      onProgress?.call('Parsing generated M3U playlist');
+      final parsed = _parsePlaylist(providerId, playlist);
+      return XtreamImportResult(
+        snapshot: parsed.snapshot,
+        warningMessage: _combineWarnings(
+          'Xtream API was rejected, so Vela imported the generated M3U playlist instead',
+          parsed.warningMessage,
+        ),
+      );
+    } on ProviderRefreshFailure catch (fallbackError) {
+      throw ProviderRefreshFailure(
+        '${originalError.message}. Generated M3U fallback failed: ${fallbackError.message}',
+      );
+    }
   }
 
   _ProviderImportResult _parsePlaylist(String providerId, String playlist) {
@@ -365,7 +402,7 @@ class ProviderRefreshService {
     late http.StreamedResponse response;
     try {
       response = await _httpClient
-          .send(http.Request('GET', uri))
+          .send(http.Request('GET', uri)..headers.addAll(_playlistHeaders))
           .timeout(playlistTimeout);
     } on TimeoutException {
       throw const ProviderRefreshFailure('Playlist could not be loaded');
@@ -426,6 +463,19 @@ String _successMessage(int itemCount, String? warningMessage) {
   }
   return '$base. $warningMessage';
 }
+
+String _combineWarnings(String first, String? second) {
+  if (second == null || second.trim().isEmpty) {
+    return first;
+  }
+  return '$first. $second';
+}
+
+const _playlistHeaders = {
+  'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+  'Accept':
+      'application/x-mpegURL, application/vnd.apple.mpegurl, text/plain, */*',
+};
 
 String? _m3uWarningSummary(List<M3uParseDiagnostic> diagnostics) {
   if (diagnostics.isEmpty) {

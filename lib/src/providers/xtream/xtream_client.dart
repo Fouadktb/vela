@@ -3,6 +3,11 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+const xtreamHttpHeaders = {
+  'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+  'Accept': 'application/json, text/plain, */*',
+};
+
 class XtreamClient {
   XtreamClient({
     required XtreamCredentials credentials,
@@ -142,6 +147,19 @@ class XtreamClient {
     );
   }
 
+  Uri buildM3uPlaylistUri({String output = 'ts'}) {
+    final uri = Uri.parse(credentials.serverUrl);
+    return uri.replace(
+      pathSegments: [..._basePathSegments(uri), 'get.php'],
+      queryParameters: {
+        'username': credentials.username,
+        'password': credentials.password,
+        'type': 'm3u_plus',
+        'output': output,
+      },
+    );
+  }
+
   void close() {
     if (_ownsHttpClient) {
       _httpClient.close();
@@ -168,7 +186,9 @@ class XtreamClient {
     final uri = buildApiUri(action: action, extraParams: extraParams);
     late http.Response response;
     try {
-      response = await _httpClient.get(uri).timeout(timeout);
+      response = await _httpClient
+          .get(uri, headers: xtreamHttpHeaders)
+          .timeout(timeout);
     } on TimeoutException {
       throw const XtreamClientException('Xtream server could not be reached');
     } on http.ClientException {
@@ -180,6 +200,7 @@ class XtreamClient {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw XtreamClientException(
         'Provider server rejected the Xtream API request with HTTP ${response.statusCode}',
+        statusCode: response.statusCode,
       );
     }
 
@@ -242,9 +263,10 @@ class XtreamCredentials {
 }
 
 class XtreamClientException implements Exception {
-  const XtreamClientException(this.message);
+  const XtreamClientException(this.message, {this.statusCode});
 
   final String message;
+  final int? statusCode;
 
   @override
   String toString() => message;
