@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Git ref to build, for example v0.2.3 or main"
+        description: "Git ref to build, for example v0.2.4 or main"
         required: true
-        default: "v0.2.3"
+        default: "v0.2.4"
       release_tag:
         description: "Release tag used in the installer filename"
         required: true
-        default: "v0.2.3"
+        default: "v0.2.4"
 
 jobs:
   windows-installer:

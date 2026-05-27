@@ -3,6 +3,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app/app_version.dart';
 import '../app/section_state.dart';
+import '../shared/vela_logo_mark.dart';
 import '../updates/update_checker.dart';
 
 const double velaSidebarCollapsedWidth = 72;
@@ -242,23 +243,7 @@ class _SidebarHeader extends StatelessWidget {
                 width: iconSlotWidth,
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: Container(
-                    width: 40,
-                    height: 40,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.primary,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      'V',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        color: const Color(0xFF0C0D0E),
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                  ),
+                  child: const VelaLogoMark(size: 40),
                 ),
               ),
               Expanded(
