@@ -1,25 +1,35 @@
-const int maxRefreshIntervalHours = 168;
+const int defaultRefreshIntervalMinutes = 24 * 60;
 
-String refreshIntervalHoursText(int minutes) {
-  final hours = minutes / 60;
-  if (hours == hours.roundToDouble()) {
-    return hours.round().toString();
-  }
-  return hours.toStringAsFixed(1).replaceFirst(RegExp(r'\.0$'), '');
+class RefreshIntervalOption {
+  const RefreshIntervalOption({required this.minutes, required this.label});
+
+  final int minutes;
+  final String label;
 }
 
-int? parseRefreshIntervalHours(String value) {
-  final hours = double.tryParse(value.trim().replaceAll(',', '.'));
-  if (hours == null || hours <= 0 || hours > maxRefreshIntervalHours) {
-    return null;
+const refreshIntervalOptions = [
+  RefreshIntervalOption(minutes: 60, label: 'Every hour'),
+  RefreshIntervalOption(minutes: 3 * 60, label: 'Every 3 hours'),
+  RefreshIntervalOption(minutes: 6 * 60, label: 'Every 6 hours'),
+  RefreshIntervalOption(minutes: 12 * 60, label: 'Every 12 hours'),
+  RefreshIntervalOption(minutes: 24 * 60, label: 'Every day'),
+  RefreshIntervalOption(minutes: 2 * 24 * 60, label: 'Every 2 days'),
+  RefreshIntervalOption(minutes: 3 * 24 * 60, label: 'Every 3 days'),
+  RefreshIntervalOption(minutes: 7 * 24 * 60, label: 'Every week'),
+];
+
+int supportedRefreshIntervalMinutes(int minutes) {
+  if (refreshIntervalOptions.any((option) => option.minutes == minutes)) {
+    return minutes;
   }
-  return (hours * 60).round().clamp(1, maxRefreshIntervalHours * 60);
+  return defaultRefreshIntervalMinutes;
 }
 
-String? validateRefreshIntervalHours(String? value) {
-  final parsed = parseRefreshIntervalHours(value ?? '');
-  if (parsed == null) {
-    return 'Enter hours between 1 and $maxRefreshIntervalHours';
+String refreshIntervalLabel(int minutes) {
+  for (final option in refreshIntervalOptions) {
+    if (option.minutes == minutes) {
+      return option.label;
+    }
   }
-  return null;
+  return refreshIntervalLabel(defaultRefreshIntervalMinutes);
 }

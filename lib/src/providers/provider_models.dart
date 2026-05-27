@@ -69,6 +69,8 @@ class IptvProvider {
     return next == null || !next.isAfter(DateTime.now());
   }
 
+  bool get hasImportedCatalog => lastRefreshAt != null;
+
   IptvProvider copyWith({
     String? id,
     String? name,

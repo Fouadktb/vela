@@ -68,7 +68,7 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
   final _passwordController = TextEditingController();
   final _m3uUrlController = TextEditingController();
   final _fileController = TextEditingController();
-  final _intervalController = TextEditingController(text: '24');
+  var _refreshIntervalMinutes = defaultRefreshIntervalMinutes;
   ProviderType _type = ProviderType.xtream;
 
   @override
@@ -79,7 +79,6 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
     _passwordController.dispose();
     _m3uUrlController.dispose();
     _fileController.dispose();
-    _intervalController.dispose();
     super.dispose();
   }
 
@@ -237,17 +236,28 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
                           ],
                         ),
                       const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _intervalController,
+                      DropdownButtonFormField<int>(
+                        initialValue: _refreshIntervalMinutes,
                         decoration: const InputDecoration(
                           labelText: 'Auto-refresh interval',
-                          suffixText: 'hours',
                           prefixIcon: Icon(LucideIcons.clock),
                         ),
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        validator: validateRefreshIntervalHours,
+                        items: [
+                          for (final option in refreshIntervalOptions)
+                            DropdownMenuItem(
+                              value: option.minutes,
+                              child: Text(option.label),
+                            ),
+                        ],
+                        onChanged: isImporting
+                            ? null
+                            : (value) {
+                                if (value != null) {
+                                  setState(
+                                    () => _refreshIntervalMinutes = value,
+                                  );
+                                }
+                              },
                       ),
                       const SizedBox(height: 18),
                       if (importState.errorMessage != null)
@@ -316,9 +326,14 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
       final provider = await providerRepository.createOrUpdateProvider(
         _providerInput(),
       );
-      importController.progress('Importing catalog');
-      final result = await refreshService.refreshProvider(provider.id);
+      final result = await refreshService.refreshProvider(
+        provider.id,
+        onProgress: importController.progress,
+      );
       if (result.status == ProviderRefreshStatus.failed) {
+        if (!provider.hasImportedCatalog) {
+          await providerRepository.deleteProvider(provider.id);
+        }
         importController.fail(result.message ?? 'Provider import failed');
         return;
       }
@@ -341,8 +356,7 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
       localFilePath: _type == ProviderType.m3uFile
           ? _fileController.text
           : null,
-      refreshIntervalMinutes:
-          parseRefreshIntervalHours(_intervalController.text) ?? 24 * 60,
+      refreshIntervalMinutes: _refreshIntervalMinutes,
     );
   }
 

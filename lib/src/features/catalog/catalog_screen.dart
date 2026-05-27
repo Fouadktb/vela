@@ -70,7 +70,10 @@ class CatalogScreen extends ConsumerWidget {
       value: providers,
       data: (items) {
         final setupState = ref.watch(providerSetupImportControllerProvider);
-        if (items.isEmpty || setupState.shouldKeepSetupVisible) {
+        final hasImportedCatalog = items.any(
+          (provider) => provider.hasImportedCatalog,
+        );
+        if (!hasImportedCatalog || setupState.shouldKeepSetupVisible) {
           return const ProviderSetupScreen();
         }
         return _CatalogContent(section: section, onOpenPlayer: onOpenPlayer);

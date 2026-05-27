@@ -35,7 +35,7 @@ class _VelaShellState extends ConsumerState<VelaShell> {
     final navigation = ref.watch(navigationControllerProvider);
     final providers = ref.watch(providersProvider);
     final hasProviders = providers.maybeWhen(
-      data: (items) => items.isNotEmpty,
+      data: (items) => items.any((provider) => provider.hasImportedCatalog),
       orElse: () => false,
     );
     final selectedSection = navigation.selectedSection;

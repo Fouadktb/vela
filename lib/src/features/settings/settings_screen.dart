@@ -156,7 +156,7 @@ class _ProviderSettingsRow extends ConsumerStatefulWidget {
 
 class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
   late final TextEditingController _nameController;
-  late final TextEditingController _intervalController;
+  late int _refreshIntervalMinutes;
   bool _busy = false;
   String? _message;
 
@@ -164,8 +164,8 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.provider.name);
-    _intervalController = TextEditingController(
-      text: refreshIntervalHoursText(widget.provider.refreshIntervalMinutes),
+    _refreshIntervalMinutes = supportedRefreshIntervalMinutes(
+      widget.provider.refreshIntervalMinutes,
     );
   }
 
@@ -179,7 +179,7 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
     if (oldWidget.provider.id != widget.provider.id ||
         oldWidget.provider.refreshIntervalMinutes !=
             widget.provider.refreshIntervalMinutes) {
-      _intervalController.text = refreshIntervalHoursText(
+      _refreshIntervalMinutes = supportedRefreshIntervalMinutes(
         widget.provider.refreshIntervalMinutes,
       );
     }
@@ -188,7 +188,6 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
   @override
   void dispose() {
     _nameController.dispose();
-    _intervalController.dispose();
     super.dispose();
   }
 
@@ -238,15 +237,25 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: TextField(
-                    controller: _intervalController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
+                  child: DropdownButtonFormField<int>(
+                    initialValue: _refreshIntervalMinutes,
                     decoration: const InputDecoration(
                       labelText: 'Refresh every',
-                      suffixText: 'hours',
                     ),
+                    items: [
+                      for (final option in refreshIntervalOptions)
+                        DropdownMenuItem(
+                          value: option.minutes,
+                          child: Text(option.label),
+                        ),
+                    ],
+                    onChanged: _busy
+                        ? null
+                        : (value) {
+                            if (value != null) {
+                              setState(() => _refreshIntervalMinutes = value);
+                            }
+                          },
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -284,6 +293,16 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
                 ),
               ],
             ),
+            if (provider.lastRefreshMessage?.trim().isNotEmpty == true) ...[
+              const SizedBox(height: 10),
+              Text(
+                provider.lastRefreshMessage!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFFB9B1A6),
+                  letterSpacing: 0,
+                ),
+              ),
+            ],
             if (_message != null) ...[
               const SizedBox(height: 10),
               Text(_message!, style: theme.textTheme.bodySmall),
@@ -296,12 +315,6 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
 
   Future<void> _save() async {
     await _run('Saved provider settings', () async {
-      final interval = parseRefreshIntervalHours(_intervalController.text);
-      if (interval == null) {
-        throw const ProviderRefreshFailure(
-          'Enter refresh interval in hours between 1 and 168',
-        );
-      }
       await ref
           .read(providerRepositoryProvider)
           .createOrUpdateProvider(
@@ -315,10 +328,9 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
               m3uUrl: widget.provider.m3uUrl,
               localFilePath: widget.provider.localFilePath,
               refreshEnabled: widget.provider.refreshEnabled,
-              refreshIntervalMinutes: interval,
+              refreshIntervalMinutes: _refreshIntervalMinutes,
             ),
           );
-      _intervalController.text = refreshIntervalHoursText(interval);
     });
   }
 
@@ -326,7 +338,14 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
     await _run('Refresh complete', () async {
       final result = await ref
           .read(providerRefreshServiceProvider)
-          .refreshProvider(widget.provider.id);
+          .refreshProvider(
+            widget.provider.id,
+            onProgress: (message) {
+              if (mounted) {
+                setState(() => _message = message);
+              }
+            },
+          );
       if (result.status == ProviderRefreshStatus.failed) {
         throw ProviderRefreshFailure(result.message ?? 'Refresh failed');
       }
@@ -445,12 +464,20 @@ class _RefreshStatus extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final status = provider.lastRefreshStatus;
-    final label = status == null ? 'Never refreshed' : status.name;
+    final hasCatalog = provider.hasImportedCatalog;
+    final label = switch (status) {
+      ProviderRefreshStatus.running => 'Checking',
+      ProviderRefreshStatus.failed when hasCatalog => 'Valid, refresh failed',
+      ProviderRefreshStatus.failed => 'Invalid',
+      ProviderRefreshStatus.succeeded => 'Valid',
+      null when hasCatalog => 'Valid',
+      null => 'Not checked',
+    };
     final color = switch (status) {
-      ProviderRefreshStatus.succeeded => Theme.of(context).colorScheme.primary,
-      ProviderRefreshStatus.failed => const Color(0xFFE26D5A),
       ProviderRefreshStatus.running => const Color(0xFF8FB7B0),
-      null => const Color(0xFF8E8980),
+      ProviderRefreshStatus.failed when !hasCatalog => const Color(0xFFE26D5A),
+      _ when hasCatalog => Theme.of(context).colorScheme.primary,
+      _ => const Color(0xFF8E8980),
     };
 
     return Text(

@@ -31,15 +31,21 @@ class ProviderRefreshService {
   Timer? _timer;
   var _disposed = false;
 
-  Future<ProviderRefreshSummary> refreshProvider(String providerId) async {
+  Future<ProviderRefreshSummary> refreshProvider(
+    String providerId, {
+    void Function(String message)? onProgress,
+  }) async {
     final provider = await _providerRepository.getProvider(providerId);
     if (provider == null) {
       throw const ProviderRefreshFailure('Provider was not found');
     }
-    return refresh(provider);
+    return refresh(provider, onProgress: onProgress);
   }
 
-  Future<ProviderRefreshSummary> refresh(IptvProvider provider) async {
+  Future<ProviderRefreshSummary> refresh(
+    IptvProvider provider, {
+    void Function(String message)? onProgress,
+  }) async {
     final existing = _inFlightRefreshes[provider.id];
     if (existing != null) {
       return existing;
@@ -55,7 +61,7 @@ class ProviderRefreshService {
       );
     }
 
-    final refresh = _refresh(provider);
+    final refresh = _refresh(provider, onProgress: onProgress);
     _inFlightRefreshes[provider.id] = refresh;
     unawaited(
       refresh.whenComplete(() {
@@ -67,18 +73,22 @@ class ProviderRefreshService {
     return refresh;
   }
 
-  Future<ProviderRefreshSummary> _refresh(IptvProvider provider) async {
+  Future<ProviderRefreshSummary> _refresh(
+    IptvProvider provider, {
+    void Function(String message)? onProgress,
+  }) async {
     final run = await _providerRepository.createRefreshRun(provider.id);
     final startedAt = dateTimeFromMs(run.startedAtMs);
 
     try {
-      final importResult = await _snapshotFor(provider);
+      final importResult = await _snapshotFor(provider, onProgress: onProgress);
       final itemCount = _snapshotItemCount(importResult.snapshot);
       if (itemCount == 0) {
         throw const ProviderRefreshFailure(
           'Provider did not return any playable items',
         );
       }
+      onProgress?.call('Saving catalog');
       await _providerRepository.replaceProviderCatalog(importResult.snapshot);
       final message = _successMessage(itemCount, importResult.warningMessage);
       await _providerRepository.finishRefreshRun(
@@ -188,38 +198,52 @@ class ProviderRefreshService {
     }
   }
 
-  Future<_ProviderImportResult> _snapshotFor(IptvProvider provider) {
+  Future<_ProviderImportResult> _snapshotFor(
+    IptvProvider provider, {
+    void Function(String message)? onProgress,
+  }) {
     if (!provider.canRefresh) {
       throw const ProviderRefreshFailure('Provider details are incomplete');
     }
     return switch (provider.type) {
-      ProviderType.xtream => _importXtream(provider),
-      ProviderType.m3uUrl => _importM3uUrl(provider),
-      ProviderType.m3uFile => _importM3uFile(provider),
+      ProviderType.xtream => _importXtream(provider, onProgress: onProgress),
+      ProviderType.m3uUrl => _importM3uUrl(provider, onProgress: onProgress),
+      ProviderType.m3uFile => _importM3uFile(provider, onProgress: onProgress),
     };
   }
 
-  Future<_ProviderImportResult> _importM3uUrl(IptvProvider provider) async {
+  Future<_ProviderImportResult> _importM3uUrl(
+    IptvProvider provider, {
+    void Function(String message)? onProgress,
+  }) async {
     final source = provider.m3uUrl?.trim();
     if (source == null || source.isEmpty) {
       throw const ProviderRefreshFailure('Playlist source is incomplete');
     }
+    onProgress?.call('Loading M3U playlist');
     final playlist = await _loadPlaylistUrl(source);
+    onProgress?.call('Parsing M3U playlist');
     return _parsePlaylist(provider.id, playlist);
   }
 
-  Future<_ProviderImportResult> _importM3uFile(IptvProvider provider) async {
+  Future<_ProviderImportResult> _importM3uFile(
+    IptvProvider provider, {
+    void Function(String message)? onProgress,
+  }) async {
     final path = provider.localFilePath?.trim();
     if (path == null || path.isEmpty) {
       throw const ProviderRefreshFailure('Playlist source is incomplete');
     }
     final file = File(path);
     try {
+      onProgress?.call('Reading local playlist');
       final length = await file.length();
       if (length > maxPlaylistBytes) {
         throw const ProviderRefreshFailure('Playlist is too large to import');
       }
-      return _parsePlaylist(provider.id, await file.readAsString());
+      final playlist = await file.readAsString();
+      onProgress?.call('Parsing M3U playlist');
+      return _parsePlaylist(provider.id, playlist);
     } on ProviderRefreshFailure {
       rethrow;
     } on FileSystemException {
@@ -229,7 +253,10 @@ class ProviderRefreshService {
     }
   }
 
-  Future<_ProviderImportResult> _importXtream(IptvProvider provider) async {
+  Future<_ProviderImportResult> _importXtream(
+    IptvProvider provider, {
+    void Function(String message)? onProgress,
+  }) async {
     final serverUrl = provider.serverUrl?.trim();
     final username = provider.username?.trim();
     final password = provider.password?.trim();
@@ -254,7 +281,7 @@ class ProviderRefreshService {
     );
     final result = await XtreamImporter(
       client,
-    ).importProvider(providerId: provider.id);
+    ).importProvider(providerId: provider.id, onProgress: onProgress);
     return _ProviderImportResult(
       snapshot: result.snapshot,
       warningMessage: result.warningMessage,
