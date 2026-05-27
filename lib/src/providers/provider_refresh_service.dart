@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../catalog/catalog_models.dart';
+import 'epg/xmltv_parser.dart';
 import 'm3u/m3u_parser.dart';
 import 'provider_models.dart';
 import 'provider_repository.dart';
@@ -27,6 +28,8 @@ class ProviderRefreshService {
   final Duration playlistTimeout;
   final int maxPlaylistBytes;
   final Map<String, Future<ProviderRefreshSummary>> _inFlightRefreshes = {};
+  final Map<String, Future<void>> _inFlightEpgRefreshes = {};
+  final Map<String, Future<void>> _inFlightSeriesEpisodeRefreshes = {};
   Future<List<ProviderRefreshSummary>>? _staleRefresh;
   Timer? _timer;
   var _disposed = false;
@@ -43,6 +46,34 @@ class ProviderRefreshService {
   }
 
   Future<void> refreshSeriesEpisodeDetails({
+    required String providerId,
+    required String seriesId,
+    required String externalSeriesId,
+    void Function(String message)? onProgress,
+  }) async {
+    final key = '$providerId|$seriesId';
+    final existing = _inFlightSeriesEpisodeRefreshes[key];
+    if (existing != null) {
+      return existing;
+    }
+    final refresh = _refreshSeriesEpisodeDetails(
+      providerId: providerId,
+      seriesId: seriesId,
+      externalSeriesId: externalSeriesId,
+      onProgress: onProgress,
+    );
+    _inFlightSeriesEpisodeRefreshes[key] = refresh;
+    unawaited(
+      refresh.whenComplete(() {
+        if (identical(_inFlightSeriesEpisodeRefreshes[key], refresh)) {
+          _inFlightSeriesEpisodeRefreshes.remove(key);
+        }
+      }),
+    );
+    return refresh;
+  }
+
+  Future<void> _refreshSeriesEpisodeDetails({
     required String providerId,
     required String seriesId,
     required String externalSeriesId,
@@ -93,6 +124,81 @@ class ProviderRefreshService {
       seasons: details.seasons,
       episodes: details.episodes,
     );
+  }
+
+  Future<void> refreshProviderEpg(
+    String providerId, {
+    void Function(String message)? onProgress,
+  }) async {
+    final existing = _inFlightEpgRefreshes[providerId];
+    if (existing != null) {
+      return existing;
+    }
+    final refresh = _refreshProviderEpg(providerId, onProgress: onProgress);
+    _inFlightEpgRefreshes[providerId] = refresh;
+    unawaited(
+      refresh.whenComplete(() {
+        if (identical(_inFlightEpgRefreshes[providerId], refresh)) {
+          _inFlightEpgRefreshes.remove(providerId);
+        }
+      }),
+    );
+    return refresh;
+  }
+
+  Future<void> _refreshProviderEpg(
+    String providerId, {
+    void Function(String message)? onProgress,
+  }) async {
+    if (await _providerRepository.hasAnyEpgPrograms(providerId)) {
+      return;
+    }
+    final provider = await _providerRepository.getProvider(providerId);
+    if (provider == null || provider.type != ProviderType.xtream) {
+      return;
+    }
+    final serverUrl = provider.serverUrl?.trim();
+    final username = provider.username?.trim();
+    final password = provider.password?.trim();
+    if (serverUrl == null ||
+        serverUrl.isEmpty ||
+        username == null ||
+        username.isEmpty ||
+        password == null ||
+        password.isEmpty) {
+      return;
+    }
+
+    final client = XtreamClient(
+      credentials: XtreamCredentials(
+        serverUrl: serverUrl,
+        username: username,
+        password: password,
+      ),
+      httpClient: _httpClient,
+      timeout: playlistTimeout,
+    );
+
+    try {
+      onProgress?.call('Loading channel schedule');
+      final xml = await _loadPlaylistUrl(client.buildXmlTvUri().toString());
+      onProgress?.call('Parsing channel schedule');
+      final programs = const XmltvParser().parse(
+        xml,
+        providerId: providerId,
+        now: DateTime.now(),
+      );
+      if (programs.isEmpty) {
+        return;
+      }
+      onProgress?.call('Saving channel schedule');
+      await _providerRepository.replaceProviderEpg(
+        providerId: providerId,
+        programs: programs,
+      );
+    } catch (_) {
+      return;
+    }
   }
 
   Future<ProviderRefreshSummary> refresh(
@@ -245,6 +351,12 @@ class ProviderRefreshService {
     }
     if (_inFlightRefreshes.isNotEmpty) {
       await Future.wait(_inFlightRefreshes.values);
+    }
+    if (_inFlightEpgRefreshes.isNotEmpty) {
+      await Future.wait(_inFlightEpgRefreshes.values);
+    }
+    if (_inFlightSeriesEpisodeRefreshes.isNotEmpty) {
+      await Future.wait(_inFlightSeriesEpisodeRefreshes.values);
     }
     if (_ownsHttpClient) {
       _httpClient.close();

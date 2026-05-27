@@ -120,6 +120,20 @@ class ProviderRepository {
     );
   }
 
+  Future<void> replaceProviderEpg({
+    required String providerId,
+    required List<EpgProgramInput> programs,
+  }) {
+    return _catalogRepository.replaceProviderEpg(
+      providerId: providerId,
+      programs: programs,
+    );
+  }
+
+  Future<bool> hasAnyEpgPrograms(String providerId) {
+    return _catalogRepository.hasAnyEpgPrograms(providerId);
+  }
+
   Future<void> clearProviderCatalog(String providerId) {
     return _catalogRepository.clearProviderCatalog(providerId);
   }

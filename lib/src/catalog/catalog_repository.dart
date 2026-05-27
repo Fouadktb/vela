@@ -247,6 +247,76 @@ class CatalogRepository {
     });
   }
 
+  Future<void> replaceProviderEpg({
+    required String providerId,
+    required List<EpgProgramInput> programs,
+  }) async {
+    final now = _nowMs();
+    await _db.transaction(() async {
+      await (_db.delete(
+        _db.epgPrograms,
+      )..where((row) => row.providerId.equals(providerId))).go();
+      for (final program in programs) {
+        if (program.providerId != providerId ||
+            program.channelId.trim().isEmpty ||
+            program.title.trim().isEmpty ||
+            program.endAtMs <= program.startAtMs) {
+          continue;
+        }
+        await _db
+            .into(_db.epgPrograms)
+            .insertOnConflictUpdate(
+              EpgProgramsCompanion.insert(
+                providerId: program.providerId,
+                channelId: program.channelId.trim(),
+                startAt: program.startAtMs,
+                endAt: program.endAtMs,
+                title: program.title.trim(),
+                description: Value(program.description),
+                category: Value(program.category),
+                importedAt: Value(now),
+              ),
+            );
+      }
+    });
+  }
+
+  Stream<List<EpgProgram>> watchEpgPrograms({
+    required String providerId,
+    required List<String> channelIds,
+    required int fromMs,
+    required int toMs,
+  }) {
+    final cleanChannelIds = channelIds
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList();
+    if (cleanChannelIds.isEmpty) {
+      return Stream.value(const <EpgProgram>[]);
+    }
+    final query = _db.select(_db.epgPrograms)
+      ..where(
+        (row) =>
+            row.providerId.equals(providerId) &
+            row.channelId.isIn(cleanChannelIds) &
+            row.endAt.isBiggerOrEqualValue(fromMs) &
+            row.startAt.isSmallerOrEqualValue(toMs),
+      )
+      ..orderBy([(row) => OrderingTerm.asc(row.startAt)]);
+
+    return query.watch().map((rows) => rows.map(_toEpgProgram).toList());
+  }
+
+  Future<bool> hasAnyEpgPrograms(String providerId) async {
+    final row =
+        await (_db.select(_db.epgPrograms)
+              ..where((program) => program.providerId.equals(providerId))
+              ..limit(1))
+            .getSingleOrNull();
+    return row != null;
+  }
+
   Stream<List<CatalogItem>> watchItems({
     String? providerId,
     required CatalogContentType section,
@@ -528,7 +598,7 @@ class CatalogRepository {
         AND fi.item_id = i.id
         AND fi.item_type = i.content_type
       WHERE ${where.join(' AND ')}
-      ORDER BY is_favorite DESC, i.normalized_title ASC
+      ORDER BY i.normalized_title ASC
       ''',
       variables: variables,
       readsFrom: {_db.catalogItems, _db.favoriteItems},
@@ -1107,6 +1177,18 @@ CatalogEpisode _toEpisode(EpisodeRow row) {
     durationSeconds: row.durationSeconds,
     updatedAtMs: row.updatedAt,
     lastSeenAtMs: row.lastSeenAt,
+  );
+}
+
+EpgProgram _toEpgProgram(EpgProgramRow row) {
+  return EpgProgram(
+    providerId: row.providerId,
+    channelId: row.channelId,
+    startAtMs: row.startAt,
+    endAtMs: row.endAt,
+    title: row.title,
+    description: row.description,
+    category: row.category,
   );
 }
 

@@ -160,6 +160,17 @@ class XtreamClient {
     );
   }
 
+  Uri buildXmlTvUri() {
+    final uri = Uri.parse(credentials.serverUrl);
+    return uri.replace(
+      pathSegments: [..._basePathSegments(uri), 'xmltv.php'],
+      queryParameters: {
+        'username': credentials.username,
+        'password': credentials.password,
+      },
+    );
+  }
+
   void close() {
     if (_ownsHttpClient) {
       _httpClient.close();

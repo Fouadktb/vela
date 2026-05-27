@@ -245,6 +245,28 @@ class Episodes extends Table {
   ];
 }
 
+@DataClassName('EpgProgramRow')
+class EpgPrograms extends Table {
+  @override
+  String get tableName => 'epg_programs';
+
+  TextColumn get providerId =>
+      text().references(CatalogProviders, #id, onDelete: KeyAction.cascade)();
+  TextColumn get channelId => text()();
+  IntColumn get startAt => integer()();
+  IntColumn get endAt => integer()();
+  TextColumn get title => text()();
+  TextColumn get description => text().nullable()();
+  TextColumn get category => text().nullable()();
+  IntColumn get importedAt => integer().clientDefault(_nowMs)();
+
+  @override
+  Set<Column<Object>> get primaryKey => {providerId, channelId, startAt};
+
+  @override
+  List<String> get customConstraints => ['CHECK (end_at > start_at)'];
+}
+
 @DataClassName('FavoriteItemRow')
 class FavoriteItems extends Table {
   @override
@@ -399,6 +421,7 @@ class AppSettings extends Table {
     Series,
     Seasons,
     Episodes,
+    EpgPrograms,
     FavoriteItems,
     FavoriteCategories,
     CategoryOrder,
@@ -412,7 +435,7 @@ class CatalogDatabase extends _$CatalogDatabase {
     : super(executor ?? driftDatabase(name: 'vela_catalog'));
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -458,6 +481,9 @@ class CatalogDatabase extends _$CatalogDatabase {
           'ELSE 0 '
           'END',
         );
+      }
+      if (from < 4) {
+        await m.createTable(epgPrograms);
       }
     },
     beforeOpen: (details) async {
@@ -527,6 +553,10 @@ class CatalogDatabase extends _$CatalogDatabase {
     await customStatement(
       'CREATE INDEX IF NOT EXISTS idx_episodes_normalized_title '
       'ON episodes(normalized_title)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_epg_programs_channel_time '
+      'ON epg_programs(provider_id, channel_id, start_at, end_at)',
     );
     await customStatement(
       'CREATE INDEX IF NOT EXISTS idx_provider_refresh_runs_provider_started '

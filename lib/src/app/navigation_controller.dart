@@ -85,6 +85,18 @@ final catalogItemsProvider = StreamProvider.autoDispose
           );
     });
 
+final epgProgramsProvider = StreamProvider.autoDispose
+    .family<List<EpgProgram>, EpgProgramsQuery>((ref, query) {
+      return ref
+          .watch(catalogRepositoryProvider)
+          .watchEpgPrograms(
+            providerId: query.providerId,
+            channelIds: query.channelIds,
+            fromMs: query.fromMs,
+            toMs: query.toMs,
+          );
+    });
+
 final recentlyWatchedProvider = StreamProvider<List<WatchHistoryEntry>>((ref) {
   return ref.watch(watchHistoryRepositoryProvider).watchRecentlyWatched();
 });
@@ -198,6 +210,33 @@ class CatalogItemsQuery {
   int get hashCode {
     return Object.hash(section, providerId, categoryId, favoritesOnly);
   }
+}
+
+class EpgProgramsQuery {
+  const EpgProgramsQuery({
+    required this.providerId,
+    required this.channelIds,
+    required this.fromMs,
+    required this.toMs,
+  });
+
+  final String providerId;
+  final List<String> channelIds;
+  final int fromMs;
+  final int toMs;
+
+  @override
+  bool operator ==(Object other) {
+    return other is EpgProgramsQuery &&
+        other.providerId == providerId &&
+        listEquals(other.channelIds, channelIds) &&
+        other.fromMs == fromMs &&
+        other.toMs == toMs;
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(providerId, Object.hashAll(channelIds), fromMs, toMs);
 }
 
 class AppSettingsRepository {

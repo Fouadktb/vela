@@ -48,6 +48,16 @@ final _catalogCardsProvider = StreamProvider.autoDispose
           });
     });
 
+final _seriesEpisodesProvider = StreamProvider.autoDispose
+    .family<List<CatalogEpisode>, _SeriesEpisodesQuery>((ref, query) {
+      return ref
+          .watch(catalogRepositoryProvider)
+          .watchEpisodesForSeries(
+            providerId: query.providerId,
+            seriesId: query.seriesId,
+          );
+    });
+
 class CatalogScreen extends ConsumerWidget {
   const CatalogScreen({
     required this.section,
@@ -103,6 +113,27 @@ class _CatalogContent extends ConsumerWidget {
                 data: (items) {
                   final visible = _filterItems(items, state.searchQuery);
                   final selected = _selectedItem(visible, state.selectedItemId);
+                  final seriesEpisodesValue =
+                      selected?.contentType == CatalogContentType.series
+                      ? ref.watch(
+                          _seriesEpisodesProvider(
+                            _SeriesEpisodesQuery(
+                              providerId: selected!.providerId,
+                              seriesId: selected.id,
+                            ),
+                          ),
+                        )
+                      : const AsyncValue.data(<CatalogEpisode>[]);
+                  final epgProgramsValue = _epgProgramsForSelected(
+                    ref,
+                    selected,
+                  );
+                  _refreshSeriesEpisodesIfNeeded(
+                    ref,
+                    selected,
+                    seriesEpisodesValue,
+                  );
+                  _refreshEpgIfNeeded(ref, selected, epgProgramsValue);
                   if (selected != null && selected.id != state.selectedItemId) {
                     WidgetsBinding.instance.addPostFrameCallback((_) {
                       ref
@@ -141,39 +172,40 @@ class _CatalogContent extends ConsumerWidget {
                           ),
                         ),
                       Expanded(
-                        child: visible.isEmpty
-                            ? EmptyState(
-                                icon: section.icon,
-                                title: section.emptyTitle,
-                                message:
-                                    'No items match the current section, category, or search filter.',
-                              )
-                            : ItemGrid(
-                                items: visible,
-                                selectedItemId: selected?.id,
-                                onSelect: ref
-                                    .read(navigationControllerProvider)
-                                    .selectItem,
-                                onOpen: (item) => _openItem(ref, item),
-                              ),
+                        child: Padding(
+                          padding: EdgeInsets.only(
+                            left: section.contentType == null ? 18 : 0,
+                          ),
+                          child: visible.isEmpty
+                              ? EmptyState(
+                                  icon: section.icon,
+                                  title: section.emptyTitle,
+                                  message:
+                                      'No items match the current section, category, or search filter.',
+                                )
+                              : ItemGrid(
+                                  items: visible,
+                                  selectedItemId: selected?.id,
+                                  onSelect: ref
+                                      .read(navigationControllerProvider)
+                                      .selectItem,
+                                  onOpen: (item) => _openItem(ref, item),
+                                ),
+                        ),
                       ),
                       SizedBox(
                         width: 360,
                         child: DetailPanel(
                           item: selected,
+                          seriesEpisodes: seriesEpisodesValue,
+                          epgPrograms: epgProgramsValue,
                           onPlay: (item) => _openItem(ref, item),
                           onRestart: (item) =>
                               _openItem(ref, item, restart: true),
+                          onOpenEpisode: (item, episode) =>
+                              _openEpisode(ref, item, episode),
                           onToggleFavorite: (item) =>
                               _toggleItemFavorite(ref, item),
-                          onRefreshProvider: () {
-                            final providerId = selected?.providerId;
-                            if (providerId != null) {
-                              ref
-                                  .read(providerRefreshServiceProvider)
-                                  .refreshProvider(providerId);
-                            }
-                          },
                         ),
                       ),
                     ],
@@ -273,6 +305,39 @@ class _CatalogContent extends ConsumerWidget {
       debugPrintStack(stackTrace: stackTrace);
     }
   }
+
+  Future<void> _openEpisode(
+    WidgetRef ref,
+    CatalogCardItem item,
+    CatalogEpisode episode,
+  ) async {
+    try {
+      final episodes = await _episodesForSeries(ref, item);
+      final resume = await ref
+          .read(watchHistoryRepositoryProvider)
+          .lookupResumePosition(
+            providerId: episode.providerId,
+            itemId: episode.id,
+            itemType: PlayableContentType.episode,
+            seriesId: episode.seriesId,
+            seasonId: episode.seasonId,
+          );
+      final target = await _episodePlaybackTarget(
+        ref,
+        episode: episode,
+        episodes: episodes,
+        fallbackPosterUrl: item.artworkUrl,
+        resume: resume,
+      );
+      if (target == null) {
+        return;
+      }
+      onOpenPlayer(target.playable);
+    } catch (error, stackTrace) {
+      debugPrint('Failed to open episode: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
 }
 
 class _CatalogToolbar extends ConsumerWidget {
@@ -338,6 +403,138 @@ class _PlaybackTarget {
 
   final PlayableItem playable;
   final WatchHistoryUpdate? history;
+}
+
+class _SeriesEpisodesQuery {
+  const _SeriesEpisodesQuery({
+    required this.providerId,
+    required this.seriesId,
+  });
+
+  final String providerId;
+  final String seriesId;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _SeriesEpisodesQuery &&
+        other.providerId == providerId &&
+        other.seriesId == seriesId;
+  }
+
+  @override
+  int get hashCode => Object.hash(providerId, seriesId);
+}
+
+AsyncValue<List<EpgProgram>> _epgProgramsForSelected(
+  WidgetRef ref,
+  CatalogCardItem? selected,
+) {
+  if (selected == null || selected.contentType != CatalogContentType.live) {
+    return const AsyncValue.data(<EpgProgram>[]);
+  }
+  final channelIds = _epgChannelAliases(selected);
+  if (channelIds.isEmpty) {
+    return const AsyncValue.data(<EpgProgram>[]);
+  }
+
+  final now = DateTime.now();
+  final dayStart = DateTime(now.year, now.month, now.day);
+  return ref.watch(
+    epgProgramsProvider(
+      EpgProgramsQuery(
+        providerId: selected.providerId,
+        channelIds: channelIds,
+        fromMs: dayStart
+            .subtract(const Duration(hours: 3))
+            .millisecondsSinceEpoch,
+        toMs: dayStart.add(const Duration(days: 2)).millisecondsSinceEpoch,
+      ),
+    ),
+  );
+}
+
+void _refreshSeriesEpisodesIfNeeded(
+  WidgetRef ref,
+  CatalogCardItem? selected,
+  AsyncValue<List<CatalogEpisode>> episodesValue,
+) {
+  if (selected == null || selected.contentType != CatalogContentType.series) {
+    return;
+  }
+  final externalSeriesId =
+      selected.externalId ??
+      _externalSeriesIdFromCatalogId(selected.providerId, selected.id);
+  if (externalSeriesId == null || externalSeriesId.trim().isEmpty) {
+    return;
+  }
+
+  episodesValue.whenData((episodes) {
+    if (episodes.any(_episodeHasPlayableStream)) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(
+        ref
+            .read(providerRefreshServiceProvider)
+            .refreshSeriesEpisodeDetails(
+              providerId: selected.providerId,
+              seriesId: selected.id,
+              externalSeriesId: externalSeriesId,
+            )
+            .catchError((Object error, StackTrace stackTrace) {
+              debugPrint('Failed to load series episodes: $error');
+              debugPrintStack(stackTrace: stackTrace);
+            }),
+      );
+    });
+  });
+}
+
+void _refreshEpgIfNeeded(
+  WidgetRef ref,
+  CatalogCardItem? selected,
+  AsyncValue<List<EpgProgram>> programsValue,
+) {
+  if (selected == null || selected.contentType != CatalogContentType.live) {
+    return;
+  }
+  if (_epgChannelAliases(selected).isEmpty) {
+    return;
+  }
+
+  programsValue.whenData((programs) {
+    if (programs.isNotEmpty) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(
+        ref
+            .read(providerRefreshServiceProvider)
+            .refreshProviderEpg(selected.providerId)
+            .catchError((Object error, StackTrace stackTrace) {
+              debugPrint('Failed to load channel schedule: $error');
+              debugPrintStack(stackTrace: stackTrace);
+            }),
+      );
+    });
+  });
+}
+
+List<String> _epgChannelAliases(CatalogCardItem item) {
+  final aliases = <String>[
+    if (item.epgChannelId?.trim().isNotEmpty == true) item.epgChannelId!.trim(),
+    if (item.externalId?.trim().isNotEmpty == true) item.externalId!.trim(),
+    _trailingCatalogId(item.id),
+  ];
+  return aliases.where((value) => value.trim().isNotEmpty).toSet().toList();
+}
+
+String _trailingCatalogId(String value) {
+  final separator = value.lastIndexOf(':');
+  if (separator < 0 || separator >= value.length - 1) {
+    return value;
+  }
+  return value.substring(separator + 1);
 }
 
 AsyncValue<List<CatalogCardItem>> _combineCatalogItems(
@@ -406,6 +603,7 @@ CatalogCardItem _catalogItemToCard(
     year: item.year,
     rating: item.rating,
     durationSeconds: item.durationSeconds,
+    epgChannelId: item.epgChannelId,
     epgSummary: item.contentType == CatalogContentType.live
         ? item.subtitle ?? item.description ?? item.epgChannelId
         : null,
@@ -442,6 +640,7 @@ Future<CatalogCardItem> _recentToResolvedCard(
       year: card.year,
       rating: card.rating,
       durationSeconds: entry.durationSeconds ?? card.durationSeconds,
+      epgChannelId: card.epgChannelId,
       epgSummary: card.epgSummary,
       recentItemType: entry.itemType,
       seriesId: entry.seriesId,

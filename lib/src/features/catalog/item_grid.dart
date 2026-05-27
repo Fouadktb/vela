@@ -19,6 +19,7 @@ class CatalogCardItem {
     this.year,
     this.rating,
     this.durationSeconds,
+    this.epgChannelId,
     this.epgSummary,
     this.recentItemType,
     this.seriesId,
@@ -42,6 +43,7 @@ class CatalogCardItem {
   final int? year;
   final String? rating;
   final int? durationSeconds;
+  final String? epgChannelId;
   final String? epgSummary;
   final PlayableContentType? recentItemType;
   final String? seriesId;

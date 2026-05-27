@@ -322,6 +322,50 @@ class CatalogItemInput {
   final String? containerExtension;
 }
 
+class EpgProgram {
+  const EpgProgram({
+    required this.providerId,
+    required this.channelId,
+    required this.startAtMs,
+    required this.endAtMs,
+    required this.title,
+    this.description,
+    this.category,
+  });
+
+  final String providerId;
+  final String channelId;
+  final int startAtMs;
+  final int endAtMs;
+  final String title;
+  final String? description;
+  final String? category;
+
+  bool isAiringAt(int timestampMs) {
+    return startAtMs <= timestampMs && endAtMs > timestampMs;
+  }
+}
+
+class EpgProgramInput {
+  const EpgProgramInput({
+    required this.providerId,
+    required this.channelId,
+    required this.startAtMs,
+    required this.endAtMs,
+    required this.title,
+    this.description,
+    this.category,
+  });
+
+  final String providerId;
+  final String channelId;
+  final int startAtMs;
+  final int endAtMs;
+  final String title;
+  final String? description;
+  final String? category;
+}
+
 class SeriesInput {
   const SeriesInput({
     required this.id,
