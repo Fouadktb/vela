@@ -101,6 +101,7 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
                           onNextEpisode: _openNextEpisode,
                           onShowControls: _showControls,
                           onSeekZone: _handleSeekZone,
+                          onCenterDoubleTap: _handleCenterDoubleTap,
                         ),
                       ),
                       if (!state.isFullscreen &&
@@ -157,6 +158,11 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
   void _handleSeekZone(SeekZoneDirection direction) {
     _showControls();
     _seek(direction);
+  }
+
+  void _handleCenterDoubleTap() {
+    _showControls();
+    unawaited(_controller.toggleFullscreen());
   }
 
   void _seek(SeekZoneDirection direction) {
@@ -466,6 +472,7 @@ class _PlayerSurface extends StatelessWidget {
     required this.onNextEpisode,
     required this.onShowControls,
     required this.onSeekZone,
+    required this.onCenterDoubleTap,
   });
 
   final PlaybackController controller;
@@ -477,6 +484,7 @@ class _PlayerSurface extends StatelessWidget {
   final ValueChanged<PlayableItem> onNextEpisode;
   final VoidCallback onShowControls;
   final ValueChanged<SeekZoneDirection> onSeekZone;
+  final VoidCallback onCenterDoubleTap;
 
   @override
   Widget build(BuildContext context) {
@@ -489,7 +497,11 @@ class _PlayerSurface extends StatelessWidget {
           fill: Colors.black,
           controls: null,
         ),
-        SeekZones(onInteraction: onShowControls, onSeek: onSeekZone),
+        SeekZones(
+          onInteraction: onShowControls,
+          onSeek: onSeekZone,
+          onCenterDoubleTap: onCenterDoubleTap,
+        ),
         if (state.buffering || state.status == VelaPlaybackStatus.opening)
           const _BufferingIndicator(),
         if (state.status == VelaPlaybackStatus.error)
