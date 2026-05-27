@@ -1,7 +1,7 @@
-import Hls from "hls.js";
-import mpegts from "mpegts.js";
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
+import type Hls from "hls.js";
+import type mpegts from "mpegts.js";
 import { iptvApi } from "../../app/api";
 import type { PlayRequest, PlaybackState, PlaybackTrack, ResolvedPlaybackSource } from "../../../shared/playback/types";
 import { PlayerControls } from "./PlayerControls";
@@ -11,7 +11,7 @@ interface InAppPlayerProps {
   onClose(): void;
 }
 
-type EngineInstance = Hls | mpegts.Player | null;
+type EngineInstance = { type: "hls"; instance: Hls } | { type: "mpegts"; instance: mpegts.Player } | null;
 const inAppStartupFallbackTimeoutMs = 7_000;
 
 export function InAppPlayer({ request, onClose }: InAppPlayerProps) {
@@ -131,11 +131,15 @@ export function InAppPlayer({ request, onClose }: InAppPlayerProps) {
     video.addEventListener("durationchange", handleLoadedMetadata);
     video.addEventListener("timeupdate", handleTimeUpdate);
 
-    try {
-      engineRef.current = attachPlaybackEngine(source, video, updateFromVideo, startFallback);
-    } catch {
-      startFallback();
-    }
+    void attachPlaybackEngine(source, video, updateFromVideo, startFallback)
+      .then((engine) => {
+        if (isDisposed) {
+          cleanupEngine(engine, video);
+          return;
+        }
+        engineRef.current = engine;
+      })
+      .catch(startFallback);
 
     return () => {
       isDisposed = true;
@@ -157,7 +161,15 @@ export function InAppPlayer({ request, onClose }: InAppPlayerProps) {
   }
 
   if (fallbackActive) {
-    return <FallbackPlayerControls onClose={onClose} />;
+    return (
+      <div className="fallback-player" aria-label="Video player">
+        <div className="fallback-player-copy">
+          <span>Playback</span>
+          <strong>{state?.title ?? "Playback"}</strong>
+        </div>
+        <FallbackPlayerControls onClose={onClose} />
+      </div>
+    );
   }
 
   return (
@@ -229,37 +241,39 @@ function FallbackPlayerControls({ onClose }: { onClose(): void }) {
   );
 }
 
-function attachPlaybackEngine(
+async function attachPlaybackEngine(
   source: ResolvedPlaybackSource,
   video: HTMLVideoElement,
   updateFromVideo: (patch?: Partial<PlaybackState>) => void,
   startFallback: () => void
-): EngineInstance {
+): Promise<EngineInstance> {
   video.removeAttribute("src");
-  video.load();
+  safeMediaCall(() => video.load());
 
   if (source.preferredEngine === "hls") {
-    if (Hls.isSupported()) {
-      const hls = new Hls({
+    const { default: HlsRuntime } = await import("hls.js");
+
+    if (HlsRuntime.isSupported()) {
+      const hls = new HlsRuntime({
         enableWorker: true,
         lowLatencyMode: source.isLive
       });
       hls.attachMedia(video);
-      hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(source.url));
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      hls.on(HlsRuntime.Events.MEDIA_ATTACHED, () => hls.loadSource(source.url));
+      hls.on(HlsRuntime.Events.MANIFEST_PARSED, () => {
         updateFromVideo(getHlsTrackState(hls));
         void video.play().catch(startFallback);
       });
-      hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => updateFromVideo(getHlsTrackState(hls)));
-      hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, () => updateFromVideo(getHlsTrackState(hls)));
-      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => updateFromVideo(getHlsTrackState(hls)));
-      hls.on(Hls.Events.SUBTITLE_TRACK_SWITCH, () => updateFromVideo(getHlsTrackState(hls)));
-      hls.on(Hls.Events.ERROR, (_event, data) => {
+      hls.on(HlsRuntime.Events.AUDIO_TRACKS_UPDATED, () => updateFromVideo(getHlsTrackState(hls)));
+      hls.on(HlsRuntime.Events.AUDIO_TRACK_SWITCHED, () => updateFromVideo(getHlsTrackState(hls)));
+      hls.on(HlsRuntime.Events.SUBTITLE_TRACKS_UPDATED, () => updateFromVideo(getHlsTrackState(hls)));
+      hls.on(HlsRuntime.Events.SUBTITLE_TRACK_SWITCH, () => updateFromVideo(getHlsTrackState(hls)));
+      hls.on(HlsRuntime.Events.ERROR, (_event, data) => {
         if (data.fatal) {
           startFallback();
         }
       });
-      return hls;
+      return { type: "hls", instance: hls };
     }
 
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
@@ -273,12 +287,14 @@ function attachPlaybackEngine(
   }
 
   if (source.preferredEngine === "mpegts") {
-    if (!mpegts.isSupported()) {
+    const { default: mpegtsRuntime } = await import("mpegts.js");
+
+    if (!mpegtsRuntime.isSupported()) {
       startFallback();
       return null;
     }
 
-    const player = mpegts.createPlayer(
+    const player = mpegtsRuntime.createPlayer(
       {
         type: "mpegts",
         isLive: source.isLive,
@@ -293,14 +309,14 @@ function attachPlaybackEngine(
       }
     );
     player.attachMediaElement(video);
-    player.on(mpegts.Events.ERROR, startFallback);
+    player.on(mpegtsRuntime.Events.ERROR, startFallback);
     player.load();
     void video.play().catch(startFallback);
-    return player;
+    return { type: "mpegts", instance: player };
   }
 
   video.src = source.url;
-  video.load();
+  safeMediaCall(() => video.load());
   void video.play().catch(startFallback);
   return null;
 }
@@ -328,10 +344,10 @@ async function startFallbackPlayback(
 }
 
 function cleanupEngine(engine: EngineInstance, video: HTMLVideoElement | null): void {
-  if (engine instanceof Hls) {
-    engine.destroy();
-  } else if (engine) {
-    engine.destroy();
+  if (engine?.type === "hls") {
+    engine.instance.destroy();
+  } else if (engine?.type === "mpegts") {
+    engine.instance.destroy();
   }
 
   if (video) {
@@ -377,9 +393,9 @@ function selectAudioTrack(
   trackId: number,
   setState: Dispatch<SetStateAction<PlaybackState | null>>
 ): void {
-  if (engine instanceof Hls) {
-    engine.audioTrack = trackId;
-    setState((current) => (current ? { ...current, ...getHlsTrackState(engine) } : current));
+  if (engine?.type === "hls") {
+    engine.instance.audioTrack = trackId;
+    setState((current) => (current ? { ...current, ...getHlsTrackState(engine.instance) } : current));
   }
 }
 
@@ -389,9 +405,9 @@ function selectSubtitleTrack(
   trackId: number | null,
   setState: Dispatch<SetStateAction<PlaybackState | null>>
 ): void {
-  if (engine instanceof Hls) {
-    engine.subtitleTrack = trackId ?? -1;
-    setState((current) => (current ? { ...current, ...getHlsTrackState(engine) } : current));
+  if (engine?.type === "hls") {
+    engine.instance.subtitleTrack = trackId ?? -1;
+    setState((current) => (current ? { ...current, ...getHlsTrackState(engine.instance) } : current));
     return;
   }
 
