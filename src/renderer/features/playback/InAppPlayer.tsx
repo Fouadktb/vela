@@ -12,6 +12,7 @@ interface InAppPlayerProps {
 }
 
 type EngineInstance = Hls | mpegts.Player | null;
+const inAppStartupFallbackTimeoutMs = 7_000;
 
 export function InAppPlayer({ request, onClose }: InAppPlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -115,6 +116,12 @@ export function InAppPlayer({ request, onClose }: InAppPlayerProps) {
     const handleError = () => startFallback();
     const handleLoadedMetadata = () => updateFromVideo();
     const handleTimeUpdate = () => updateFromVideo();
+    const startupFallbackTimeout = window.setTimeout(() => {
+      if (!video.paused && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        return;
+      }
+      startFallback();
+    }, inAppStartupFallbackTimeoutMs);
 
     video.addEventListener("playing", handlePlaying);
     video.addEventListener("pause", handlePause);
@@ -132,6 +139,7 @@ export function InAppPlayer({ request, onClose }: InAppPlayerProps) {
 
     return () => {
       isDisposed = true;
+      window.clearTimeout(startupFallbackTimeout);
       video.removeEventListener("playing", handlePlaying);
       video.removeEventListener("pause", handlePause);
       video.removeEventListener("ended", handleEnded);
@@ -149,7 +157,7 @@ export function InAppPlayer({ request, onClose }: InAppPlayerProps) {
   }
 
   if (fallbackActive) {
-    return <PlayerControls />;
+    return <FallbackPlayerControls onClose={onClose} />;
   }
 
   return (
@@ -171,6 +179,53 @@ export function InAppPlayer({ request, onClose }: InAppPlayerProps) {
         onSelectSubtitleTrack={(trackId) => selectSubtitleTrack(engineRef.current, videoRef.current, trackId, setState)}
       />
     </div>
+  );
+}
+
+function FallbackPlayerControls({ onClose }: { onClose(): void }) {
+  const [fallbackState, setFallbackState] = useState<PlaybackState | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    iptvApi.playback
+      .getState()
+      .then((nextState) => {
+        if (isMounted) {
+          setFallbackState(nextState);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setFallbackState(null);
+        }
+      });
+
+    const unsubscribe = iptvApi.playback.onState((nextState) => {
+      setFallbackState(nextState);
+      if (nextState.status === "idle") {
+        onClose();
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, [onClose]);
+
+  return (
+    <PlayerControls
+      state={fallbackState}
+      onPause={() => void iptvApi.playback.pause()}
+      onStop={() => {
+        void iptvApi.playback.stop();
+        onClose();
+      }}
+      onSeek={(offsetSeconds) => void iptvApi.playback.seek({ offsetSeconds })}
+      onSelectAudioTrack={(trackId) => void iptvApi.playback.selectAudioTrack(trackId)}
+      onSelectSubtitleTrack={(trackId) => void iptvApi.playback.selectSubtitleTrack(trackId)}
+    />
   );
 }
 
