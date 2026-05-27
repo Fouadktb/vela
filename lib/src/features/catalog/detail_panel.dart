@@ -10,6 +10,7 @@ class DetailPanel extends StatelessWidget {
   const DetailPanel({
     required this.item,
     required this.seriesEpisodes,
+    required this.episodePositions,
     required this.epgPrograms,
     required this.onPlay,
     required this.onRestart,
@@ -21,6 +22,7 @@ class DetailPanel extends StatelessWidget {
 
   final CatalogCardItem? item;
   final AsyncValue<List<CatalogEpisode>> seriesEpisodes;
+  final AsyncValue<List<PlaybackPosition>> episodePositions;
   final AsyncValue<List<EpgProgram>> epgPrograms;
   final ValueChanged<CatalogCardItem> onPlay;
   final ValueChanged<CatalogCardItem> onRestart;
@@ -47,6 +49,7 @@ class DetailPanel extends StatelessWidget {
               : _SelectedDetails(
                   item: selected,
                   seriesEpisodes: seriesEpisodes,
+                  episodePositions: episodePositions,
                   epgPrograms: epgPrograms,
                   onPlay: selected.canPlay ? () => onPlay(selected) : null,
                   onRestart: selected.canPlay && selected.hasResume
@@ -98,6 +101,7 @@ class _SelectedDetails extends StatelessWidget {
   const _SelectedDetails({
     required this.item,
     required this.seriesEpisodes,
+    required this.episodePositions,
     required this.epgPrograms,
     required this.onPlay,
     required this.onRestart,
@@ -108,6 +112,7 @@ class _SelectedDetails extends StatelessWidget {
 
   final CatalogCardItem item;
   final AsyncValue<List<CatalogEpisode>> seriesEpisodes;
+  final AsyncValue<List<PlaybackPosition>> episodePositions;
   final AsyncValue<List<EpgProgram>> epgPrograms;
   final VoidCallback? onPlay;
   final VoidCallback? onRestart;
@@ -214,7 +219,9 @@ class _SelectedDetails extends StatelessWidget {
                   if (item.contentType == CatalogContentType.series) ...[
                     const SizedBox(height: 18),
                     _SeriesEpisodeBlock(
+                      key: ValueKey('${item.providerId}:${item.id}:episodes'),
                       episodes: seriesEpisodes,
+                      episodePositions: episodePositions,
                       onOpenEpisode: onOpenEpisode,
                     ),
                   ],
@@ -438,10 +445,13 @@ class _ScheduleRow extends StatelessWidget {
 class _SeriesEpisodeBlock extends StatefulWidget {
   const _SeriesEpisodeBlock({
     required this.episodes,
+    required this.episodePositions,
     required this.onOpenEpisode,
+    super.key,
   });
 
   final AsyncValue<List<CatalogEpisode>> episodes;
+  final AsyncValue<List<PlaybackPosition>> episodePositions;
   final ValueChanged<CatalogEpisode> onOpenEpisode;
 
   @override
@@ -449,7 +459,16 @@ class _SeriesEpisodeBlock extends StatefulWidget {
 }
 
 class _SeriesEpisodeBlockState extends State<_SeriesEpisodeBlock> {
+  final ScrollController _scrollController = ScrollController();
   int? _selectedSeason;
+  bool _userSelectedSeason = false;
+  String? _lastScrolledEpisodeKey;
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -464,26 +483,45 @@ class _SeriesEpisodeBlockState extends State<_SeriesEpisodeBlock> {
           );
         }
 
+        final positions =
+            widget.episodePositions.value ?? const <PlaybackPosition>[];
+        final positionByEpisode = _positionsByEpisode(positions);
+        final latestResume = _latestResumablePosition(positions);
+        final resumeEpisode = latestResume == null
+            ? null
+            : _episodeForPosition(playable, latestResume);
         final seasons = playable.map((episode) => episode.seasonNumber).toSet();
         final sortedSeasons = seasons.toList()..sort();
         final selectedSeason =
-            _selectedSeason != null && sortedSeasons.contains(_selectedSeason)
+            _userSelectedSeason &&
+                _selectedSeason != null &&
+                sortedSeasons.contains(_selectedSeason)
+            ? _selectedSeason!
+            : resumeEpisode != null &&
+                  sortedSeasons.contains(resumeEpisode.seasonNumber)
+            ? resumeEpisode.seasonNumber
+            : _selectedSeason != null && sortedSeasons.contains(_selectedSeason)
             ? _selectedSeason!
             : sortedSeasons.first;
         final visible = playable
             .where((episode) => episode.seasonNumber == selectedSeason)
             .toList();
+        _scrollToEpisodeIfNeeded(visible, latestResume);
 
         return _PanelSection(
           title: 'Episodes',
           trailing: _SeasonSelect(
             seasons: sortedSeasons,
             selectedSeason: selectedSeason,
-            onChanged: (season) => setState(() => _selectedSeason = season),
+            onChanged: (season) => setState(() {
+              _selectedSeason = season;
+              _userSelectedSeason = true;
+            }),
           ),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 260),
             child: ListView.separated(
+              controller: _scrollController,
               shrinkWrap: true,
               itemCount: visible.length,
               separatorBuilder: (_, _) => const SizedBox(height: 8),
@@ -491,6 +529,10 @@ class _SeriesEpisodeBlockState extends State<_SeriesEpisodeBlock> {
                 final episode = visible[index];
                 return _EpisodeRow(
                   episode: episode,
+                  position: positionByEpisode[_episodePositionKey(episode)],
+                  isCurrentResume:
+                      latestResume != null &&
+                      _matchesPosition(episode, latestResume),
                   onOpen: () => widget.onOpenEpisode(episode),
                 );
               },
@@ -509,6 +551,41 @@ class _SeriesEpisodeBlockState extends State<_SeriesEpisodeBlock> {
         body: 'The provider did not return episode details.',
       ),
     );
+  }
+
+  void _scrollToEpisodeIfNeeded(
+    List<CatalogEpisode> visible,
+    PlaybackPosition? latestResume,
+  ) {
+    if (latestResume == null) {
+      return;
+    }
+
+    final index = visible.indexWhere(
+      (episode) => _matchesPosition(episode, latestResume),
+    );
+    if (index < 0) {
+      return;
+    }
+
+    final key = _positionKey(latestResume.seasonId, latestResume.itemId);
+    if (_lastScrolledEpisodeKey == key) {
+      return;
+    }
+    _lastScrolledEpisodeKey = key;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) {
+        return;
+      }
+      final max = _scrollController.position.maxScrollExtent;
+      final target = (index * 74.0).clamp(0.0, max).toDouble();
+      _scrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 }
 
@@ -557,55 +634,125 @@ class _SeasonSelect extends StatelessWidget {
 }
 
 class _EpisodeRow extends StatelessWidget {
-  const _EpisodeRow({required this.episode, required this.onOpen});
+  const _EpisodeRow({
+    required this.episode,
+    required this.position,
+    required this.isCurrentResume,
+    required this.onOpen,
+  });
 
   final CatalogEpisode episode;
+  final PlaybackPosition? position;
+  final bool isCurrentResume;
   final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Material(
-      color: const Color(0xFF16191B),
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: onOpen,
+    final borderColor = isCurrentResume
+        ? theme.colorScheme.primary
+        : const Color(0xFF292D31);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF16191B),
+        border: Border.all(color: borderColor),
         borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Row(
-            children: [
-              const Icon(LucideIcons.play, size: 17),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      episode.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _episodeSubtitle(episode),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: const Color(0xFFA9A39A),
-                      ),
-                    ),
-                  ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: onOpen,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  isCurrentResume ? LucideIcons.playCircle : LucideIcons.play,
+                  size: 17,
+                  color: isCurrentResume
+                      ? theme.colorScheme.primary
+                      : const Color(0xFFD7D0C6),
                 ),
-              ),
-            ],
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        episode.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _episodeSubtitle(episode),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFFA9A39A),
+                        ),
+                      ),
+                      if (position != null) ...[
+                        const SizedBox(height: 7),
+                        _EpisodeProgress(position: position!),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+}
+
+class _EpisodeProgress extends StatelessWidget {
+  const _EpisodeProgress({required this.position});
+
+  final PlaybackPosition position;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final progress = position.completionPercentage.clamp(0, 1).toDouble();
+    final label = position.completed
+        ? 'Watched'
+        : 'Resume ${_duration(position.positionSeconds)}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.primary,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0,
+          ),
+        ),
+        if (progress > 0) ...[
+          const SizedBox(height: 5),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              minHeight: 4,
+              value: progress,
+              backgroundColor: const Color(0xFF292D31),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                theme.colorScheme.primary,
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -896,6 +1043,53 @@ EpgProgram? _currentProgram(List<EpgProgram> programs, int timestampMs) {
     }
   }
   return null;
+}
+
+Map<String, PlaybackPosition> _positionsByEpisode(
+  List<PlaybackPosition> positions,
+) {
+  final byEpisode = <String, PlaybackPosition>{};
+  for (final position in positions) {
+    final key = _positionKey(position.seasonId, position.itemId);
+    final existing = byEpisode[key];
+    if (existing == null || position.updatedAtMs > existing.updatedAtMs) {
+      byEpisode[key] = position;
+    }
+  }
+  return byEpisode;
+}
+
+PlaybackPosition? _latestResumablePosition(List<PlaybackPosition> positions) {
+  final resumable =
+      positions
+          .where(
+            (position) => !position.completed && position.positionSeconds > 0,
+          )
+          .toList()
+        ..sort((a, b) => b.updatedAtMs.compareTo(a.updatedAtMs));
+  return resumable.isEmpty ? null : resumable.first;
+}
+
+CatalogEpisode? _episodeForPosition(
+  List<CatalogEpisode> episodes,
+  PlaybackPosition position,
+) {
+  return episodes
+      .where((episode) => _matchesPosition(episode, position))
+      .firstOrNull;
+}
+
+bool _matchesPosition(CatalogEpisode episode, PlaybackPosition position) {
+  return episode.id == position.itemId &&
+      (position.seasonId == null || episode.seasonId == position.seasonId);
+}
+
+String _episodePositionKey(CatalogEpisode episode) {
+  return _positionKey(episode.seasonId, episode.id);
+}
+
+String _positionKey(String? seasonId, String itemId) {
+  return '${seasonId ?? ''}|$itemId';
 }
 
 bool _episodeCanPlay(CatalogEpisode episode) {

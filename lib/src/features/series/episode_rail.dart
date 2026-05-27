@@ -3,7 +3,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../playback/playable_item.dart';
 
-class EpisodeRail extends StatelessWidget {
+class EpisodeRail extends StatefulWidget {
   const EpisodeRail({
     required this.currentItem,
     required this.items,
@@ -16,8 +16,38 @@ class EpisodeRail extends StatelessWidget {
   final ValueChanged<PlayableItem> onSelect;
 
   @override
+  State<EpisodeRail> createState() => _EpisodeRailState();
+}
+
+class _EpisodeRailState extends State<EpisodeRail> {
+  final ScrollController _scrollController = ScrollController();
+  String? _lastScrolledKey;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleScrollToCurrent();
+  }
+
+  @override
+  void didUpdateWidget(covariant EpisodeRail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentItem.id != widget.currentItem.id ||
+        oldWidget.currentItem.seasonId != widget.currentItem.seasonId ||
+        oldWidget.items.length != widget.items.length) {
+      _scheduleScrollToCurrent();
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (items.length < 2) {
+    if (widget.items.length < 2) {
       return const SizedBox.shrink();
     }
 
@@ -44,20 +74,21 @@ class EpisodeRail extends StatelessWidget {
             ),
             Expanded(
               child: ListView.separated(
+                controller: _scrollController,
                 padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
                 scrollDirection: Axis.horizontal,
                 itemBuilder: (context, index) {
-                  final item = items[index];
+                  final item = widget.items[index];
                   return _EpisodeTile(
                     item: item,
                     selected:
-                        item.id == currentItem.id &&
-                        item.seasonId == currentItem.seasonId,
-                    onTap: () => onSelect(item),
+                        item.id == widget.currentItem.id &&
+                        item.seasonId == widget.currentItem.seasonId,
+                    onTap: () => widget.onSelect(item),
                   );
                 },
                 separatorBuilder: (_, _) => const SizedBox(width: 10),
-                itemCount: items.length,
+                itemCount: widget.items.length,
               ),
             ),
           ],
@@ -65,6 +96,42 @@ class EpisodeRail extends StatelessWidget {
       ),
     );
   }
+
+  void _scheduleScrollToCurrent() {
+    final key = _positionKey(widget.currentItem);
+    if (_lastScrolledKey == key) {
+      return;
+    }
+    _lastScrolledKey = key;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) {
+        return;
+      }
+      final index = widget.items.indexWhere(
+        (item) =>
+            item.id == widget.currentItem.id &&
+            item.seasonId == widget.currentItem.seasonId,
+      );
+      if (index < 0) {
+        return;
+      }
+      final viewport = _scrollController.position.viewportDimension;
+      final max = _scrollController.position.maxScrollExtent;
+      final target = (index * 246.0 - (viewport / 2) + 118)
+          .clamp(0.0, max)
+          .toDouble();
+      _scrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+}
+
+String _positionKey(PlayableItem item) {
+  return '${item.seasonId ?? ''}|${item.id}';
 }
 
 class _EpisodeTile extends StatelessWidget {

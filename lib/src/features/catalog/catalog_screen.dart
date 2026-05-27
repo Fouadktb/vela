@@ -51,6 +51,7 @@ final _catalogCardsProvider = StreamProvider.autoDispose
     .family<List<CatalogCardItem>, CatalogItemsQuery>((ref, query) {
       final catalogRepository = ref.watch(catalogRepositoryProvider);
       final historyRepository = ref.watch(watchHistoryRepositoryProvider);
+      ref.watch(recentlyWatchedProvider);
       return catalogRepository
           .watchItems(
             providerId: query.providerId,
@@ -72,6 +73,16 @@ final _seriesEpisodesProvider = StreamProvider.autoDispose
       return ref
           .watch(catalogRepositoryProvider)
           .watchEpisodesForSeries(
+            providerId: query.providerId,
+            seriesId: query.seriesId,
+          );
+    });
+
+final _seriesEpisodePositionsProvider = StreamProvider.autoDispose
+    .family<List<PlaybackPosition>, _SeriesEpisodesQuery>((ref, query) {
+      return ref
+          .watch(watchHistoryRepositoryProvider)
+          .watchEpisodePositionsForSeries(
             providerId: query.providerId,
             seriesId: query.seriesId,
           );
@@ -143,6 +154,17 @@ class _CatalogContent extends ConsumerWidget {
                           ),
                         )
                       : const AsyncValue.data(<CatalogEpisode>[]);
+                  final seriesEpisodePositionsValue =
+                      selected?.contentType == CatalogContentType.series
+                      ? ref.watch(
+                          _seriesEpisodePositionsProvider(
+                            _SeriesEpisodesQuery(
+                              providerId: selected!.providerId,
+                              seriesId: selected.id,
+                            ),
+                          ),
+                        )
+                      : const AsyncValue.data(<PlaybackPosition>[]);
                   final epgProgramsValue = _epgProgramsForSelected(
                     ref,
                     selected,
@@ -217,6 +239,7 @@ class _CatalogContent extends ConsumerWidget {
                         child: DetailPanel(
                           item: selected,
                           seriesEpisodes: seriesEpisodesValue,
+                          episodePositions: seriesEpisodePositionsValue,
                           epgPrograms: epgProgramsValue,
                           onPlay: (item) => _openItem(ref, item),
                           onRestart: (item) =>
