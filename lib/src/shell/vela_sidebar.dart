@@ -12,11 +12,13 @@ class VelaSidebar extends StatefulWidget {
   const VelaSidebar({
     required this.selectedSection,
     required this.onSectionSelected,
+    this.hasProviders = true,
     super.key,
   });
 
   final VelaSection selectedSection;
   final ValueChanged<VelaSection> onSectionSelected;
+  final bool hasProviders;
 
   @override
   State<VelaSidebar> createState() => _VelaSidebarState();
@@ -68,12 +70,9 @@ class _VelaSidebarState extends State<VelaSidebar> {
                     section: section,
                     isExpanded: _isExpanded,
                     isSelected: section == widget.selectedSection,
-                    onPressed: () {
-                      widget.onSectionSelected(section);
-                      if (!_isPinned) {
-                        setState(() => _isHovered = false);
-                      }
-                    },
+                    isEnabled:
+                        widget.hasProviders || section == VelaSection.live,
+                    onPressed: () => widget.onSectionSelected(section),
                   ),
                   if (section == VelaSection.recent)
                     Padding(
@@ -199,26 +198,33 @@ class _SidebarItem extends StatelessWidget {
     required this.section,
     required this.isExpanded,
     required this.isSelected,
+    required this.isEnabled,
     required this.onPressed,
   });
 
   final VelaSection section;
   final bool isExpanded;
   final bool isSelected;
+  final bool isEnabled;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final foreground = isSelected
+    final foreground = !isEnabled
+        ? const Color(0xFF5D5A54)
+        : isSelected
         ? theme.colorScheme.primary
         : const Color(0xFFD7D0C6);
-    final background = isSelected
+    final background = isSelected && isEnabled
         ? const Color(0xFF25211A)
         : Colors.transparent;
+    final tooltip = isEnabled || isExpanded
+        ? section.label
+        : '${section.label} requires a provider';
 
     return Tooltip(
-      message: isExpanded ? '' : section.label,
+      message: isExpanded && isEnabled ? '' : tooltip,
       waitDuration: const Duration(milliseconds: 400),
       child: Padding(
         padding: const EdgeInsets.only(bottom: 6),
@@ -226,7 +232,7 @@ class _SidebarItem extends StatelessWidget {
           color: background,
           borderRadius: BorderRadius.circular(8),
           child: InkWell(
-            onTap: onPressed,
+            onTap: isEnabled ? onPressed : null,
             borderRadius: BorderRadius.circular(8),
             child: SizedBox(
               height: 44,

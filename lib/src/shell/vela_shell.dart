@@ -33,22 +33,44 @@ class _VelaShellState extends ConsumerState<VelaShell> {
   @override
   Widget build(BuildContext context) {
     final navigation = ref.watch(navigationControllerProvider);
+    final providers = ref.watch(providersProvider);
+    final hasProviders = providers.maybeWhen(
+      data: (items) => items.isNotEmpty,
+      orElse: () => false,
+    );
     final selectedSection = navigation.selectedSection;
+    final effectiveSection =
+        !hasProviders && selectedSection != VelaSection.live
+        ? VelaSection.live
+        : selectedSection;
+    if (effectiveSection != selectedSection) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ref
+              .read(navigationControllerProvider)
+              .selectSection(effectiveSection);
+        }
+      });
+    }
 
     return Scaffold(
       body: Row(
         children: [
           VelaSidebar(
-            selectedSection: selectedSection,
-            onSectionSelected: ref
-                .read(navigationControllerProvider)
-                .selectSection,
+            selectedSection: effectiveSection,
+            hasProviders: hasProviders,
+            onSectionSelected: (section) {
+              if (!hasProviders && section != VelaSection.live) {
+                return;
+              }
+              ref.read(navigationControllerProvider).selectSection(section);
+            },
           ),
           Expanded(
-            child: switch (selectedSection) {
+            child: switch (effectiveSection) {
               VelaSection.settings => const SettingsScreen(),
               _ => CatalogScreen(
-                section: selectedSection,
+                section: effectiveSection,
                 onOpenPlayer: (item) => _openPlayer(context, item),
               ),
             },

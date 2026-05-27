@@ -7,6 +7,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../app/navigation_controller.dart';
 import '../../catalog/catalog_models.dart';
 import '../../providers/provider_models.dart';
+import '../../providers/refresh_interval.dart';
 
 final providerSetupImportControllerProvider =
     ChangeNotifierProvider<ProviderSetupImportController>((ref) {
@@ -67,7 +68,7 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
   final _passwordController = TextEditingController();
   final _m3uUrlController = TextEditingController();
   final _fileController = TextEditingController();
-  final _intervalController = TextEditingController(text: '1440');
+  final _intervalController = TextEditingController(text: '24');
   ProviderType _type = ProviderType.xtream;
 
   @override
@@ -239,17 +240,14 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
                       TextFormField(
                         controller: _intervalController,
                         decoration: const InputDecoration(
-                          labelText: 'Refresh interval minutes',
+                          labelText: 'Auto-refresh interval',
+                          suffixText: 'hours',
                           prefixIcon: Icon(LucideIcons.clock),
                         ),
-                        keyboardType: TextInputType.number,
-                        validator: (value) {
-                          final parsed = int.tryParse(value?.trim() ?? '');
-                          if (parsed == null || parsed < 1) {
-                            return 'Enter a refresh interval in minutes';
-                          }
-                          return null;
-                        },
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        validator: validateRefreshIntervalHours,
                       ),
                       const SizedBox(height: 18),
                       if (importState.errorMessage != null)
@@ -343,7 +341,8 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
       localFilePath: _type == ProviderType.m3uFile
           ? _fileController.text
           : null,
-      refreshIntervalMinutes: int.parse(_intervalController.text.trim()),
+      refreshIntervalMinutes:
+          parseRefreshIntervalHours(_intervalController.text) ?? 24 * 60,
     );
   }
 

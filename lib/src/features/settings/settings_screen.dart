@@ -5,6 +5,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../app/navigation_controller.dart';
 import '../../catalog/catalog_models.dart';
 import '../../providers/provider_models.dart';
+import '../../providers/refresh_interval.dart';
 import '../../shared/async_value_view.dart';
 import '../../shared/empty_state.dart';
 import '../providers/provider_setup_screen.dart';
@@ -164,17 +165,23 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
     super.initState();
     _nameController = TextEditingController(text: widget.provider.name);
     _intervalController = TextEditingController(
-      text: widget.provider.refreshIntervalMinutes.toString(),
+      text: refreshIntervalHoursText(widget.provider.refreshIntervalMinutes),
     );
   }
 
   @override
   void didUpdateWidget(covariant _ProviderSettingsRow oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.provider.id != widget.provider.id) {
+    if (oldWidget.provider.id != widget.provider.id ||
+        oldWidget.provider.name != widget.provider.name) {
       _nameController.text = widget.provider.name;
-      _intervalController.text = widget.provider.refreshIntervalMinutes
-          .toString();
+    }
+    if (oldWidget.provider.id != widget.provider.id ||
+        oldWidget.provider.refreshIntervalMinutes !=
+            widget.provider.refreshIntervalMinutes) {
+      _intervalController.text = refreshIntervalHoursText(
+        widget.provider.refreshIntervalMinutes,
+      );
     }
   }
 
@@ -233,9 +240,12 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
                 Expanded(
                   child: TextField(
                     controller: _intervalController,
-                    keyboardType: TextInputType.number,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: const InputDecoration(
-                      labelText: 'Interval minutes',
+                      labelText: 'Refresh every',
+                      suffixText: 'hours',
                     ),
                   ),
                 ),
@@ -286,9 +296,12 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
 
   Future<void> _save() async {
     await _run('Saved provider settings', () async {
-      final interval =
-          int.tryParse(_intervalController.text.trim()) ??
-          widget.provider.refreshIntervalMinutes;
+      final interval = parseRefreshIntervalHours(_intervalController.text);
+      if (interval == null) {
+        throw const ProviderRefreshFailure(
+          'Enter refresh interval in hours between 1 and 168',
+        );
+      }
       await ref
           .read(providerRepositoryProvider)
           .createOrUpdateProvider(
@@ -305,6 +318,7 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
               refreshIntervalMinutes: interval,
             ),
           );
+      _intervalController.text = refreshIntervalHoursText(interval);
     });
   }
 
