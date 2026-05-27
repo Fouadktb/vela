@@ -68,6 +68,60 @@ class CatalogCardItem {
     if (duration == null || duration <= 0) return 0;
     return (resumePositionSeconds / duration).clamp(0, 1).toDouble();
   }
+
+  CatalogCardItem copyWith({
+    String? id,
+    String? providerId,
+    CatalogContentType? contentType,
+    String? title,
+    String? externalId,
+    String? subtitle,
+    String? description,
+    String? artworkUrl,
+    String? streamUrl,
+    String? streamJson,
+    int? year,
+    String? rating,
+    int? durationSeconds,
+    String? epgChannelId,
+    String? epgSummary,
+    PlayableContentType? recentItemType,
+    String? seriesId,
+    String? seasonId,
+    int? resumePositionSeconds,
+    int? resumeDurationSeconds,
+    bool? isFavorite,
+    bool? isRecent,
+    bool? canPlay,
+  }) {
+    return CatalogCardItem(
+      id: id ?? this.id,
+      providerId: providerId ?? this.providerId,
+      contentType: contentType ?? this.contentType,
+      title: title ?? this.title,
+      externalId: externalId ?? this.externalId,
+      subtitle: subtitle ?? this.subtitle,
+      description: description ?? this.description,
+      artworkUrl: artworkUrl ?? this.artworkUrl,
+      streamUrl: streamUrl ?? this.streamUrl,
+      streamJson: streamJson ?? this.streamJson,
+      year: year ?? this.year,
+      rating: rating ?? this.rating,
+      durationSeconds: durationSeconds ?? this.durationSeconds,
+      epgChannelId: epgChannelId ?? this.epgChannelId,
+      epgSummary: epgSummary ?? this.epgSummary,
+      recentItemType: recentItemType ?? this.recentItemType,
+      seriesId: seriesId ?? this.seriesId,
+      seasonId: seasonId ?? this.seasonId,
+      resumePositionSeconds:
+          resumePositionSeconds ?? this.resumePositionSeconds,
+      resumeDurationSeconds:
+          resumeDurationSeconds ?? this.resumeDurationSeconds,
+      isFavorite: isFavorite ?? this.isFavorite,
+      isRecent: isRecent ?? this.isRecent,
+      canPlay: canPlay ?? this.canPlay,
+    );
+  }
 }
 
 class ItemGrid extends StatelessWidget {

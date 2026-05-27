@@ -40,6 +40,16 @@ final _detailEpisodesProvider = StreamProvider.autoDispose
           );
     });
 
+final _episodePositionsProvider = StreamProvider.autoDispose
+    .family<List<PlaybackPosition>, _SeriesEpisodesQuery>((ref, query) {
+      return ref
+          .watch(watchHistoryRepositoryProvider)
+          .watchEpisodePositionsForSeries(
+            providerId: query.providerId,
+            seriesId: query.seriesId,
+          );
+    });
+
 class ContentDetailScreen extends ConsumerStatefulWidget {
   const ContentDetailScreen({
     required this.initialItem,
@@ -83,8 +93,23 @@ class _ContentDetailScreenState extends ConsumerState<ContentDetailScreen> {
             ),
           )
         : const AsyncValue.data(<CatalogEpisode>[]);
+    final episodePositionsValue = item.contentType == CatalogContentType.series
+        ? ref.watch(
+            _episodePositionsProvider(
+              _SeriesEpisodesQuery(
+                providerId: item.providerId,
+                seriesId: item.id,
+              ),
+            ),
+          )
+        : const AsyncValue.data(<PlaybackPosition>[]);
+    final effectiveItem = _withLatestSeriesResume(
+      item,
+      episodesValue.value ?? const <CatalogEpisode>[],
+      episodePositionsValue.value ?? const <PlaybackPosition>[],
+    );
 
-    _refreshDetailsIfNeeded(item);
+    _refreshDetailsIfNeeded(effectiveItem);
 
     return Scaffold(
       backgroundColor: const Color(0xFF0C0D0E),
@@ -93,17 +118,18 @@ class _ContentDetailScreenState extends ConsumerState<ContentDetailScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _DetailTopBar(
-              item: item,
+              item: effectiveItem,
               onBack: () => Navigator.of(context).maybePop(),
-              onToggleFavorite: () => _toggleFavorite(item),
+              onToggleFavorite: () => _toggleFavorite(effectiveItem),
             ),
             Expanded(
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   final wide = constraints.maxWidth >= 980;
                   final main = _DetailMain(
-                    item: item,
+                    item: effectiveItem,
                     episodes: episodesValue,
+                    episodePositions: episodePositionsValue,
                     selectedSeason: _selectedSeason,
                     onSeasonChanged: (season) {
                       setState(() => _selectedSeason = season);
@@ -238,6 +264,7 @@ class _DetailMain extends StatelessWidget {
   const _DetailMain({
     required this.item,
     required this.episodes,
+    required this.episodePositions,
     required this.selectedSeason,
     required this.onSeasonChanged,
     required this.onPlayItem,
@@ -246,6 +273,7 @@ class _DetailMain extends StatelessWidget {
 
   final CatalogCardItem item;
   final AsyncValue<List<CatalogEpisode>> episodes;
+  final AsyncValue<List<PlaybackPosition>> episodePositions;
   final int? selectedSeason;
   final ValueChanged<int> onSeasonChanged;
   final CatalogPlayCallback onPlayItem;
@@ -258,6 +286,7 @@ class _DetailMain extends StatelessWidget {
     final details = _MetadataPanel(
       item: item,
       episodes: episodes,
+      episodePositions: episodePositions,
       selectedSeason: selectedSeason,
       onSeasonChanged: onSeasonChanged,
       onOpenEpisode: onOpenEpisode,
@@ -337,6 +366,7 @@ class _MetadataPanel extends StatelessWidget {
   const _MetadataPanel({
     required this.item,
     required this.episodes,
+    required this.episodePositions,
     required this.selectedSeason,
     required this.onSeasonChanged,
     required this.onOpenEpisode,
@@ -344,6 +374,7 @@ class _MetadataPanel extends StatelessWidget {
 
   final CatalogCardItem item;
   final AsyncValue<List<CatalogEpisode>> episodes;
+  final AsyncValue<List<PlaybackPosition>> episodePositions;
   final int? selectedSeason;
   final ValueChanged<int> onSeasonChanged;
   final EpisodePlayCallback onOpenEpisode;
@@ -381,6 +412,7 @@ class _MetadataPanel extends StatelessWidget {
           _EpisodeSection(
             item: item,
             episodes: episodes,
+            episodePositions: episodePositions,
             selectedSeason: selectedSeason,
             onSeasonChanged: onSeasonChanged,
             onOpenEpisode: onOpenEpisode,
@@ -427,6 +459,7 @@ class _EpisodeSection extends StatelessWidget {
   const _EpisodeSection({
     required this.item,
     required this.episodes,
+    required this.episodePositions,
     required this.selectedSeason,
     required this.onSeasonChanged,
     required this.onOpenEpisode,
@@ -434,6 +467,7 @@ class _EpisodeSection extends StatelessWidget {
 
   final CatalogCardItem item;
   final AsyncValue<List<CatalogEpisode>> episodes;
+  final AsyncValue<List<PlaybackPosition>> episodePositions;
   final int? selectedSeason;
   final ValueChanged<int> onSeasonChanged;
   final EpisodePlayCallback onOpenEpisode;
@@ -450,11 +484,20 @@ class _EpisodeSection extends StatelessWidget {
             body: 'The provider has not returned playable episode details yet.',
           );
         }
+        final positions = episodePositions.value ?? const <PlaybackPosition>[];
+        final positionByEpisode = _positionsByEpisode(positions);
+        final latestResume = _latestResumablePosition(positions);
+        final resumeEpisode = latestResume == null
+            ? null
+            : _episodeForPosition(playable, latestResume);
         final seasons = playable.map((episode) => episode.seasonNumber).toSet();
         final sortedSeasons = seasons.toList()..sort();
         final activeSeason =
             selectedSeason != null && sortedSeasons.contains(selectedSeason)
             ? selectedSeason!
+            : resumeEpisode != null &&
+                  sortedSeasons.contains(resumeEpisode.seasonNumber)
+            ? resumeEpisode.seasonNumber
             : sortedSeasons.first;
         final visible = playable
             .where((episode) => episode.seasonNumber == activeSeason)
@@ -486,6 +529,10 @@ class _EpisodeSection extends StatelessWidget {
               _EpisodeTile(
                 item: item,
                 episode: episode,
+                position: positionByEpisode[_episodePositionKey(episode)],
+                isCurrentResume:
+                    latestResume != null &&
+                    _matchesPosition(episode, latestResume),
                 onOpenEpisode: onOpenEpisode,
               ),
           ],
@@ -537,11 +584,15 @@ class _EpisodeTile extends StatelessWidget {
   const _EpisodeTile({
     required this.item,
     required this.episode,
+    required this.position,
+    required this.isCurrentResume,
     required this.onOpenEpisode,
   });
 
   final CatalogCardItem item;
   final CatalogEpisode episode;
+  final PlaybackPosition? position;
+  final bool isCurrentResume;
   final EpisodePlayCallback onOpenEpisode;
 
   @override
@@ -551,7 +602,11 @@ class _EpisodeTile extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
         color: const Color(0xFF151719),
-        border: Border.all(color: const Color(0xFF292D31)),
+        border: Border.all(
+          color: isCurrentResume
+              ? theme.colorScheme.primary
+              : const Color(0xFF292D31),
+        ),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Material(
@@ -595,6 +650,10 @@ class _EpisodeTile extends StatelessWidget {
                           color: const Color(0xFFA9A39A),
                         ),
                       ),
+                      if (position != null) ...[
+                        const SizedBox(height: 8),
+                        _EpisodeProgress(position: position!),
+                      ],
                       if (episode.description?.trim().isNotEmpty == true) ...[
                         const SizedBox(height: 8),
                         Text(
@@ -614,6 +673,48 @@ class _EpisodeTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _EpisodeProgress extends StatelessWidget {
+  const _EpisodeProgress({required this.position});
+
+  final PlaybackPosition position;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final progress = position.completionPercentage.clamp(0, 1).toDouble();
+    final label = position.completed
+        ? 'Watched'
+        : 'Resume ${_duration(position.positionSeconds)}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.primary,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0,
+          ),
+        ),
+        if (progress > 0) ...[
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              minHeight: 5,
+              value: progress,
+              backgroundColor: const Color(0xFF292D31),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                theme.colorScheme.primary,
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -824,6 +925,10 @@ String _typeLabel(CatalogCardItem item) {
 String _primaryActionLabel(CatalogCardItem item) {
   if (!item.canPlay) return 'Unavailable';
   if (item.hasResume) {
+    final episodePrefix = _resumeEpisodePrefix(item);
+    if (episodePrefix != null) {
+      return 'Resume $episodePrefix';
+    }
     return item.resumePositionSeconds < 60
         ? 'Resume'
         : 'Resume ${_duration(item.resumePositionSeconds)}';
@@ -832,6 +937,93 @@ String _primaryActionLabel(CatalogCardItem item) {
     return 'Play First Episode';
   }
   return 'Play';
+}
+
+CatalogCardItem _withLatestSeriesResume(
+  CatalogCardItem item,
+  List<CatalogEpisode> episodes,
+  List<PlaybackPosition> positions,
+) {
+  if (item.contentType != CatalogContentType.series) {
+    return item;
+  }
+  final resume = _latestResumablePosition(positions);
+  if (resume == null) {
+    return item;
+  }
+  final episode = _episodeForPosition(episodes, resume);
+  return item.copyWith(
+    subtitle: _seriesResumeSubtitle(episode) ?? item.subtitle,
+    resumePositionSeconds: resume.positionSeconds,
+    resumeDurationSeconds: resume.durationSeconds,
+  );
+}
+
+Map<String, PlaybackPosition> _positionsByEpisode(
+  List<PlaybackPosition> positions,
+) {
+  final byEpisode = <String, PlaybackPosition>{};
+  for (final position in positions) {
+    final key = _positionKey(position.seasonId, position.itemId);
+    final existing = byEpisode[key];
+    if (existing == null || position.updatedAtMs > existing.updatedAtMs) {
+      byEpisode[key] = position;
+    }
+  }
+  return byEpisode;
+}
+
+PlaybackPosition? _latestResumablePosition(List<PlaybackPosition> positions) {
+  final resumable =
+      positions
+          .where(
+            (position) => !position.completed && position.positionSeconds > 0,
+          )
+          .toList()
+        ..sort((a, b) => b.updatedAtMs.compareTo(a.updatedAtMs));
+  return resumable.isEmpty ? null : resumable.first;
+}
+
+CatalogEpisode? _episodeForPosition(
+  List<CatalogEpisode> episodes,
+  PlaybackPosition position,
+) {
+  return episodes
+      .where((episode) => _matchesPosition(episode, position))
+      .firstOrNull;
+}
+
+bool _matchesPosition(CatalogEpisode episode, PlaybackPosition position) {
+  return episode.id == position.itemId &&
+      (position.seasonId == null || episode.seasonId == position.seasonId);
+}
+
+String _episodePositionKey(CatalogEpisode episode) {
+  return _positionKey(episode.seasonId, episode.id);
+}
+
+String _positionKey(String? seasonId, String itemId) {
+  return '${seasonId ?? ''}|$itemId';
+}
+
+String? _seriesResumeSubtitle(CatalogEpisode? episode) {
+  if (episode == null) {
+    return null;
+  }
+  final prefix = 'S${episode.seasonNumber} E${episode.episodeNumber}';
+  final title = episode.title.trim();
+  return title.isEmpty ? prefix : '$prefix / $title';
+}
+
+String? _resumeEpisodePrefix(CatalogCardItem item) {
+  if (item.contentType != CatalogContentType.series) {
+    return null;
+  }
+  final subtitle = item.subtitle?.trim();
+  if (subtitle == null || !subtitle.startsWith('S')) {
+    return null;
+  }
+  return subtitle.split('/').first.trim();
 }
 
 String _duration(int seconds) {
@@ -854,4 +1046,12 @@ String _episodeSubtitle(CatalogEpisode episode) {
 bool _episodeCanPlay(CatalogEpisode episode) {
   return episode.streamUrl?.trim().isNotEmpty == true ||
       episode.streamJson?.trim().isNotEmpty == true;
+}
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull {
+    final iterator = this.iterator;
+    if (!iterator.moveNext()) return null;
+    return iterator.current;
+  }
 }

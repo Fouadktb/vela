@@ -548,6 +548,29 @@ class CatalogRepository {
     return rows.map(_toEpisode).toList();
   }
 
+  Future<CatalogEpisode?> getEpisode({
+    required String providerId,
+    required String seriesId,
+    required String episodeId,
+    String? seasonId,
+  }) async {
+    final query = _db.select(_db.episodes)
+      ..where(
+        (episode) =>
+            episode.providerId.equals(providerId) &
+            episode.seriesId.equals(seriesId) &
+            episode.id.equals(episodeId) &
+            episode.isStale.equals(false),
+      )
+      ..limit(1);
+    final cleanSeasonId = seasonId?.trim();
+    if (cleanSeasonId?.isNotEmpty == true) {
+      query.where((episode) => episode.seasonId.equals(cleanSeasonId!));
+    }
+    final row = await query.getSingleOrNull();
+    return row == null ? null : _toEpisode(row);
+  }
+
   Future<CatalogEpisode?> resolveNextEpisode({
     required String providerId,
     required String seriesId,

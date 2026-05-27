@@ -207,6 +207,22 @@ class WatchHistoryRepository {
     );
   }
 
+  Stream<List<PlaybackPosition>> watchEpisodePositionsForSeries({
+    required String providerId,
+    required String seriesId,
+  }) {
+    final query = _db.select(_db.playbackPositions)
+      ..where(
+        (position) =>
+            position.providerId.equals(providerId) &
+            position.itemType.equals(PlayableContentType.episode.name) &
+            position.seriesId.equals(seriesId),
+      )
+      ..orderBy([(position) => OrderingTerm.desc(position.updatedAt)]);
+
+    return query.watch().map((rows) => rows.map(_toPlaybackPosition).toList());
+  }
+
   Future<void> clearResumePosition({
     required String providerId,
     required String itemId,
@@ -228,6 +244,21 @@ class WatchHistoryRepository {
         ))
         .go();
   }
+}
+
+PlaybackPosition _toPlaybackPosition(PlaybackPositionRow row) {
+  return PlaybackPosition(
+    providerId: row.providerId,
+    itemId: row.itemId,
+    itemType: PlayableContentType.fromDb(row.itemType),
+    seriesId: row.seriesId,
+    seasonId: row.seasonId,
+    positionSeconds: row.positionSeconds,
+    durationSeconds: row.durationSeconds,
+    completionPercentage: row.completionPercentage,
+    completed: row.completed,
+    updatedAtMs: row.updatedAt,
+  );
 }
 
 WatchHistoryEntry _toWatchHistoryEntry(WatchHistoryRow row) {

@@ -257,14 +257,31 @@ class _ActionBar extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        FilledButton.icon(
-          onPressed: onPlay,
-          icon: const Icon(LucideIcons.play, size: 18),
-          label: Text(
-            _primaryActionLabel(item),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: onPlay,
+                icon: const Icon(LucideIcons.play, size: 18),
+                label: Text(
+                  _primaryActionLabel(item),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            IconButton.filledTonal(
+              tooltip: item.isFavorite ? 'Remove favorite' : 'Add favorite',
+              onPressed: onToggleFavorite,
+              icon: Icon(
+                LucideIcons.star,
+                color: item.isFavorite
+                    ? theme.colorScheme.primary
+                    : const Color(0xFFD7D0C6),
+              ),
+            ),
+          ],
         ),
         if (onOpenDetails != null) ...[
           const SizedBox(height: 10),
@@ -278,35 +295,18 @@ class _ActionBar extends StatelessWidget {
             ),
           ),
         ],
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            if (onRestart != null) ...[
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: onRestart,
-                  icon: const Icon(LucideIcons.rotateCcw, size: 18),
-                  label: const Text(
-                    'Restart',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-            ],
-            IconButton.filledTonal(
-              tooltip: item.isFavorite ? 'Remove favorite' : 'Add favorite',
-              onPressed: onToggleFavorite,
-              icon: Icon(
-                LucideIcons.star,
-                color: item.isFavorite
-                    ? theme.colorScheme.primary
-                    : const Color(0xFFD7D0C6),
-              ),
+        if (onRestart != null) ...[
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: onRestart,
+            icon: const Icon(LucideIcons.rotateCcw, size: 18),
+            label: const Text(
+              'Restart',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-          ],
-        ),
+          ),
+        ],
       ],
     );
   }
@@ -827,6 +827,10 @@ String _primaryActionLabel(CatalogCardItem item) {
     return 'Unavailable';
   }
   if (item.hasResume) {
+    final episodePrefix = _resumeEpisodePrefix(item);
+    if (episodePrefix != null) {
+      return 'Resume $episodePrefix';
+    }
     return item.resumePositionSeconds < 60
         ? 'Resume'
         : 'Resume ${_duration(item.resumePositionSeconds)}';
@@ -835,6 +839,17 @@ String _primaryActionLabel(CatalogCardItem item) {
     return 'Play First Episode';
   }
   return 'Play';
+}
+
+String? _resumeEpisodePrefix(CatalogCardItem item) {
+  if (item.contentType != CatalogContentType.series) {
+    return null;
+  }
+  final subtitle = item.subtitle?.trim();
+  if (subtitle == null || !subtitle.startsWith('S')) {
+    return null;
+  }
+  return subtitle.split('/').first.trim();
 }
 
 String _typeLabel(CatalogCardItem item) {

@@ -26,8 +26,22 @@ final _recentCatalogCardsProvider =
       final catalogRepository = ref.watch(catalogRepositoryProvider);
       return historyRepository.watchRecentlyWatched().asyncMap((entries) async {
         final cards = <CatalogCardItem>[];
+        final seenSeries = <String>{};
         for (final entry in entries) {
-          cards.add(await _recentToResolvedCard(catalogRepository, entry));
+          if (entry.itemType == PlayableContentType.episode &&
+              entry.seriesId?.trim().isNotEmpty == true) {
+            final key = '${entry.providerId}:${entry.seriesId}';
+            if (!seenSeries.add(key)) {
+              continue;
+            }
+          }
+          cards.add(
+            await _recentToResolvedCard(
+              catalogRepository,
+              historyRepository,
+              entry,
+            ),
+          );
         }
         return cards;
       });
@@ -45,7 +59,11 @@ final _catalogCardsProvider = StreamProvider.autoDispose
             favoritesOnly: query.favoritesOnly,
           )
           .asyncMap((items) {
-            return _catalogItemsToCards(historyRepository, items);
+            return _catalogItemsToCards(
+              catalogRepository,
+              historyRepository,
+              items,
+            );
           });
     });
 
@@ -579,6 +597,7 @@ AsyncValue<List<CatalogCardItem>> _combineCatalogItems(
 }
 
 Future<List<CatalogCardItem>> _catalogItemsToCards(
+  CatalogRepository catalogRepository,
   WatchHistoryRepository historyRepository,
   List<CatalogItem> items,
 ) async {
@@ -603,8 +622,21 @@ Future<List<CatalogCardItem>> _catalogItemsToCards(
       providerId: item.providerId,
       seriesId: item.id,
     );
+    final resumeEpisode = latestResume == null
+        ? null
+        : await _episodeForPosition(
+            catalogRepository: catalogRepository,
+            providerId: item.providerId,
+            seriesId: item.id,
+            position: latestResume,
+          );
     cards.add(
-      _catalogItemToCard(item, canPlayOverride: true, resume: latestResume),
+      _catalogItemToCard(
+        item,
+        canPlayOverride: true,
+        resume: latestResume,
+        subtitleOverride: _seriesResumeSubtitle(resumeEpisode),
+      ),
     );
   }
   return cards;
@@ -614,6 +646,7 @@ CatalogCardItem _catalogItemToCard(
   CatalogItem item, {
   bool? canPlayOverride,
   PlaybackPosition? resume,
+  String? subtitleOverride,
 }) {
   return CatalogCardItem(
     id: item.id,
@@ -621,7 +654,7 @@ CatalogCardItem _catalogItemToCard(
     contentType: item.contentType,
     title: item.title,
     externalId: item.externalId,
-    subtitle: _subtitleFor(item),
+    subtitle: subtitleOverride ?? _subtitleFor(item),
     description: item.description,
     artworkUrl: item.artworkUrl,
     streamUrl: item.streamUrl,
@@ -647,8 +680,21 @@ CatalogCardItem _catalogItemToCard(
 
 Future<CatalogCardItem> _recentToResolvedCard(
   CatalogRepository catalogRepository,
+  WatchHistoryRepository historyRepository,
   WatchHistoryEntry entry,
 ) async {
+  if (entry.itemType == PlayableContentType.episode &&
+      entry.seriesId?.trim().isNotEmpty == true) {
+    final card = await _recentEpisodeToSeriesCard(
+      catalogRepository,
+      historyRepository,
+      entry,
+    );
+    if (card != null) {
+      return card;
+    }
+  }
+
   final resolved = await _resolveRecentCatalogItem(catalogRepository, entry);
   if (resolved != null) {
     final card = _catalogItemToCard(resolved);
@@ -705,6 +751,65 @@ Future<CatalogCardItem> _recentToResolvedCard(
     isRecent: true,
     canPlay: false,
   );
+}
+
+Future<CatalogCardItem?> _recentEpisodeToSeriesCard(
+  CatalogRepository catalogRepository,
+  WatchHistoryRepository historyRepository,
+  WatchHistoryEntry entry,
+) async {
+  final seriesId = entry.seriesId;
+  if (seriesId == null || seriesId.trim().isEmpty) {
+    return null;
+  }
+  final series = await catalogRepository.getItem(
+    providerId: entry.providerId,
+    contentType: CatalogContentType.series,
+    id: seriesId,
+  );
+  if (series == null) {
+    return null;
+  }
+  final episode = await catalogRepository.getEpisode(
+    providerId: entry.providerId,
+    seriesId: seriesId,
+    episodeId: entry.itemId,
+    seasonId: entry.seasonId,
+  );
+  final resume = PlaybackPosition(
+    providerId: entry.providerId,
+    itemId: entry.itemId,
+    itemType: PlayableContentType.episode,
+    seriesId: seriesId,
+    seasonId: entry.seasonId,
+    positionSeconds: entry.completed ? 0 : entry.positionSeconds,
+    durationSeconds: entry.durationSeconds,
+    completionPercentage: entry.completionPercentage,
+    completed: entry.completed,
+    updatedAtMs: entry.lastWatchedAtMs,
+  );
+  final latestResume = await historyRepository.lookupLatestResumeForSeries(
+    providerId: entry.providerId,
+    seriesId: seriesId,
+  );
+  final effectiveResume = latestResume ?? resume;
+  final effectiveEpisode = latestResume == null
+      ? episode
+      : await _episodeForPosition(
+          catalogRepository: catalogRepository,
+          providerId: entry.providerId,
+          seriesId: seriesId,
+          position: latestResume,
+        );
+  return _catalogItemToCard(
+    series,
+    canPlayOverride: true,
+    resume: effectiveResume,
+    subtitleOverride:
+        _seriesResumeSubtitle(effectiveEpisode) ??
+        _seriesResumeSubtitle(episode) ??
+        entry.subtitle,
+  ).copyWith(isRecent: true);
 }
 
 Future<CatalogItem?> _resolveRecentCatalogItem(
@@ -837,7 +942,7 @@ Future<_PlaybackTarget?> _playbackTargetForCard(
   CatalogCardItem item, {
   bool restart = false,
 }) async {
-  if (item.isRecent) {
+  if (item.isRecent && item.recentItemType != null) {
     return _recentPlaybackTarget(ref, item, restart: restart);
   }
 
@@ -1203,6 +1308,32 @@ String? _subtitleFor(CatalogItem item) {
     return null;
   }
   return parts.join(' / ');
+}
+
+Future<CatalogEpisode?> _episodeForPosition({
+  required CatalogRepository catalogRepository,
+  required String providerId,
+  required String seriesId,
+  required PlaybackPosition position,
+}) {
+  return catalogRepository.getEpisode(
+    providerId: providerId,
+    seriesId: seriesId,
+    episodeId: position.itemId,
+    seasonId: position.seasonId,
+  );
+}
+
+String? _seriesResumeSubtitle(CatalogEpisode? episode) {
+  if (episode == null) {
+    return null;
+  }
+  final episodeTitle = episode.title.trim();
+  final prefix = 'S${episode.seasonNumber} E${episode.episodeNumber}';
+  if (episodeTitle.isEmpty) {
+    return prefix;
+  }
+  return '$prefix / $episodeTitle';
 }
 
 extension _FirstOrNull<T> on Iterable<T> {
