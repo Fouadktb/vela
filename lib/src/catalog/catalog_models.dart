@@ -127,7 +127,7 @@ class CatalogProvider {
     this.password,
     this.lastRefreshAtMs,
     this.autoRefreshEnabled = true,
-    this.autoRefreshIntervalHours = 24,
+    this.autoRefreshIntervalMinutes = 24 * 60,
     this.isEnabled = true,
   });
 
@@ -142,7 +142,7 @@ class CatalogProvider {
   final int updatedAtMs;
   final int? lastRefreshAtMs;
   final bool autoRefreshEnabled;
-  final int autoRefreshIntervalHours;
+  final int autoRefreshIntervalMinutes;
   final bool isEnabled;
 }
 
@@ -156,7 +156,7 @@ class CatalogProviderInput {
     this.username,
     this.password,
     this.autoRefreshEnabled = true,
-    this.autoRefreshIntervalHours = 24,
+    this.autoRefreshIntervalMinutes = 24 * 60,
     this.isEnabled = true,
   });
 
@@ -168,7 +168,7 @@ class CatalogProviderInput {
   final String? username;
   final String? password;
   final bool autoRefreshEnabled;
-  final int autoRefreshIntervalHours;
+  final int autoRefreshIntervalMinutes;
   final bool isEnabled;
 }
 

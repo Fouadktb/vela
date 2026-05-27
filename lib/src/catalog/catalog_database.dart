@@ -5,6 +5,29 @@ part 'catalog_database.g.dart';
 
 int _nowMs() => DateTime.now().millisecondsSinceEpoch;
 
+class SensitiveText {
+  const SensitiveText(this.value);
+
+  final String value;
+
+  @override
+  String toString() => '<redacted>';
+}
+
+class SensitiveTextConverter extends TypeConverter<SensitiveText, String> {
+  const SensitiveTextConverter();
+
+  @override
+  SensitiveText fromSql(String fromDb) {
+    return SensitiveText(fromDb);
+  }
+
+  @override
+  String toSql(SensitiveText value) {
+    return value.value;
+  }
+}
+
 @DataClassName('CatalogProviderRow')
 class CatalogProviders extends Table {
   @override
@@ -15,15 +38,17 @@ class CatalogProviders extends Table {
   TextColumn get name => text()();
   TextColumn get source => text()();
   TextColumn get sourceKind => text().nullable()();
-  TextColumn get username => text().nullable()();
-  TextColumn get password => text().nullable()();
+  TextColumn get username =>
+      text().map(const SensitiveTextConverter()).nullable()();
+  TextColumn get password =>
+      text().map(const SensitiveTextConverter()).nullable()();
   IntColumn get createdAt => integer().clientDefault(_nowMs)();
   IntColumn get updatedAt => integer().clientDefault(_nowMs)();
   IntColumn get lastRefreshAt => integer().nullable()();
   BoolColumn get autoRefreshEnabled =>
       boolean().withDefault(const Constant(true))();
-  IntColumn get autoRefreshIntervalHours =>
-      integer().withDefault(const Constant(24))();
+  IntColumn get autoRefreshIntervalMinutes =>
+      integer().withDefault(const Constant(1440))();
   BoolColumn get isEnabled => boolean().withDefault(const Constant(true))();
 
   @override
@@ -33,7 +58,7 @@ class CatalogProviders extends Table {
   List<String> get customConstraints => [
     "CHECK (type IN ('m3u', 'xtream'))",
     "CHECK (source_kind IS NULL OR source_kind IN ('url', 'file'))",
-    'CHECK (auto_refresh_interval_hours BETWEEN 1 AND 168)',
+    'CHECK (auto_refresh_interval_minutes BETWEEN 1 AND 10080)',
   ];
 }
 
@@ -381,13 +406,26 @@ class CatalogDatabase extends _$CatalogDatabase {
     : super(executor ?? driftDatabase(name: 'vela_catalog'));
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (m) async {
       await m.createAll();
       await _createIndexes();
+    },
+    onUpgrade: (m, from, to) async {
+      if (from < 2) {
+        await m.addColumn(
+          catalogProviders,
+          catalogProviders.autoRefreshIntervalMinutes,
+        );
+        await customStatement(
+          'UPDATE providers '
+          'SET auto_refresh_interval_minutes = auto_refresh_interval_hours * 60 '
+          'WHERE auto_refresh_interval_hours IS NOT NULL',
+        );
+      }
     },
     beforeOpen: (details) async {
       await customStatement('PRAGMA foreign_keys = ON');

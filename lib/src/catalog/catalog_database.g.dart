@@ -56,28 +56,28 @@ class $CatalogProvidersTable extends CatalogProviders
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
-  static const VerificationMeta _usernameMeta = const VerificationMeta(
-    'username',
-  );
   @override
-  late final GeneratedColumn<String> username = GeneratedColumn<String>(
-    'username',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _passwordMeta = const VerificationMeta(
-    'password',
-  );
+  late final GeneratedColumnWithTypeConverter<SensitiveText?, String> username =
+      GeneratedColumn<String>(
+        'username',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      ).withConverter<SensitiveText?>(
+        $CatalogProvidersTable.$converterusernamen,
+      );
   @override
-  late final GeneratedColumn<String> password = GeneratedColumn<String>(
-    'password',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
+  late final GeneratedColumnWithTypeConverter<SensitiveText?, String> password =
+      GeneratedColumn<String>(
+        'password',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      ).withConverter<SensitiveText?>(
+        $CatalogProvidersTable.$converterpasswordn,
+      );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -127,17 +127,17 @@ class $CatalogProvidersTable extends CatalogProviders
     ),
     defaultValue: const Constant(true),
   );
-  static const VerificationMeta _autoRefreshIntervalHoursMeta =
-      const VerificationMeta('autoRefreshIntervalHours');
+  static const VerificationMeta _autoRefreshIntervalMinutesMeta =
+      const VerificationMeta('autoRefreshIntervalMinutes');
   @override
-  late final GeneratedColumn<int> autoRefreshIntervalHours =
+  late final GeneratedColumn<int> autoRefreshIntervalMinutes =
       GeneratedColumn<int>(
-        'auto_refresh_interval_hours',
+        'auto_refresh_interval_minutes',
         aliasedName,
         false,
         type: DriftSqlType.int,
         requiredDuringInsert: false,
-        defaultValue: const Constant(24),
+        defaultValue: const Constant(1440),
       );
   static const VerificationMeta _isEnabledMeta = const VerificationMeta(
     'isEnabled',
@@ -167,7 +167,7 @@ class $CatalogProvidersTable extends CatalogProviders
     updatedAt,
     lastRefreshAt,
     autoRefreshEnabled,
-    autoRefreshIntervalHours,
+    autoRefreshIntervalMinutes,
     isEnabled,
   ];
   @override
@@ -217,18 +217,6 @@ class $CatalogProvidersTable extends CatalogProviders
         sourceKind.isAcceptableOrUnknown(data['source_kind']!, _sourceKindMeta),
       );
     }
-    if (data.containsKey('username')) {
-      context.handle(
-        _usernameMeta,
-        username.isAcceptableOrUnknown(data['username']!, _usernameMeta),
-      );
-    }
-    if (data.containsKey('password')) {
-      context.handle(
-        _passwordMeta,
-        password.isAcceptableOrUnknown(data['password']!, _passwordMeta),
-      );
-    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -259,12 +247,12 @@ class $CatalogProvidersTable extends CatalogProviders
         ),
       );
     }
-    if (data.containsKey('auto_refresh_interval_hours')) {
+    if (data.containsKey('auto_refresh_interval_minutes')) {
       context.handle(
-        _autoRefreshIntervalHoursMeta,
-        autoRefreshIntervalHours.isAcceptableOrUnknown(
-          data['auto_refresh_interval_hours']!,
-          _autoRefreshIntervalHoursMeta,
+        _autoRefreshIntervalMinutesMeta,
+        autoRefreshIntervalMinutes.isAcceptableOrUnknown(
+          data['auto_refresh_interval_minutes']!,
+          _autoRefreshIntervalMinutesMeta,
         ),
       );
     }
@@ -303,13 +291,17 @@ class $CatalogProvidersTable extends CatalogProviders
         DriftSqlType.string,
         data['${effectivePrefix}source_kind'],
       ),
-      username: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}username'],
+      username: $CatalogProvidersTable.$converterusernamen.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}username'],
+        ),
       ),
-      password: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}password'],
+      password: $CatalogProvidersTable.$converterpasswordn.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}password'],
+        ),
       ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
@@ -327,9 +319,9 @@ class $CatalogProvidersTable extends CatalogProviders
         DriftSqlType.bool,
         data['${effectivePrefix}auto_refresh_enabled'],
       )!,
-      autoRefreshIntervalHours: attachedDatabase.typeMapping.read(
+      autoRefreshIntervalMinutes: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
-        data['${effectivePrefix}auto_refresh_interval_hours'],
+        data['${effectivePrefix}auto_refresh_interval_minutes'],
       )!,
       isEnabled: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
@@ -342,6 +334,15 @@ class $CatalogProvidersTable extends CatalogProviders
   $CatalogProvidersTable createAlias(String alias) {
     return $CatalogProvidersTable(attachedDatabase, alias);
   }
+
+  static TypeConverter<SensitiveText, String> $converterusername =
+      const SensitiveTextConverter();
+  static TypeConverter<SensitiveText?, String?> $converterusernamen =
+      NullAwareTypeConverter.wrap($converterusername);
+  static TypeConverter<SensitiveText, String> $converterpassword =
+      const SensitiveTextConverter();
+  static TypeConverter<SensitiveText?, String?> $converterpasswordn =
+      NullAwareTypeConverter.wrap($converterpassword);
 }
 
 class CatalogProviderRow extends DataClass
@@ -351,13 +352,13 @@ class CatalogProviderRow extends DataClass
   final String name;
   final String source;
   final String? sourceKind;
-  final String? username;
-  final String? password;
+  final SensitiveText? username;
+  final SensitiveText? password;
   final int createdAt;
   final int updatedAt;
   final int? lastRefreshAt;
   final bool autoRefreshEnabled;
-  final int autoRefreshIntervalHours;
+  final int autoRefreshIntervalMinutes;
   final bool isEnabled;
   const CatalogProviderRow({
     required this.id,
@@ -371,7 +372,7 @@ class CatalogProviderRow extends DataClass
     required this.updatedAt,
     this.lastRefreshAt,
     required this.autoRefreshEnabled,
-    required this.autoRefreshIntervalHours,
+    required this.autoRefreshIntervalMinutes,
     required this.isEnabled,
   });
   @override
@@ -385,10 +386,14 @@ class CatalogProviderRow extends DataClass
       map['source_kind'] = Variable<String>(sourceKind);
     }
     if (!nullToAbsent || username != null) {
-      map['username'] = Variable<String>(username);
+      map['username'] = Variable<String>(
+        $CatalogProvidersTable.$converterusernamen.toSql(username),
+      );
     }
     if (!nullToAbsent || password != null) {
-      map['password'] = Variable<String>(password);
+      map['password'] = Variable<String>(
+        $CatalogProvidersTable.$converterpasswordn.toSql(password),
+      );
     }
     map['created_at'] = Variable<int>(createdAt);
     map['updated_at'] = Variable<int>(updatedAt);
@@ -396,8 +401,8 @@ class CatalogProviderRow extends DataClass
       map['last_refresh_at'] = Variable<int>(lastRefreshAt);
     }
     map['auto_refresh_enabled'] = Variable<bool>(autoRefreshEnabled);
-    map['auto_refresh_interval_hours'] = Variable<int>(
-      autoRefreshIntervalHours,
+    map['auto_refresh_interval_minutes'] = Variable<int>(
+      autoRefreshIntervalMinutes,
     );
     map['is_enabled'] = Variable<bool>(isEnabled);
     return map;
@@ -424,7 +429,7 @@ class CatalogProviderRow extends DataClass
           ? const Value.absent()
           : Value(lastRefreshAt),
       autoRefreshEnabled: Value(autoRefreshEnabled),
-      autoRefreshIntervalHours: Value(autoRefreshIntervalHours),
+      autoRefreshIntervalMinutes: Value(autoRefreshIntervalMinutes),
       isEnabled: Value(isEnabled),
     );
   }
@@ -440,14 +445,14 @@ class CatalogProviderRow extends DataClass
       name: serializer.fromJson<String>(json['name']),
       source: serializer.fromJson<String>(json['source']),
       sourceKind: serializer.fromJson<String?>(json['sourceKind']),
-      username: serializer.fromJson<String?>(json['username']),
-      password: serializer.fromJson<String?>(json['password']),
+      username: serializer.fromJson<SensitiveText?>(json['username']),
+      password: serializer.fromJson<SensitiveText?>(json['password']),
       createdAt: serializer.fromJson<int>(json['createdAt']),
       updatedAt: serializer.fromJson<int>(json['updatedAt']),
       lastRefreshAt: serializer.fromJson<int?>(json['lastRefreshAt']),
       autoRefreshEnabled: serializer.fromJson<bool>(json['autoRefreshEnabled']),
-      autoRefreshIntervalHours: serializer.fromJson<int>(
-        json['autoRefreshIntervalHours'],
+      autoRefreshIntervalMinutes: serializer.fromJson<int>(
+        json['autoRefreshIntervalMinutes'],
       ),
       isEnabled: serializer.fromJson<bool>(json['isEnabled']),
     );
@@ -461,14 +466,14 @@ class CatalogProviderRow extends DataClass
       'name': serializer.toJson<String>(name),
       'source': serializer.toJson<String>(source),
       'sourceKind': serializer.toJson<String?>(sourceKind),
-      'username': serializer.toJson<String?>(username),
-      'password': serializer.toJson<String?>(password),
+      'username': serializer.toJson<SensitiveText?>(username),
+      'password': serializer.toJson<SensitiveText?>(password),
       'createdAt': serializer.toJson<int>(createdAt),
       'updatedAt': serializer.toJson<int>(updatedAt),
       'lastRefreshAt': serializer.toJson<int?>(lastRefreshAt),
       'autoRefreshEnabled': serializer.toJson<bool>(autoRefreshEnabled),
-      'autoRefreshIntervalHours': serializer.toJson<int>(
-        autoRefreshIntervalHours,
+      'autoRefreshIntervalMinutes': serializer.toJson<int>(
+        autoRefreshIntervalMinutes,
       ),
       'isEnabled': serializer.toJson<bool>(isEnabled),
     };
@@ -480,13 +485,13 @@ class CatalogProviderRow extends DataClass
     String? name,
     String? source,
     Value<String?> sourceKind = const Value.absent(),
-    Value<String?> username = const Value.absent(),
-    Value<String?> password = const Value.absent(),
+    Value<SensitiveText?> username = const Value.absent(),
+    Value<SensitiveText?> password = const Value.absent(),
     int? createdAt,
     int? updatedAt,
     Value<int?> lastRefreshAt = const Value.absent(),
     bool? autoRefreshEnabled,
-    int? autoRefreshIntervalHours,
+    int? autoRefreshIntervalMinutes,
     bool? isEnabled,
   }) => CatalogProviderRow(
     id: id ?? this.id,
@@ -502,8 +507,8 @@ class CatalogProviderRow extends DataClass
         ? lastRefreshAt.value
         : this.lastRefreshAt,
     autoRefreshEnabled: autoRefreshEnabled ?? this.autoRefreshEnabled,
-    autoRefreshIntervalHours:
-        autoRefreshIntervalHours ?? this.autoRefreshIntervalHours,
+    autoRefreshIntervalMinutes:
+        autoRefreshIntervalMinutes ?? this.autoRefreshIntervalMinutes,
     isEnabled: isEnabled ?? this.isEnabled,
   );
   CatalogProviderRow copyWithCompanion(CatalogProvidersCompanion data) {
@@ -525,9 +530,9 @@ class CatalogProviderRow extends DataClass
       autoRefreshEnabled: data.autoRefreshEnabled.present
           ? data.autoRefreshEnabled.value
           : this.autoRefreshEnabled,
-      autoRefreshIntervalHours: data.autoRefreshIntervalHours.present
-          ? data.autoRefreshIntervalHours.value
-          : this.autoRefreshIntervalHours,
+      autoRefreshIntervalMinutes: data.autoRefreshIntervalMinutes.present
+          ? data.autoRefreshIntervalMinutes.value
+          : this.autoRefreshIntervalMinutes,
       isEnabled: data.isEnabled.present ? data.isEnabled.value : this.isEnabled,
     );
   }
@@ -546,7 +551,7 @@ class CatalogProviderRow extends DataClass
           ..write('updatedAt: $updatedAt, ')
           ..write('lastRefreshAt: $lastRefreshAt, ')
           ..write('autoRefreshEnabled: $autoRefreshEnabled, ')
-          ..write('autoRefreshIntervalHours: $autoRefreshIntervalHours, ')
+          ..write('autoRefreshIntervalMinutes: $autoRefreshIntervalMinutes, ')
           ..write('isEnabled: $isEnabled')
           ..write(')'))
         .toString();
@@ -565,7 +570,7 @@ class CatalogProviderRow extends DataClass
     updatedAt,
     lastRefreshAt,
     autoRefreshEnabled,
-    autoRefreshIntervalHours,
+    autoRefreshIntervalMinutes,
     isEnabled,
   );
   @override
@@ -583,7 +588,7 @@ class CatalogProviderRow extends DataClass
           other.updatedAt == this.updatedAt &&
           other.lastRefreshAt == this.lastRefreshAt &&
           other.autoRefreshEnabled == this.autoRefreshEnabled &&
-          other.autoRefreshIntervalHours == this.autoRefreshIntervalHours &&
+          other.autoRefreshIntervalMinutes == this.autoRefreshIntervalMinutes &&
           other.isEnabled == this.isEnabled);
 }
 
@@ -593,13 +598,13 @@ class CatalogProvidersCompanion extends UpdateCompanion<CatalogProviderRow> {
   final Value<String> name;
   final Value<String> source;
   final Value<String?> sourceKind;
-  final Value<String?> username;
-  final Value<String?> password;
+  final Value<SensitiveText?> username;
+  final Value<SensitiveText?> password;
   final Value<int> createdAt;
   final Value<int> updatedAt;
   final Value<int?> lastRefreshAt;
   final Value<bool> autoRefreshEnabled;
-  final Value<int> autoRefreshIntervalHours;
+  final Value<int> autoRefreshIntervalMinutes;
   final Value<bool> isEnabled;
   final Value<int> rowid;
   const CatalogProvidersCompanion({
@@ -614,7 +619,7 @@ class CatalogProvidersCompanion extends UpdateCompanion<CatalogProviderRow> {
     this.updatedAt = const Value.absent(),
     this.lastRefreshAt = const Value.absent(),
     this.autoRefreshEnabled = const Value.absent(),
-    this.autoRefreshIntervalHours = const Value.absent(),
+    this.autoRefreshIntervalMinutes = const Value.absent(),
     this.isEnabled = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -630,7 +635,7 @@ class CatalogProvidersCompanion extends UpdateCompanion<CatalogProviderRow> {
     this.updatedAt = const Value.absent(),
     this.lastRefreshAt = const Value.absent(),
     this.autoRefreshEnabled = const Value.absent(),
-    this.autoRefreshIntervalHours = const Value.absent(),
+    this.autoRefreshIntervalMinutes = const Value.absent(),
     this.isEnabled = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
@@ -649,7 +654,7 @@ class CatalogProvidersCompanion extends UpdateCompanion<CatalogProviderRow> {
     Expression<int>? updatedAt,
     Expression<int>? lastRefreshAt,
     Expression<bool>? autoRefreshEnabled,
-    Expression<int>? autoRefreshIntervalHours,
+    Expression<int>? autoRefreshIntervalMinutes,
     Expression<bool>? isEnabled,
     Expression<int>? rowid,
   }) {
@@ -666,8 +671,8 @@ class CatalogProvidersCompanion extends UpdateCompanion<CatalogProviderRow> {
       if (lastRefreshAt != null) 'last_refresh_at': lastRefreshAt,
       if (autoRefreshEnabled != null)
         'auto_refresh_enabled': autoRefreshEnabled,
-      if (autoRefreshIntervalHours != null)
-        'auto_refresh_interval_hours': autoRefreshIntervalHours,
+      if (autoRefreshIntervalMinutes != null)
+        'auto_refresh_interval_minutes': autoRefreshIntervalMinutes,
       if (isEnabled != null) 'is_enabled': isEnabled,
       if (rowid != null) 'rowid': rowid,
     });
@@ -679,13 +684,13 @@ class CatalogProvidersCompanion extends UpdateCompanion<CatalogProviderRow> {
     Value<String>? name,
     Value<String>? source,
     Value<String?>? sourceKind,
-    Value<String?>? username,
-    Value<String?>? password,
+    Value<SensitiveText?>? username,
+    Value<SensitiveText?>? password,
     Value<int>? createdAt,
     Value<int>? updatedAt,
     Value<int?>? lastRefreshAt,
     Value<bool>? autoRefreshEnabled,
-    Value<int>? autoRefreshIntervalHours,
+    Value<int>? autoRefreshIntervalMinutes,
     Value<bool>? isEnabled,
     Value<int>? rowid,
   }) {
@@ -701,8 +706,8 @@ class CatalogProvidersCompanion extends UpdateCompanion<CatalogProviderRow> {
       updatedAt: updatedAt ?? this.updatedAt,
       lastRefreshAt: lastRefreshAt ?? this.lastRefreshAt,
       autoRefreshEnabled: autoRefreshEnabled ?? this.autoRefreshEnabled,
-      autoRefreshIntervalHours:
-          autoRefreshIntervalHours ?? this.autoRefreshIntervalHours,
+      autoRefreshIntervalMinutes:
+          autoRefreshIntervalMinutes ?? this.autoRefreshIntervalMinutes,
       isEnabled: isEnabled ?? this.isEnabled,
       rowid: rowid ?? this.rowid,
     );
@@ -727,10 +732,14 @@ class CatalogProvidersCompanion extends UpdateCompanion<CatalogProviderRow> {
       map['source_kind'] = Variable<String>(sourceKind.value);
     }
     if (username.present) {
-      map['username'] = Variable<String>(username.value);
+      map['username'] = Variable<String>(
+        $CatalogProvidersTable.$converterusernamen.toSql(username.value),
+      );
     }
     if (password.present) {
-      map['password'] = Variable<String>(password.value);
+      map['password'] = Variable<String>(
+        $CatalogProvidersTable.$converterpasswordn.toSql(password.value),
+      );
     }
     if (createdAt.present) {
       map['created_at'] = Variable<int>(createdAt.value);
@@ -744,9 +753,9 @@ class CatalogProvidersCompanion extends UpdateCompanion<CatalogProviderRow> {
     if (autoRefreshEnabled.present) {
       map['auto_refresh_enabled'] = Variable<bool>(autoRefreshEnabled.value);
     }
-    if (autoRefreshIntervalHours.present) {
-      map['auto_refresh_interval_hours'] = Variable<int>(
-        autoRefreshIntervalHours.value,
+    if (autoRefreshIntervalMinutes.present) {
+      map['auto_refresh_interval_minutes'] = Variable<int>(
+        autoRefreshIntervalMinutes.value,
       );
     }
     if (isEnabled.present) {
@@ -772,7 +781,7 @@ class CatalogProvidersCompanion extends UpdateCompanion<CatalogProviderRow> {
           ..write('updatedAt: $updatedAt, ')
           ..write('lastRefreshAt: $lastRefreshAt, ')
           ..write('autoRefreshEnabled: $autoRefreshEnabled, ')
-          ..write('autoRefreshIntervalHours: $autoRefreshIntervalHours, ')
+          ..write('autoRefreshIntervalMinutes: $autoRefreshIntervalMinutes, ')
           ..write('isEnabled: $isEnabled, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -8453,13 +8462,13 @@ typedef $$CatalogProvidersTableCreateCompanionBuilder =
       required String name,
       required String source,
       Value<String?> sourceKind,
-      Value<String?> username,
-      Value<String?> password,
+      Value<SensitiveText?> username,
+      Value<SensitiveText?> password,
       Value<int> createdAt,
       Value<int> updatedAt,
       Value<int?> lastRefreshAt,
       Value<bool> autoRefreshEnabled,
-      Value<int> autoRefreshIntervalHours,
+      Value<int> autoRefreshIntervalMinutes,
       Value<bool> isEnabled,
       Value<int> rowid,
     });
@@ -8470,13 +8479,13 @@ typedef $$CatalogProvidersTableUpdateCompanionBuilder =
       Value<String> name,
       Value<String> source,
       Value<String?> sourceKind,
-      Value<String?> username,
-      Value<String?> password,
+      Value<SensitiveText?> username,
+      Value<SensitiveText?> password,
       Value<int> createdAt,
       Value<int> updatedAt,
       Value<int?> lastRefreshAt,
       Value<bool> autoRefreshEnabled,
-      Value<int> autoRefreshIntervalHours,
+      Value<int> autoRefreshIntervalMinutes,
       Value<bool> isEnabled,
       Value<int> rowid,
     });
@@ -8779,14 +8788,16 @@ class $$CatalogProvidersTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<String> get username => $composableBuilder(
+  ColumnWithTypeConverterFilters<SensitiveText?, SensitiveText, String>
+  get username => $composableBuilder(
     column: $table.username,
-    builder: (column) => ColumnFilters(column),
+    builder: (column) => ColumnWithTypeConverterFilters(column),
   );
 
-  ColumnFilters<String> get password => $composableBuilder(
+  ColumnWithTypeConverterFilters<SensitiveText?, SensitiveText, String>
+  get password => $composableBuilder(
     column: $table.password,
-    builder: (column) => ColumnFilters(column),
+    builder: (column) => ColumnWithTypeConverterFilters(column),
   );
 
   ColumnFilters<int> get createdAt => $composableBuilder(
@@ -8809,8 +8820,8 @@ class $$CatalogProvidersTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<int> get autoRefreshIntervalHours => $composableBuilder(
-    column: $table.autoRefreshIntervalHours,
+  ColumnFilters<int> get autoRefreshIntervalMinutes => $composableBuilder(
+    column: $table.autoRefreshIntervalMinutes,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -9159,8 +9170,8 @@ class $$CatalogProvidersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<int> get autoRefreshIntervalHours => $composableBuilder(
-    column: $table.autoRefreshIntervalHours,
+  ColumnOrderings<int> get autoRefreshIntervalMinutes => $composableBuilder(
+    column: $table.autoRefreshIntervalMinutes,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -9196,10 +9207,10 @@ class $$CatalogProvidersTableAnnotationComposer
     builder: (column) => column,
   );
 
-  GeneratedColumn<String> get username =>
+  GeneratedColumnWithTypeConverter<SensitiveText?, String> get username =>
       $composableBuilder(column: $table.username, builder: (column) => column);
 
-  GeneratedColumn<String> get password =>
+  GeneratedColumnWithTypeConverter<SensitiveText?, String> get password =>
       $composableBuilder(column: $table.password, builder: (column) => column);
 
   GeneratedColumn<int> get createdAt =>
@@ -9218,8 +9229,8 @@ class $$CatalogProvidersTableAnnotationComposer
     builder: (column) => column,
   );
 
-  GeneratedColumn<int> get autoRefreshIntervalHours => $composableBuilder(
-    column: $table.autoRefreshIntervalHours,
+  GeneratedColumn<int> get autoRefreshIntervalMinutes => $composableBuilder(
+    column: $table.autoRefreshIntervalMinutes,
     builder: (column) => column,
   );
 
@@ -9552,13 +9563,13 @@ class $$CatalogProvidersTableTableManager
                 Value<String> name = const Value.absent(),
                 Value<String> source = const Value.absent(),
                 Value<String?> sourceKind = const Value.absent(),
-                Value<String?> username = const Value.absent(),
-                Value<String?> password = const Value.absent(),
+                Value<SensitiveText?> username = const Value.absent(),
+                Value<SensitiveText?> password = const Value.absent(),
                 Value<int> createdAt = const Value.absent(),
                 Value<int> updatedAt = const Value.absent(),
                 Value<int?> lastRefreshAt = const Value.absent(),
                 Value<bool> autoRefreshEnabled = const Value.absent(),
-                Value<int> autoRefreshIntervalHours = const Value.absent(),
+                Value<int> autoRefreshIntervalMinutes = const Value.absent(),
                 Value<bool> isEnabled = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => CatalogProvidersCompanion(
@@ -9573,7 +9584,7 @@ class $$CatalogProvidersTableTableManager
                 updatedAt: updatedAt,
                 lastRefreshAt: lastRefreshAt,
                 autoRefreshEnabled: autoRefreshEnabled,
-                autoRefreshIntervalHours: autoRefreshIntervalHours,
+                autoRefreshIntervalMinutes: autoRefreshIntervalMinutes,
                 isEnabled: isEnabled,
                 rowid: rowid,
               ),
@@ -9584,13 +9595,13 @@ class $$CatalogProvidersTableTableManager
                 required String name,
                 required String source,
                 Value<String?> sourceKind = const Value.absent(),
-                Value<String?> username = const Value.absent(),
-                Value<String?> password = const Value.absent(),
+                Value<SensitiveText?> username = const Value.absent(),
+                Value<SensitiveText?> password = const Value.absent(),
                 Value<int> createdAt = const Value.absent(),
                 Value<int> updatedAt = const Value.absent(),
                 Value<int?> lastRefreshAt = const Value.absent(),
                 Value<bool> autoRefreshEnabled = const Value.absent(),
-                Value<int> autoRefreshIntervalHours = const Value.absent(),
+                Value<int> autoRefreshIntervalMinutes = const Value.absent(),
                 Value<bool> isEnabled = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => CatalogProvidersCompanion.insert(
@@ -9605,7 +9616,7 @@ class $$CatalogProvidersTableTableManager
                 updatedAt: updatedAt,
                 lastRefreshAt: lastRefreshAt,
                 autoRefreshEnabled: autoRefreshEnabled,
-                autoRefreshIntervalHours: autoRefreshIntervalHours,
+                autoRefreshIntervalMinutes: autoRefreshIntervalMinutes,
                 isEnabled: isEnabled,
                 rowid: rowid,
               ),

@@ -40,13 +40,13 @@ class CatalogRepository {
       name: input.name.trim(),
       source: input.source.trim(),
       sourceKind: Value(input.sourceKind),
-      username: Value(input.username),
-      password: Value(input.password),
+      username: Value(_sensitive(input.username)),
+      password: Value(_sensitive(input.password)),
       createdAt: Value(existing?.createdAtMs ?? now),
       updatedAt: Value(now),
       lastRefreshAt: Value(existing?.lastRefreshAtMs),
       autoRefreshEnabled: Value(input.autoRefreshEnabled),
-      autoRefreshIntervalHours: Value(input.autoRefreshIntervalHours),
+      autoRefreshIntervalMinutes: Value(input.autoRefreshIntervalMinutes),
       isEnabled: Value(input.isEnabled),
     );
 
@@ -64,13 +64,15 @@ class CatalogRepository {
             name: provider.name,
             source: provider.source,
             sourceKind: Value(provider.sourceKind),
-            username: Value(provider.username),
-            password: Value(provider.password),
+            username: Value(_sensitive(provider.username)),
+            password: Value(_sensitive(provider.password)),
             createdAt: Value(provider.createdAtMs),
             updatedAt: Value(provider.updatedAtMs),
             lastRefreshAt: Value(provider.lastRefreshAtMs),
             autoRefreshEnabled: Value(provider.autoRefreshEnabled),
-            autoRefreshIntervalHours: Value(provider.autoRefreshIntervalHours),
+            autoRefreshIntervalMinutes: Value(
+              provider.autoRefreshIntervalMinutes,
+            ),
             isEnabled: Value(provider.isEnabled),
           ),
         );
@@ -831,15 +833,20 @@ CatalogProvider _toProvider(CatalogProviderRow row) {
     name: row.name,
     source: row.source,
     sourceKind: row.sourceKind,
-    username: row.username,
-    password: row.password,
+    username: row.username?.value,
+    password: row.password?.value,
     createdAtMs: row.createdAt,
     updatedAtMs: row.updatedAt,
     lastRefreshAtMs: row.lastRefreshAt,
     autoRefreshEnabled: row.autoRefreshEnabled,
-    autoRefreshIntervalHours: row.autoRefreshIntervalHours,
+    autoRefreshIntervalMinutes: row.autoRefreshIntervalMinutes,
     isEnabled: row.isEnabled,
   );
+}
+
+SensitiveText? _sensitive(String? value) {
+  final clean = value?.trim();
+  return clean == null || clean.isEmpty ? null : SensitiveText(clean);
 }
 
 ProviderRefreshRun _toRefreshRun(ProviderRefreshRunRow row) {
