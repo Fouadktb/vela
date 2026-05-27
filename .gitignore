@@ -1,5 +1,11 @@
 .superpowers/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.idea/
+*.iml
 node_modules/
+build/
 dist/
 dist-electron/
 out/
