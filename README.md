@@ -2,7 +2,7 @@
 
 Vela is a private desktop IPTV player for macOS and Windows. The app is being migrated to Flutter with an embedded `media_kit` video surface, local catalog storage, provider import, and watch continuity.
 
-This repository is intended for private distribution for now. Release artifacts are built by GitHub Actions from version tags and published on GitHub Releases.
+This repository is intended for private distribution for now. Release artifacts are built locally on each target operating system and uploaded manually to GitHub Releases.
 
 ## Flutter Setup
 
@@ -61,14 +61,20 @@ Create a Windows zip for GitHub upload on Windows:
 .\scripts\package-windows.ps1
 ```
 
-## GitHub Artifact Builds
+## Manual Release Upload
 
-The `Build Vela Artifacts` workflow can be run manually from GitHub Actions. It builds native macOS and Windows zips on their matching runners and uploads them as workflow artifacts.
+Flutter desktop apps are built on the target operating system. Build macOS on macOS, build Windows on Windows, then upload the zips to the GitHub Release.
 
-Pushing a version tag such as `v0.2.0` builds both platforms and publishes a GitHub Release with:
+Expected release assets:
 
 - `vela-macos-vX.Y.Z.zip`
 - `vela-windows-vX.Y.Z.zip`
 - `SHA256SUMS-vX.Y.Z.txt`
+
+Example upload:
+
+```bash
+gh release upload vX.Y.Z release/vela-macos-vX.Y.Z.zip release/SHA256SUMS-vX.Y.Z.txt --clobber
+```
 
 Installer and DMG polish is intentionally deferred until the playable Flutter app has been validated on both macOS and Windows.
