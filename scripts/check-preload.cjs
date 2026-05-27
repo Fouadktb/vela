@@ -46,7 +46,9 @@ if (
   !iptvApi?.catalog?.listSeries ||
   !iptvApi?.catalog?.listEpisodesForSeries ||
   !iptvApi?.catalog?.listRecentlyWatched ||
-  !iptvApi?.playback?.resolve
+  !iptvApi?.playback?.play ||
+  !iptvApi?.playback?.getState ||
+  !iptvApi?.playback?.onState
 ) {
   throw new Error("Electron preload did not expose the expected iptv API");
 }

@@ -27,11 +27,12 @@ describe("mpv playback helpers", () => {
         "--no-config",
         "--player-operation-mode=pseudo-gui",
         "--force-window=immediate",
+        "--fs=yes",
         "--border=no",
-        "--geometry=82%x82%",
         "--hwdec=auto-safe",
-        "--osc=yes",
-        "--osd-on-seek=msg-bar",
+        "--osc=no",
+        "--osd-level=0",
+        "--input-default-bindings=no",
         "--input-ipc-server=/tmp/iptv-player-mpv.sock",
         "--title=BBC One"
       ])
@@ -39,7 +40,7 @@ describe("mpv playback helpers", () => {
     expect(args.at(-1)).toBe("https://example.test/live.m3u8");
   });
 
-  it("styles mpv's OSC and OSD for the app player", () => {
+  it("disables mpv's own UI because Vela renders the theater controls", () => {
     const args = buildMpvArgs({
       ipcPath: "/tmp/iptv-player-mpv.sock",
       url: "https://example.test/live.m3u8",
@@ -47,11 +48,10 @@ describe("mpv playback helpers", () => {
       platform: "linux"
     });
 
-    expect(args).toContain(
-      "--script-opts=osc-layout=box,osc-seekbarstyle=bar,osc-deadzonesize=0,osc-minmousemove=3,osc-hidetimeout=950,osc-fadeduration=180,osc-boxalpha=55,osc-barmargin=18,osc-scalewindowed=1.16,osc-scalefullscreen=1.24,osc-valign=0.92,osc-halign=0.5"
-    );
-    expect(args).toContain("--osd-selected-color=#FFD8F271");
-    expect(args).toContain("--osd-bar-align-y=0.92");
+    expect(args).toContain("--osc=no");
+    expect(args).toContain("--osd-level=0");
+    expect(args).toContain("--input-default-bindings=no");
+    expect(args.some((arg) => arg.startsWith("--script-opts=osc-"))).toBe(false);
   });
 
   it("adds macOS player-window material options only on macOS", () => {
@@ -68,7 +68,8 @@ describe("mpv playback helpers", () => {
       platform: "win32"
     });
 
-    expect(macArgs).toContain("--macos-title-bar-material=hudWindow");
+    expect(macArgs).toContain("--macos-app-activation-policy=accessory");
+    expect(macArgs).toContain("--focus-on=never");
     expect(windowsArgs.some((arg) => arg.startsWith("--macos-"))).toBe(false);
   });
 

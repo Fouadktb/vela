@@ -10,6 +10,11 @@ import type { createCatalogRepository } from "../storage/catalogRepository.js";
 interface CreateMpvControllerOptions {
   catalogRepository: ReturnType<typeof createCatalogRepository>;
   onStateChange(state: PlaybackState): void;
+  playerWindow?: {
+    open(): void;
+    raise(): void;
+    close(): void;
+  };
 }
 
 interface BuildMpvArgsInput {
@@ -46,6 +51,7 @@ interface MpvRawTrack {
 
 const maxDiagnosticLength = 300;
 const mpvIpcCommandTimeoutMs = 1_500;
+const mpvStatePollIntervalMs = 1_000;
 const secretQueryKeys = [
   "password",
   "pass",
@@ -71,20 +77,19 @@ export function buildMpvArgs({ ipcPath, url, title, platform = process.platform 
     "--no-config",
     "--player-operation-mode=pseudo-gui",
     "--force-window=immediate",
+    "--fs=yes",
     "--idle=no",
     "--keep-open=no",
     "--terminal=no",
     "--term-osd=no",
     "--input-terminal=no",
+    "--input-default-bindings=no",
     "--cursor-autohide=700",
     "--cursor-autohide-fs-only=no",
     "--force-window-position=yes",
-    "--geometry=82%x82%",
-    "--autofit-larger=92%x92%",
     "--background=color",
     "--background-color=#FF0D0C0A",
     "--border=no",
-    "--snap-window=yes",
     "--stop-screensaver=always",
     "--hwdec=auto-safe",
     "--profile=fast",
@@ -96,15 +101,8 @@ export function buildMpvArgs({ ipcPath, url, title, platform = process.platform 
     "--network-timeout=15",
     "--hls-bitrate=max",
     "--audio-display=no",
-    "--osc=yes",
-    `--script-opts=${buildOscScriptOptions()}`,
-    "--osd-level=1",
-    "--osd-on-seek=msg-bar",
-    "--osd-duration=850",
-    "--osd-bar-align-y=0.92",
-    "--osd-bar-w=88",
-    "--osd-bar-h=2.2",
-    "--osd-bar-outline-size=0",
+    "--osc=no",
+    "--osd-level=0",
     "--osd-font=sans-serif",
     "--osd-font-size=28",
     "--osd-color=#FFF4ECD7",
@@ -212,6 +210,7 @@ export function toPlaybackTrackState(
 export function createMpvController(options: CreateMpvControllerOptions) {
   let processRef: ChildProcessWithoutNullStreams | null = null;
   let currentIpcPath: string | null = null;
+  let statePollTimer: NodeJS.Timeout | null = null;
   let state: PlaybackState = createIdleState();
   let nextIpcRequestId = 1;
 
@@ -330,16 +329,58 @@ export function createMpvController(options: CreateMpvControllerOptions) {
     }
   };
 
-  const terminateProcess = (): void => {
+  const stopStatePolling = (): void => {
+    if (statePollTimer) {
+      clearInterval(statePollTimer);
+      statePollTimer = null;
+    }
+  };
+
+  const startStatePolling = (): void => {
+    stopStatePolling();
+    statePollTimer = setInterval(() => {
+      void refreshPlaybackMetrics();
+    }, mpvStatePollIntervalMs);
+  };
+
+  const refreshPlaybackMetrics = async (): Promise<void> => {
+    if (!processRef || processRef.killed || !currentIpcPath || state.status === "idle" || state.status === "error") {
+      return;
+    }
+
+    try {
+      const [position, duration, paused] = await Promise.all([
+        sendCommandWithResponse<unknown>(["get_property", "time-pos"]),
+        sendCommandWithResponse<unknown>(["get_property", "duration"]),
+        sendCommandWithResponse<unknown>(["get_property", "pause"])
+      ]);
+      setState({
+        status: paused === true ? "paused" : "playing",
+        positionSeconds: toFiniteSeconds(position) ?? 0,
+        durationSeconds: state.isSeekable ? toFiniteSeconds(duration) : null
+      });
+    } catch {
+      // Metrics are best-effort. The player process remains authoritative for lifecycle errors.
+    }
+  };
+
+  const terminateProcess = (input: { closePlayerWindow?: boolean } = {}): void => {
+    stopStatePolling();
     if (!processRef || processRef.killed) {
       processRef = null;
       currentIpcPath = null;
+      if (input.closePlayerWindow !== false) {
+        options.playerWindow?.close();
+      }
       return;
     }
     processRef.removeAllListeners();
     processRef.kill();
     processRef = null;
     currentIpcPath = null;
+    if (input.closePlayerWindow !== false) {
+      options.playerWindow?.close();
+    }
   };
 
   const play = async (request: PlayRequest): Promise<void> => {
@@ -364,7 +405,8 @@ export function createMpvController(options: CreateMpvControllerOptions) {
           ? `S${item.seasonNumber} E${item.episodeNumber} ${item.title}`
           : item.title;
 
-    terminateProcess();
+    terminateProcess({ closePlayerWindow: false });
+    options.playerWindow?.open();
     setState({
       status: "loading",
       itemId: item.id,
@@ -411,6 +453,9 @@ export function createMpvController(options: CreateMpvControllerOptions) {
       options.catalogRepository.markRecentlyWatched(item.id, itemType);
       setState({ status: "playing" });
       setTimeout(() => void refreshTrackState(), 350);
+      setTimeout(() => void refreshPlaybackMetrics(), 500);
+      setTimeout(() => options.playerWindow?.raise(), 650);
+      startStatePolling();
     });
 
     mpvProcess.once("error", (error) => {
@@ -418,6 +463,7 @@ export function createMpvController(options: CreateMpvControllerOptions) {
         processRef = null;
         currentIpcPath = null;
       }
+      stopStatePolling();
       setState({
         status: "error",
         errorMessage: "mpv failed to start. Check that the bundled player is available."
@@ -429,12 +475,14 @@ export function createMpvController(options: CreateMpvControllerOptions) {
         processRef = null;
         currentIpcPath = null;
       }
+      stopStatePolling();
       if (state.status !== "error" && state.status !== "idle") {
         setState({
           status: code === 0 || signal === "SIGTERM" ? "idle" : "error",
           errorMessage: code === 0 || signal === "SIGTERM" ? null : "mpv exited unexpectedly."
         });
       }
+      options.playerWindow?.close();
     });
   };
 
@@ -457,6 +505,7 @@ export function createMpvController(options: CreateMpvControllerOptions) {
     async seek(request: SeekRequest): Promise<void> {
       if (state.isSeekable) {
         await sendCommand(["seek", request.offsetSeconds, "relative"]);
+        await refreshPlaybackMetrics();
       }
     },
     async selectAudioTrack(trackId: number): Promise<void> {
@@ -537,21 +586,12 @@ function toTrackTitle(rawTitle: unknown, language: string | null, trackType: Pla
   return trackType === "audio" ? `Audio ${id}` : `Subtitle ${id}`;
 }
 
-function buildOscScriptOptions(): string {
-  return [
-    "osc-layout=box",
-    "osc-seekbarstyle=bar",
-    "osc-deadzonesize=0",
-    "osc-minmousemove=3",
-    "osc-hidetimeout=950",
-    "osc-fadeduration=180",
-    "osc-boxalpha=55",
-    "osc-barmargin=18",
-    "osc-scalewindowed=1.16",
-    "osc-scalefullscreen=1.24",
-    "osc-valign=0.92",
-    "osc-halign=0.5"
-  ].join(",");
+function toFiniteSeconds(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+
+  return value;
 }
 
 function buildPlatformMpvArgs(platform: NodeJS.Platform): string[] {
@@ -564,7 +604,9 @@ function buildPlatformMpvArgs(platform: NodeJS.Platform): string[] {
     "--macos-title-bar-material=hudWindow",
     "--macos-title-bar-color=#2212100D",
     "--macos-fs-animation-duration=160",
-    "--macos-geometry-calculation=visible"
+    "--macos-geometry-calculation=visible",
+    "--macos-app-activation-policy=accessory",
+    "--focus-on=never"
   ];
 }
 

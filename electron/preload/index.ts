@@ -38,7 +38,6 @@ const api: IptvApi = {
   },
   playback: {
     play: (request) => ipcRenderer.invoke(ipcChannels.playbackPlay, request),
-    resolve: (request) => ipcRenderer.invoke(ipcChannels.playbackResolve, request),
     pause: () => ipcRenderer.invoke(ipcChannels.playbackPause),
     stop: () => ipcRenderer.invoke(ipcChannels.playbackStop),
     seek: (request) => ipcRenderer.invoke(ipcChannels.playbackSeek, request),

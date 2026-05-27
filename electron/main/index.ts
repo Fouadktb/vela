@@ -15,6 +15,7 @@ import { createCatalogRepository } from "./storage/catalogRepository.js";
 import { openAppDatabase } from "./storage/database.js";
 import { createProviderRepository } from "./storage/providerRepository.js";
 import { createMainWindow } from "./windows/createMainWindow.js";
+import { createPlayerOverlayWindowController } from "./windows/playerOverlayWindow.js";
 
 app.setName("Vela");
 app.setPath("userData", path.join(app.getPath("appData"), "IPTV Player"));
@@ -34,7 +35,8 @@ async function boot(): Promise<void> {
   };
   const mpvController = createMpvController({
     catalogRepository,
-    onStateChange: (state) => emitToRenderer(ipcChannels.playbackState, state)
+    onStateChange: (state) => emitToRenderer(ipcChannels.playbackState, state),
+    playerWindow: createPlayerOverlayWindowController()
   });
 
   createMainWindow();

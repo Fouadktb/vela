@@ -45,7 +45,6 @@ const unavailableIptvApi: IptvApi = {
   },
   playback: {
     play: unavailable,
-    resolve: unavailable,
     pause: unavailable,
     stop: unavailable,
     seek: unavailable,

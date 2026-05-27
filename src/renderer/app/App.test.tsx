@@ -41,7 +41,6 @@ const mockApi = vi.hoisted(() => ({
   },
   playback: {
     play: vi.fn(),
-    resolve: vi.fn(),
     pause: vi.fn(),
     stop: vi.fn(),
     seek: vi.fn(),
@@ -208,14 +207,6 @@ describe("App catalog navigation", () => {
       autoRefreshEnabled: false
     });
     mockApi.playback.play.mockResolvedValue(undefined);
-    mockApi.playback.resolve.mockImplementation(async (request) => ({
-      itemId: request.itemId,
-      itemType: request.itemType,
-      title: "Resolved playback",
-      url: "http://example.test/video.mkv",
-      isLive: request.itemType === "live",
-      preferredEngine: "fallback"
-    }));
     mockApi.playback.getState.mockResolvedValue(idlePlaybackState);
     mockApi.playback.onState.mockReturnValue(vi.fn());
   });

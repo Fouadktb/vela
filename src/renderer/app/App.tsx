@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CategoryContentType, CategoryView, EpisodeView, LiveProgramView } from "../../shared/catalog/types";
 import { Sidebar, type AppSection } from "../components/Sidebar";
 import { SearchBar } from "../components/SearchBar";
 import { CategoryRail } from "../features/catalog/CategoryRail";
 import { CatalogDetailPane } from "../features/catalog/CatalogDetailPane";
 import { CatalogGrid, type CatalogCardItem } from "../features/catalog/CatalogGrid";
-import { InAppPlayer } from "../features/playback/InAppPlayer";
+import { PlaybackLauncher } from "../features/playback/PlaybackLauncher";
 import { ProviderSetup } from "../features/providers/ProviderSetup";
 import { ProviderSettings } from "../features/providers/ProviderSettings";
 import { iptvApi } from "./api";
@@ -29,6 +29,7 @@ export function App() {
   const [episodes, setEpisodes] = useState<EpisodeView[]>([]);
   const [livePrograms, setLivePrograms] = useState<LiveProgramView[]>([]);
   const [playbackRequest, setPlaybackRequest] = useState<PlayRequest | null>(null);
+  const clearPlaybackRequest = useCallback(() => setPlaybackRequest(null), []);
   const [isLoadingEpisodes, setIsLoadingEpisodes] = useState(false);
   const [isLoadingPrograms, setIsLoadingPrograms] = useState(false);
   const items = useMemo(() => buildCatalogItems(data), [data]);
@@ -235,7 +236,7 @@ export function App() {
           </>
         )}
       </section>
-      <InAppPlayer request={playbackRequest} onClose={() => setPlaybackRequest(null)} />
+      <PlaybackLauncher request={playbackRequest} onConsumed={clearPlaybackRequest} />
     </main>
   );
 }

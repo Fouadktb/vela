@@ -892,58 +892,35 @@ img {
   line-height: 1.35;
 }
 
-.in-app-player {
+html.player-overlay-root,
+html.player-overlay-root body,
+html.player-overlay-root #root {
+  min-width: 0;
+  min-height: 100%;
+  background: transparent;
+}
+
+.player-overlay-shell {
   position: fixed;
   inset: 0;
-  z-index: 18;
-  display: grid;
-  place-items: center;
-  background: #050504;
-}
-
-.in-app-video {
-  width: 100%;
-  height: 100%;
-  background: #050504;
-  object-fit: contain;
-}
-
-.fallback-player {
-  position: fixed;
-  inset: 0;
-  z-index: 18;
-  display: grid;
-  place-items: center;
-  background:
-    radial-gradient(circle at 50% 30%, rgba(220, 232, 166, 0.12), transparent 34%),
-    #050504;
-  color: #f8f3e6;
-}
-
-.fallback-player-copy {
-  max-width: min(680px, calc(100vw - 60px));
-  display: grid;
-  gap: 10px;
-  text-align: center;
-}
-
-.fallback-player-copy span {
-  color: #c9c5b8;
-  font-size: 12px;
-  font-weight: 900;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.fallback-player-copy strong {
+  z-index: 1;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: clamp(26px, 5vw, 54px);
-  line-height: 1;
+  background:
+    radial-gradient(circle at 50% 100%, rgba(0, 0, 0, 0.48), transparent 46%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.1), transparent 34%, rgba(0, 0, 0, 0.62));
+  color: #f8f3e6;
+  user-select: none;
 }
 
-.in-app-player-status {
+.player-overlay-gradient {
+  position: fixed;
+  inset: auto 0 0;
+  height: 42vh;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.76));
+}
+
+.player-overlay-status {
   position: fixed;
   top: 28px;
   left: 50%;
@@ -959,7 +936,7 @@ img {
   backdrop-filter: blur(18px);
 }
 
-.in-app-player-status.error {
+.player-overlay-status.error {
   color: #ffb3ad;
 }
 
@@ -985,8 +962,10 @@ img {
   backdrop-filter: blur(20px);
 }
 
-.in-app-player .player-controls {
-  left: 30px;
+.player-overlay-shell .player-controls {
+  right: 70px;
+  bottom: 58px;
+  left: 70px;
 }
 
 .player-controls::before {
@@ -1497,6 +1476,12 @@ img {
     left: 88px;
     grid-template-columns: 1fr;
     gap: 14px;
+  }
+
+  .player-overlay-shell .player-controls {
+    right: 14px;
+    bottom: 14px;
+    left: 14px;
   }
 
   .player-controls-actions {
