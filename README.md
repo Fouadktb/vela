@@ -61,4 +61,8 @@ Create a Windows zip for GitHub upload on Windows:
 .\scripts\package-windows.ps1
 ```
 
+## GitHub Artifact Builds
+
+The `Build Vela Artifacts` workflow can be run manually from GitHub Actions. It builds native macOS and Windows zips on their matching runners and uploads them as workflow artifacts.
+
 Installer and DMG polish is intentionally deferred until the playable Flutter app has been validated on both macOS and Windows.
