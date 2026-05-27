@@ -9,6 +9,7 @@ import '../features/catalog/catalog_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../playback/playable_item.dart';
 import '../playback/vela_player_route.dart';
+import '../updates/update_checker.dart';
 import 'vela_sidebar.dart';
 
 class VelaShell extends ConsumerStatefulWidget {
@@ -34,6 +35,7 @@ class _VelaShellState extends ConsumerState<VelaShell> {
   Widget build(BuildContext context) {
     final navigation = ref.watch(navigationControllerProvider);
     final providers = ref.watch(providersProvider);
+    final updateStatus = ref.watch(updateStatusProvider).value;
     final hasProviders = providers.maybeWhen(
       data: (items) => items.any((provider) => provider.hasImportedCatalog),
       orElse: () => false,
@@ -59,6 +61,10 @@ class _VelaShellState extends ConsumerState<VelaShell> {
           VelaSidebar(
             selectedSection: effectiveSection,
             hasProviders: hasProviders,
+            updateStatus: updateStatus?.hasUpdate == true ? updateStatus : null,
+            onUpdatePressed: updateStatus?.hasUpdate == true
+                ? () => unawaited(openExternalUrl(updateStatus!.releaseUrl))
+                : null,
             onSectionSelected: (section) {
               if (!hasProviders && section != VelaSection.live) {
                 return;

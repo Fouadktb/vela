@@ -1,7 +1,7 @@
 name: vela
 description: Vela desktop IPTV player for macOS and Windows.
 publish_to: "none"
-version: 0.2.2+3
+version: 0.2.3+4
 
 environment:
   sdk: ">=3.9.0 <4.0.0"

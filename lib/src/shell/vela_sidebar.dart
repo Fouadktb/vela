@@ -3,6 +3,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app/app_version.dart';
 import '../app/section_state.dart';
+import '../updates/update_checker.dart';
 
 const double velaSidebarCollapsedWidth = 72;
 const double velaSidebarExpandedWidth = 232;
@@ -14,12 +15,16 @@ class VelaSidebar extends StatefulWidget {
     required this.selectedSection,
     required this.onSectionSelected,
     this.hasProviders = true,
+    this.updateStatus,
+    this.onUpdatePressed,
     super.key,
   });
 
   final VelaSection selectedSection;
   final ValueChanged<VelaSection> onSectionSelected;
   final bool hasProviders;
+  final UpdateStatus? updateStatus;
+  final VoidCallback? onUpdatePressed;
 
   @override
   State<VelaSidebar> createState() => _VelaSidebarState();
@@ -82,6 +87,14 @@ class _VelaSidebarState extends State<VelaSidebar> {
                     ),
                 ],
                 const Spacer(),
+                if (widget.updateStatus != null) ...[
+                  _SidebarUpdateButton(
+                    isExpanded: _isExpanded,
+                    status: widget.updateStatus!,
+                    onPressed: widget.onUpdatePressed,
+                  ),
+                  const SizedBox(height: 10),
+                ],
                 AnimatedOpacity(
                   opacity: _isExpanded ? 1 : 0,
                   duration: const Duration(milliseconds: 120),
@@ -91,6 +104,102 @@ class _VelaSidebarState extends State<VelaSidebar> {
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: const Color(0xFF716D66),
                       letterSpacing: 0,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SidebarUpdateButton extends StatelessWidget {
+  const _SidebarUpdateButton({
+    required this.isExpanded,
+    required this.status,
+    required this.onPressed,
+  });
+
+  final bool isExpanded;
+  final UpdateStatus status;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final label = 'Update ${status.latestVersion}';
+
+    return Tooltip(
+      message: 'Download $label',
+      waitDuration: const Duration(milliseconds: 350),
+      child: Material(
+        color: const Color(0xFF25211A),
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(8),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOutCubic,
+            height: 44,
+            padding: EdgeInsets.symmetric(horizontal: isExpanded ? 12 : 0),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: theme.colorScheme.primary.withValues(alpha: 0.45),
+              ),
+            ),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: isExpanded ? 28 : _sidebarIconSlotWidth,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    alignment: Alignment.center,
+                    children: [
+                      Icon(
+                        LucideIcons.download,
+                        color: theme.colorScheme.primary,
+                        size: 20,
+                      ),
+                      Positioned(
+                        right: isExpanded ? -1 : 11,
+                        top: 9,
+                        child: Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE26D5A),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: const Color(0xFF25211A),
+                              width: 1.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: AnimatedOpacity(
+                    opacity: isExpanded ? 1 : 0,
+                    duration: const Duration(milliseconds: 120),
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          color: theme.colorScheme.primary,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0,
+                        ),
+                      ),
                     ),
                   ),
                 ),
