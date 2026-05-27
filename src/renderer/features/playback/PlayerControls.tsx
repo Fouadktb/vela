@@ -15,36 +15,102 @@ interface TapSnapshot {
   timeStamp: number;
 }
 
-export function PlayerControls() {
-  const [state, setState] = useState<PlaybackState | null>(null);
+interface PlayerControlsProps {
+  state?: PlaybackState | null;
+  onPause?(): void;
+  onStop?(): void;
+  onSeek?(offsetSeconds: -10 | 10): void;
+  onSelectAudioTrack?(trackId: number): void;
+  onSelectSubtitleTrack?(trackId: number | null): void;
+}
+
+export function PlayerControls({
+  state: controlledState,
+  onPause,
+  onStop,
+  onSeek,
+  onSelectAudioTrack,
+  onSelectSubtitleTrack
+}: PlayerControlsProps = {}) {
+  const [ipcState, setIpcState] = useState<PlaybackState | null>(null);
   const [openTrackMenu, setOpenTrackMenu] = useState<"audio" | "subtitle" | null>(null);
   const lastTapRef = useRef<TapSnapshot | null>(null);
+  const isControlled = controlledState !== undefined;
+  const state = isControlled ? controlledState : ipcState;
 
   useEffect(() => {
+    if (isControlled) {
+      return;
+    }
+
     let isMounted = true;
 
     iptvApi.playback
       .getState()
       .then((nextState) => {
         if (isMounted) {
-          setState(nextState);
+          setIpcState(nextState);
         }
       })
       .catch(() => {
         if (isMounted) {
-          setState(null);
+          setIpcState(null);
         }
       });
 
     const unsubscribe = iptvApi.playback.onState((nextState) => {
-      setState(nextState);
+      setIpcState(nextState);
     });
 
     return () => {
       isMounted = false;
       unsubscribe();
     };
-  }, []);
+  }, [isControlled]);
+
+  const requestPause = () => {
+    if (onPause) {
+      onPause();
+      return;
+    }
+    void iptvApi.playback.pause();
+  };
+
+  const requestStop = () => {
+    if (onStop) {
+      onStop();
+      return;
+    }
+    void iptvApi.playback.stop();
+  };
+
+  const requestSeek = (offsetSeconds: -10 | 10) => {
+    if (!state || !canSeekPlayback(state)) {
+      return;
+    }
+
+    if (onSeek) {
+      onSeek(offsetSeconds);
+      return;
+    }
+    void iptvApi.playback.seek({ offsetSeconds });
+  };
+
+  const requestAudioTrack = (trackId: number) => {
+    if (onSelectAudioTrack) {
+      onSelectAudioTrack(trackId);
+      return;
+    }
+    void iptvApi.playback.selectAudioTrack(trackId);
+  };
+
+  const requestSubtitleTrack = (trackId: number | null) => {
+    if (onSelectSubtitleTrack) {
+      onSelectSubtitleTrack(trackId);
+      return;
+    }
+    void iptvApi.playback.selectSubtitleTrack(trackId);
+  };
 
   useEffect(() => {
     if (!state || !canSeekPlayback(state)) {
@@ -58,12 +124,12 @@ export function PlayerControls() {
 
       if (event.key === "ArrowLeft") {
         event.preventDefault();
-        void iptvApi.playback.seek({ offsetSeconds: -10 });
+        requestSeek(-10);
       }
 
       if (event.key === "ArrowRight") {
         event.preventDefault();
-        void iptvApi.playback.seek({ offsetSeconds: 10 });
+        requestSeek(10);
       }
     };
 
@@ -72,16 +138,14 @@ export function PlayerControls() {
     return () => {
       window.removeEventListener("keydown", handleWindowKeyDown);
     };
-  }, [state?.isSeekable, state?.status]);
+  }, [state?.isSeekable, state?.status, onSeek]);
 
   if (!state || state.status === "idle") {
     return null;
   }
 
   const seekBy = (offsetSeconds: -10 | 10) => {
-    if (canSeekPlayback(state)) {
-      void iptvApi.playback.seek({ offsetSeconds });
-    }
+    requestSeek(offsetSeconds);
   };
 
   const handleDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -98,7 +162,7 @@ export function PlayerControls() {
     });
 
     if (offsetSeconds !== 0) {
-      void iptvApi.playback.seek({ offsetSeconds });
+      requestSeek(offsetSeconds);
     }
   };
 
@@ -130,7 +194,7 @@ export function PlayerControls() {
     });
 
     if (offsetSeconds !== 0) {
-      void iptvApi.playback.seek({ offsetSeconds });
+      requestSeek(offsetSeconds);
     }
   };
 
@@ -197,7 +261,7 @@ export function PlayerControls() {
             disabled={!canTogglePlayPause}
             title={playPauseLabel}
             type="button"
-            onClick={() => void iptvApi.playback.pause()}
+            onClick={requestPause}
           >
             {isPlaying ? <Pause size={22} aria-hidden="true" /> : <Play size={22} aria-hidden="true" />}
           </button>
@@ -206,7 +270,7 @@ export function PlayerControls() {
             className="icon-button ghost"
             title="Stop playback"
             type="button"
-            onClick={() => void iptvApi.playback.stop()}
+            onClick={requestStop}
           >
             <Square size={18} aria-hidden="true" />
           </button>
@@ -246,7 +310,7 @@ export function PlayerControls() {
                       key={track.id}
                       onClick={() => {
                         setOpenTrackMenu(null);
-                        void iptvApi.playback.selectAudioTrack(track.id);
+                        requestAudioTrack(track.id);
                       }}
                     >
                       <span>{formatTrackTitle(track)}</span>
@@ -278,7 +342,7 @@ export function PlayerControls() {
                     aria-checked={selectedSubtitleTrack === null}
                     onClick={() => {
                       setOpenTrackMenu(null);
-                      void iptvApi.playback.selectSubtitleTrack(null);
+                      requestSubtitleTrack(null);
                     }}
                   >
                     <span>Subtitles off</span>
@@ -292,7 +356,7 @@ export function PlayerControls() {
                       key={track.id}
                       onClick={() => {
                         setOpenTrackMenu(null);
-                        void iptvApi.playback.selectSubtitleTrack(track.id);
+                        requestSubtitleTrack(track.id);
                       }}
                     >
                       <span>{formatTrackTitle(track)}</span>

@@ -8,7 +8,7 @@ import type {
   RecentlyWatchedItemView,
   SeriesView
 } from "../catalog/types.js";
-import type { PlayRequest, PlaybackState, SeekRequest } from "../playback/types.js";
+import type { PlayRequest, PlaybackState, ResolvedPlaybackSource, SeekRequest } from "../playback/types.js";
 import type {
   CreateM3uProviderInput,
   CreateXtreamProviderInput,
@@ -44,6 +44,7 @@ export interface IptvApi {
   };
   playback: {
     play(request: PlayRequest): Promise<void>;
+    resolve(request: PlayRequest): Promise<ResolvedPlaybackSource>;
     pause(): Promise<void>;
     stop(): Promise<void>;
     seek(request: SeekRequest): Promise<void>;
@@ -77,6 +78,7 @@ export const ipcChannels = {
   catalogListRecentlyWatched: "catalog:listRecentlyWatched",
   catalogToggleFavorite: "catalog:toggleFavorite",
   playbackPlay: "playback:play",
+  playbackResolve: "playback:resolve",
   playbackPause: "playback:pause",
   playbackStop: "playback:stop",
   playbackSeek: "playback:seek",

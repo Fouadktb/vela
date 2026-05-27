@@ -5,11 +5,12 @@ import { SearchBar } from "../components/SearchBar";
 import { CategoryRail } from "../features/catalog/CategoryRail";
 import { CatalogDetailPane } from "../features/catalog/CatalogDetailPane";
 import { CatalogGrid, type CatalogCardItem } from "../features/catalog/CatalogGrid";
-import { PlayerControls } from "../features/playback/PlayerControls";
+import { InAppPlayer } from "../features/playback/InAppPlayer";
 import { ProviderSetup } from "../features/providers/ProviderSetup";
 import { ProviderSettings } from "../features/providers/ProviderSettings";
 import { iptvApi } from "./api";
 import { useAppData } from "./useAppData";
+import type { PlayRequest } from "../../shared/playback/types";
 
 type CatalogItemType = "live" | "movie" | "series" | "episode";
 type CatalogSectionItem = CatalogCardItem & {
@@ -27,6 +28,7 @@ export function App() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [episodes, setEpisodes] = useState<EpisodeView[]>([]);
   const [livePrograms, setLivePrograms] = useState<LiveProgramView[]>([]);
+  const [playbackRequest, setPlaybackRequest] = useState<PlayRequest | null>(null);
   const [isLoadingEpisodes, setIsLoadingEpisodes] = useState(false);
   const [isLoadingPrograms, setIsLoadingPrograms] = useState(false);
   const items = useMemo(() => buildCatalogItems(data), [data]);
@@ -208,11 +210,11 @@ export function App() {
                 onPlay={(itemId) => {
                   const item = visibleItems.find((candidate) => candidate.id === itemId);
                   if (item?.itemType === "live" || item?.itemType === "movie" || item?.itemType === "episode") {
-                    void iptvApi.playback.play({ itemType: item.itemType, itemId });
+                    setPlaybackRequest({ itemType: item.itemType, itemId });
                   }
                 }}
                 onPlayEpisode={(itemId) => {
-                  void iptvApi.playback.play({ itemType: "episode", itemId });
+                  setPlaybackRequest({ itemType: "episode", itemId });
                 }}
                 onToggleFavorite={async (itemId) => {
                   const item = visibleItems.find((candidate) => candidate.id === itemId);
@@ -233,7 +235,7 @@ export function App() {
           </>
         )}
       </section>
-      <PlayerControls />
+      <InAppPlayer request={playbackRequest} onClose={() => setPlaybackRequest(null)} />
     </main>
   );
 }

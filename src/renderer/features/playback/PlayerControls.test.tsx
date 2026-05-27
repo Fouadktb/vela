@@ -6,6 +6,7 @@ import { PlayerControls } from "./PlayerControls";
 const mockApi = vi.hoisted(() => ({
   playback: {
     play: vi.fn(),
+    resolve: vi.fn(),
     pause: vi.fn(),
     stop: vi.fn(),
     seek: vi.fn(),

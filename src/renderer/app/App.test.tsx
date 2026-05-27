@@ -41,6 +41,7 @@ const mockApi = vi.hoisted(() => ({
   },
   playback: {
     play: vi.fn(),
+    resolve: vi.fn(),
     pause: vi.fn(),
     stop: vi.fn(),
     seek: vi.fn(),
@@ -207,6 +208,14 @@ describe("App catalog navigation", () => {
       autoRefreshEnabled: false
     });
     mockApi.playback.play.mockResolvedValue(undefined);
+    mockApi.playback.resolve.mockImplementation(async (request) => ({
+      itemId: request.itemId,
+      itemType: request.itemType,
+      title: "Resolved playback",
+      url: "http://example.test/video.mkv",
+      isLive: request.itemType === "live",
+      preferredEngine: "fallback"
+    }));
     mockApi.playback.getState.mockResolvedValue(idlePlaybackState);
     mockApi.playback.onState.mockReturnValue(vi.fn());
   });
@@ -292,10 +301,10 @@ describe("App catalog navigation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
 
-    expect(mockApi.playback.play).toHaveBeenCalledWith({
+    await waitFor(() => expect(mockApi.playback.play).toHaveBeenCalledWith({
       itemType: "movie",
       itemId: movie.id
-    });
+    }));
   });
 
   it("starts episode playback from the selected series detail pane", async () => {
@@ -308,10 +317,10 @@ describe("App catalog navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: /S1 E1 Pilot/ }));
 
     expect(mockApi.catalog.listEpisodesForSeries).toHaveBeenCalledWith(series.id);
-    expect(mockApi.playback.play).toHaveBeenCalledWith({
+    await waitFor(() => expect(mockApi.playback.play).toHaveBeenCalledWith({
       itemType: "episode",
       itemId: episode.id
-    });
+    }));
   });
 
   it("shows recently watched items and plays the selected entry", async () => {
@@ -326,10 +335,10 @@ describe("App catalog navigation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
 
-    expect(mockApi.playback.play).toHaveBeenCalledWith({
+    await waitFor(() => expect(mockApi.playback.play).toHaveBeenCalledWith({
       itemType: "episode",
       itemId: episode.id
-    });
+    }));
   });
 
   it("manages multiple providers from settings", async () => {

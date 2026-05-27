@@ -1,6 +1,8 @@
 import { BrowserWindow } from "electron";
 import path from "node:path";
 
+let mediaCorsHeadersRegistered = false;
+
 export function createMainWindow(): BrowserWindow {
   const preloadPath = path.join(__dirname, "../../preload/index.js");
 
@@ -19,6 +21,8 @@ export function createMainWindow(): BrowserWindow {
     }
   });
 
+  registerMediaCorsHeaders(window);
+
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
     void window.loadURL(devServerUrl);
@@ -30,4 +34,26 @@ export function createMainWindow(): BrowserWindow {
   }
 
   return window;
+}
+
+function registerMediaCorsHeaders(window: BrowserWindow): void {
+  if (mediaCorsHeadersRegistered) {
+    return;
+  }
+  mediaCorsHeadersRegistered = true;
+
+  window.webContents.session.webRequest.onHeadersReceived(
+    {
+      urls: ["http://*/*", "https://*/*"]
+    },
+    (details, callback) => {
+      const responseHeaders = {
+        ...details.responseHeaders,
+        "Access-Control-Allow-Headers": ["*"],
+        "Access-Control-Allow-Methods": ["GET, HEAD, OPTIONS"],
+        "Access-Control-Allow-Origin": ["*"]
+      };
+      callback({ responseHeaders });
+    }
+  );
 }

@@ -17,6 +17,7 @@ import type {
 } from "../imports/importXtreamProvider.js";
 import type { openInExternalPlayer } from "../playback/externalPlayer.js";
 import type { createMpvController } from "../playback/mpvController.js";
+import { resolvePlaybackSource } from "../playback/resolvePlaybackSource.js";
 import type { createCatalogRepository } from "../storage/catalogRepository.js";
 import type { createProviderRepository } from "../storage/providerRepository.js";
 
@@ -196,6 +197,10 @@ export function registerIpcHandlers(deps: RegisterIpcHandlersDeps): void {
     await deps.mpvController.play(request);
     emitPlaybackState(deps);
   });
+
+  ipcMain.handle(ipcChannels.playbackResolve, (_event, request: PlayRequest) =>
+    resolvePlaybackSource(request, deps.catalogRepository)
+  );
 
   ipcMain.handle(ipcChannels.playbackPause, async () => {
     await deps.mpvController.pause();

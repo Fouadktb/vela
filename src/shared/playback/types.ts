@@ -5,6 +5,17 @@ export interface PlayRequest {
   itemId: string;
 }
 
+export type InAppPlaybackEngine = "native" | "hls" | "mpegts" | "fallback";
+
+export interface ResolvedPlaybackSource {
+  itemId: string;
+  itemType: PlayableCatalogItemType;
+  title: string;
+  url: string;
+  isLive: boolean;
+  preferredEngine: InAppPlaybackEngine;
+}
+
 export type PlaybackStatus = "idle" | "loading" | "playing" | "paused" | "error";
 
 export interface PlaybackTrack {
