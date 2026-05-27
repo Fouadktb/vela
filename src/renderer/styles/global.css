@@ -51,10 +51,13 @@ img {
   z-index: 4;
   width: 86px;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   background: #1d1d1b;
   color: #f8f7f1;
   overflow: hidden;
-  padding: 20px 14px;
+  padding: 20px 15px;
   transition:
     width 220ms cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 220ms ease;
@@ -67,26 +70,42 @@ img {
 }
 
 .brand {
-  width: 208px;
+  width: 56px;
   min-width: 0;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
   margin-bottom: 28px;
+  overflow: hidden;
   font-size: 17px;
   font-weight: 750;
+  transition:
+    width 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    justify-content 220ms ease;
+}
+
+.sidebar:hover .brand,
+.sidebar:focus-within .brand {
+  width: 206px;
+  justify-content: flex-start;
 }
 
 .brand > span:not(.brand-mark) {
+  max-width: 0;
   opacity: 0;
+  overflow: hidden;
   transform: translateX(-8px);
   transition:
+    max-width 180ms ease,
     opacity 160ms ease,
     transform 160ms ease;
+  white-space: nowrap;
 }
 
 .sidebar:hover .brand > span:not(.brand-mark),
 .sidebar:focus-within .brand > span:not(.brand-mark) {
+  max-width: 140px;
   opacity: 1;
   transform: translateX(0);
 }
@@ -105,27 +124,46 @@ img {
 }
 
 .sidebar-nav {
-  width: 208px;
+  width: 56px;
   display: grid;
-  gap: 6px;
+  justify-items: center;
+  gap: 8px;
+  transition: width 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sidebar:hover .sidebar-nav,
+.sidebar:focus-within .sidebar-nav {
+  width: 206px;
+  justify-items: stretch;
 }
 
 .nav-item {
-  width: 100%;
+  width: 56px;
+  height: 50px;
   min-width: 0;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
   border: 0;
   border-radius: 8px;
   background: transparent;
   color: #d6d4cb;
-  padding: 10px;
+  overflow: hidden;
+  padding: 0;
   text-align: left;
   transition:
     background-color 160ms ease,
     color 160ms ease,
+    justify-content 160ms ease,
     transform 160ms ease;
+}
+
+.sidebar:hover .nav-item,
+.sidebar:focus-within .nav-item {
+  width: 100%;
+  justify-content: flex-start;
+  padding: 0 12px;
 }
 
 .nav-item svg {
@@ -134,11 +172,13 @@ img {
 
 .nav-item span {
   min-width: 0;
+  max-width: 0;
   opacity: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   transform: translateX(-8px);
   transition:
+    max-width 180ms ease,
     opacity 160ms ease,
     transform 160ms ease;
   white-space: nowrap;
@@ -146,6 +186,7 @@ img {
 
 .sidebar:hover .nav-item span,
 .sidebar:focus-within .nav-item span {
+  max-width: 142px;
   opacity: 1;
   transform: translateX(0);
 }
@@ -1296,8 +1337,23 @@ img {
   }
 
   .brand,
-  .sidebar-nav {
+  .sidebar:hover .brand,
+  .sidebar:focus-within .brand,
+  .sidebar-nav,
+  .sidebar:hover .sidebar-nav,
+  .sidebar:focus-within .sidebar-nav {
     width: 50px;
+    justify-content: center;
+    justify-items: center;
+  }
+
+  .nav-item,
+  .sidebar:hover .nav-item,
+  .sidebar:focus-within .nav-item {
+    width: 50px;
+    height: 50px;
+    justify-content: center;
+    padding: 0;
   }
 
   .brand > span:not(.brand-mark),
@@ -1306,8 +1362,13 @@ img {
   .sidebar:focus-within .brand > span:not(.brand-mark),
   .sidebar:hover .nav-item span,
   .sidebar:focus-within .nav-item span {
+    max-width: 0;
     opacity: 0;
     transform: translateX(-8px);
+  }
+
+  .content {
+    padding: 24px 18px 104px;
   }
 
   .toolbar,
