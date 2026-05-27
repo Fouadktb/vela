@@ -43,7 +43,7 @@ Build the macOS app:
 PATH="$HOME/.codex/toolchains/flutter/bin:$PATH" flutter build macos
 ```
 
-Create a macOS zip for GitHub upload:
+Create a macOS DMG for GitHub upload:
 
 ```bash
 PATH="$HOME/.codex/toolchains/flutter/bin:$PATH" scripts/package-macos.sh
@@ -55,9 +55,10 @@ Build the Windows app on Windows:
 flutter build windows
 ```
 
-Create a Windows zip for GitHub upload on Windows:
+Create a Windows installer for GitHub upload on Windows. This requires Inno Setup 6:
 
 ```powershell
+winget install JRSoftware.InnoSetup
 .\scripts\package-windows.ps1
 ```
 
@@ -67,14 +68,14 @@ Flutter desktop apps are built on the target operating system. Build macOS on ma
 
 Expected release assets:
 
-- `vela-macos-vX.Y.Z.zip`
-- `vela-windows-vX.Y.Z.zip`
+- `vela-macos-vX.Y.Z.dmg`
+- `vela-windows-vX.Y.Z-setup.exe`
 - `SHA256SUMS-vX.Y.Z.txt`
 
 Example upload:
 
 ```bash
-gh release upload vX.Y.Z release/vela-macos-vX.Y.Z.zip release/SHA256SUMS-vX.Y.Z.txt --clobber
+gh release upload vX.Y.Z release/vela-macos-vX.Y.Z.dmg release/SHA256SUMS-vX.Y.Z.txt --clobber
 ```
 
-Installer and DMG polish is intentionally deferred until the playable Flutter app has been validated on both macOS and Windows.
+Code signing and notarization are intentionally deferred until the playable Flutter app has been validated on both macOS and Windows.

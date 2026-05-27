@@ -6,7 +6,8 @@ APP_NAME="Vela.app"
 BUILD_APP="${ROOT_DIR}/build/macos/Build/Products/Release/${APP_NAME}"
 RELEASE_ROOT="${ROOT_DIR}/release"
 PACKAGE_DIR="${RELEASE_ROOT}/vela-macos"
-ZIP_PATH="${RELEASE_ROOT}/vela-macos.zip"
+DMG_STAGING_DIR="${RELEASE_ROOT}/vela-macos-dmg"
+DMG_PATH="${RELEASE_ROOT}/vela-macos.dmg"
 
 cd "${ROOT_DIR}"
 
@@ -20,13 +21,19 @@ fi
 
 rm -rf "${PACKAGE_DIR}"
 mkdir -p "${PACKAGE_DIR}"
-rm -f "${ZIP_PATH}"
+rm -rf "${DMG_STAGING_DIR}"
+mkdir -p "${DMG_STAGING_DIR}"
+rm -f "${DMG_PATH}"
 
 ditto "${BUILD_APP}" "${PACKAGE_DIR}/${APP_NAME}"
+ditto "${BUILD_APP}" "${DMG_STAGING_DIR}/${APP_NAME}"
+ln -s /Applications "${DMG_STAGING_DIR}/Applications"
 
-(
-  cd "${PACKAGE_DIR}"
-  ditto -c -k --sequesterRsrc --keepParent "${APP_NAME}" "${ZIP_PATH}"
-)
+hdiutil create \
+  -volname "Vela" \
+  -srcfolder "${DMG_STAGING_DIR}" \
+  -ov \
+  -format UDZO \
+  "${DMG_PATH}"
 
-echo "Created ${ZIP_PATH}"
+echo "Created ${DMG_PATH}"

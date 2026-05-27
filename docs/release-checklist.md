@@ -39,18 +39,21 @@ Use this checklist for every local Vela release candidate before creating a GitH
 
 - On macOS, run `scripts/package-macos.sh`.
 - Confirm `release/vela-macos/Vela.app` launches locally.
-- Confirm `release/vela-macos.zip` is ready for GitHub upload.
+- Mount `release/vela-macos.dmg` and confirm it contains `Vela.app` plus an `Applications` shortcut.
+- Confirm `release/vela-macos.dmg` is ready for GitHub upload.
 - On Windows, run `scripts/package-windows.ps1`.
 - Confirm `release/vela-windows/vela.exe` launches locally.
-- Confirm `release/vela-windows.zip` is ready for GitHub upload.
-- Keep installer and DMG polish separate until the playable Flutter app is validated on both macOS and Windows.
+- Run the generated `release/vela-windows-vX.Y.Z-setup.exe` installer.
+- Confirm Vela launches from the installed Start menu shortcut.
+- Confirm `release/vela-windows-vX.Y.Z-setup.exe` is ready for GitHub upload.
+- Keep code signing and notarization separate until the playable Flutter app is validated on both macOS and Windows.
 
 ## GitHub Release Upload
 
-- Rename local packages to include the release tag, for example `vela-macos-vX.Y.Z.zip` and `vela-windows-vX.Y.Z.zip`.
-- Generate `SHA256SUMS-vX.Y.Z.txt` from the release zips.
+- Rename local packages to include the release tag, for example `vela-macos-vX.Y.Z.dmg` and `vela-windows-vX.Y.Z-setup.exe`.
+- Generate `SHA256SUMS-vX.Y.Z.txt` from the release artifacts.
 - Create or push the release tag after local verification passes.
 - Create the GitHub Release manually.
-- Upload the platform zip files and checksum file manually with `gh release upload` or the GitHub UI.
+- Upload the platform artifacts and checksum file manually with `gh release upload` or the GitHub UI.
 - Include verification notes, supported platforms, and known limitations in the release body.
 - Download the uploaded artifacts from GitHub and confirm the files match the local release output.
