@@ -104,6 +104,26 @@ final epgProgramsProvider = StreamProvider.autoDispose
           );
     });
 
+final liveGuideEpgProgramsProvider = StreamProvider.autoDispose
+    .family<List<EpgProgram>, ProviderDayEpgProgramsQuery>((ref, query) {
+      _keepAutoDisposeProviderWarm(ref);
+      final database = ref.watch(catalogDatabaseProvider);
+      final dayEndMs =
+          query.dayStartMs + const Duration(days: 1).inMilliseconds;
+      final statement = database.select(database.epgPrograms)
+        ..where(
+          (row) =>
+              row.providerId.equals(query.providerId) &
+              row.endAt.isBiggerOrEqualValue(query.dayStartMs) &
+              row.startAt.isSmallerOrEqualValue(dayEndMs),
+        )
+        ..orderBy([
+          (row) => OrderingTerm.asc(row.channelId),
+          (row) => OrderingTerm.asc(row.startAt),
+        ]);
+      return statement.watch().map((rows) => rows.map(_toEpgProgram).toList());
+    });
+
 final recentlyWatchedProvider = StreamProvider<List<WatchHistoryEntry>>((ref) {
   return ref.watch(watchHistoryRepositoryProvider).watchRecentlyWatched();
 });
@@ -112,13 +132,21 @@ final appSettingsProvider = StreamProvider<Map<String, String>>((ref) {
   return ref.watch(appSettingsRepositoryProvider).watchSettings();
 });
 
+enum LiveCatalogViewMode { list, guide }
+
 class NavigationController extends ChangeNotifier {
   VelaSection _selectedSection = VelaSection.live;
+  LiveCatalogViewMode _liveViewMode = LiveCatalogViewMode.list;
+  int _liveGuideDayStartMs = _startOfTodayMs();
   final Map<VelaSection, SectionState> _states = {
     for (final section in VelaSection.values) section: const SectionState(),
   };
 
   VelaSection get selectedSection => _selectedSection;
+
+  LiveCatalogViewMode get liveViewMode => _liveViewMode;
+
+  int get liveGuideDayStartMs => _liveGuideDayStartMs;
 
   SectionState get activeState => stateFor(_selectedSection);
 
@@ -161,10 +189,43 @@ class NavigationController extends ChangeNotifier {
     );
   }
 
+  void setLiveViewMode(LiveCatalogViewMode mode) {
+    if (_liveViewMode == mode) {
+      return;
+    }
+    _liveViewMode = mode;
+    notifyListeners();
+  }
+
+  void setLiveGuideDayStartMs(int dayStartMs) {
+    if (_liveGuideDayStartMs == dayStartMs) {
+      return;
+    }
+    _liveGuideDayStartMs = dayStartMs;
+    notifyListeners();
+  }
+
   void _updateActive(SectionState next) {
     _states[_selectedSection] = next;
     notifyListeners();
   }
+}
+
+EpgProgram _toEpgProgram(EpgProgramRow row) {
+  return EpgProgram(
+    providerId: row.providerId,
+    channelId: row.channelId,
+    startAtMs: row.startAt,
+    endAtMs: row.endAt,
+    title: row.title,
+    description: row.description,
+    category: row.category,
+  );
+}
+
+int _startOfTodayMs() {
+  final now = DateTime.now();
+  return DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
 }
 
 void _keepAutoDisposeProviderWarm(Ref ref) {
@@ -259,6 +320,26 @@ class EpgProgramsQuery {
   @override
   int get hashCode =>
       Object.hash(providerId, Object.hashAll(channelIds), fromMs, toMs);
+}
+
+class ProviderDayEpgProgramsQuery {
+  const ProviderDayEpgProgramsQuery({
+    required this.providerId,
+    required this.dayStartMs,
+  });
+
+  final String providerId;
+  final int dayStartMs;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ProviderDayEpgProgramsQuery &&
+        other.providerId == providerId &&
+        other.dayStartMs == dayStartMs;
+  }
+
+  @override
+  int get hashCode => Object.hash(providerId, dayStartMs);
 }
 
 class AppSettingsRepository {

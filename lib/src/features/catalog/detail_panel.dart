@@ -15,6 +15,7 @@ class DetailPanel extends StatelessWidget {
     required this.epgPrograms,
     required this.onPlay,
     required this.onRestart,
+    required this.onRefreshEpg,
     required this.onOpenEpisode,
     required this.onOpenDetails,
     required this.onToggleFavorite,
@@ -27,6 +28,7 @@ class DetailPanel extends StatelessWidget {
   final AsyncValue<List<EpgProgram>> epgPrograms;
   final ValueChanged<CatalogCardItem> onPlay;
   final ValueChanged<CatalogCardItem> onRestart;
+  final VoidCallback? onRefreshEpg;
   final void Function(CatalogCardItem item, CatalogEpisode episode)
   onOpenEpisode;
   final ValueChanged<CatalogCardItem> onOpenDetails;
@@ -56,6 +58,7 @@ class DetailPanel extends StatelessWidget {
                   onRestart: selected.canPlay && selected.hasPlaybackProgress
                       ? () => onRestart(selected)
                       : null,
+                  onRefreshEpg: onRefreshEpg,
                   onOpenEpisode: (episode) => onOpenEpisode(selected, episode),
                   onOpenDetails: selected.contentType == CatalogContentType.live
                       ? null
@@ -106,6 +109,7 @@ class _SelectedDetails extends StatelessWidget {
     required this.epgPrograms,
     required this.onPlay,
     required this.onRestart,
+    required this.onRefreshEpg,
     required this.onOpenEpisode,
     required this.onOpenDetails,
     required this.onToggleFavorite,
@@ -117,6 +121,7 @@ class _SelectedDetails extends StatelessWidget {
   final AsyncValue<List<EpgProgram>> epgPrograms;
   final VoidCallback? onPlay;
   final VoidCallback? onRestart;
+  final VoidCallback? onRefreshEpg;
   final ValueChanged<CatalogEpisode> onOpenEpisode;
   final VoidCallback? onOpenDetails;
   final VoidCallback onToggleFavorite;
@@ -215,7 +220,10 @@ class _SelectedDetails extends StatelessWidget {
                   ],
                   if (item.contentType == CatalogContentType.live) ...[
                     const SizedBox(height: 18),
-                    _ScheduleBlock(programs: epgPrograms),
+                    _ScheduleBlock(
+                      programs: epgPrograms,
+                      onRefreshEpg: onRefreshEpg,
+                    ),
                   ],
                   if (item.contentType == CatalogContentType.series) ...[
                     const SizedBox(height: 18),
@@ -321,9 +329,10 @@ class _ActionBar extends StatelessWidget {
 }
 
 class _ScheduleBlock extends StatelessWidget {
-  const _ScheduleBlock({required this.programs});
+  const _ScheduleBlock({required this.programs, required this.onRefreshEpg});
 
   final AsyncValue<List<EpgProgram>> programs;
+  final VoidCallback? onRefreshEpg;
 
   @override
   Widget build(BuildContext context) {
@@ -336,10 +345,17 @@ class _ScheduleBlock extends StatelessWidget {
             .take(4)
             .toList();
         if (current == null && upcoming.isEmpty) {
-          return const _PanelNotice(
+          return _PanelNotice(
             icon: LucideIcons.calendarClock,
             title: 'No schedule available',
             body: 'This provider did not return guide data for this channel.',
+            action: onRefreshEpg == null
+                ? null
+                : TextButton.icon(
+                    onPressed: onRefreshEpg,
+                    icon: const Icon(LucideIcons.refreshCw, size: 16),
+                    label: const Text('Refresh EPG'),
+                  ),
           );
         }
 
@@ -807,11 +823,13 @@ class _PanelNotice extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.body,
+    this.action,
   });
 
   final IconData icon;
   final String title;
   final String body;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -846,6 +864,7 @@ class _PanelNotice extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall,
                 ),
+                if (action != null) ...[const SizedBox(height: 8), action!],
               ],
             ),
           ),

@@ -19,10 +19,12 @@ import 'category_list.dart';
 import 'content_detail_screen.dart';
 import 'detail_panel.dart';
 import 'item_grid.dart';
+import 'live_guide_view.dart';
 import 'series_playback_progress.dart';
 
 const _catalogCacheDuration = Duration(minutes: 10);
-final _forcedEpgRefreshProviders = <String>{};
+const _epgAutoRefreshCooldown = Duration(minutes: 15);
+final _epgRefreshAttempts = <_EpgRefreshKey, _EpgRefreshAttempt>{};
 
 final _recentCatalogCardsProvider =
     StreamProvider.autoDispose<List<CatalogCardItem>>((ref) {
@@ -136,15 +138,24 @@ class _CatalogContent extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final navigation = ref.watch(navigationControllerProvider);
     final state = navigation.stateFor(section);
+    final liveViewMode = navigation.liveViewMode;
+    final liveGuideDayStartMs = navigation.liveGuideDayStartMs;
     final itemsValue = _itemsForSection(ref, section, state.selectedCategoryId);
     final categoriesValue = _categoriesForSection(ref, section);
+    if (section == VelaSection.live) {
+      _syncLiveGuideDayIfNeeded(ref, liveGuideDayStartMs);
+    }
 
     return ColoredBox(
       color: const Color(0xFF0C0D0E),
       child: SafeArea(
         child: Column(
           children: [
-            _CatalogToolbar(section: section, state: state),
+            _CatalogToolbar(
+              section: section,
+              state: state,
+              liveViewMode: liveViewMode,
+            ),
             Expanded(
               child: AsyncValueView(
                 value: itemsValue,
@@ -176,13 +187,28 @@ class _CatalogContent extends ConsumerWidget {
                   final epgProgramsValue = _epgProgramsForSelected(
                     ref,
                     selected,
+                    liveGuideDayStartMs,
                   );
+                  final guideProgramsValue =
+                      section == VelaSection.live &&
+                          liveViewMode == LiveCatalogViewMode.guide
+                      ? _epgProgramsForLiveGuide(
+                          ref,
+                          visible,
+                          liveGuideDayStartMs,
+                        )
+                      : const AsyncValue.data(<EpgProgram>[]);
                   _refreshSeriesEpisodesIfNeeded(
                     ref,
                     selected,
                     seriesEpisodesValue,
                   );
-                  _refreshEpgIfNeeded(ref, selected, epgProgramsValue);
+                  _refreshEpgIfNeeded(
+                    ref,
+                    selected,
+                    epgProgramsValue,
+                    liveGuideDayStartMs,
+                  );
                   if (selected != null && selected.id != state.selectedItemId) {
                     WidgetsBinding.instance.addPostFrameCallback((_) {
                       ref
@@ -233,6 +259,26 @@ class _CatalogContent extends ConsumerWidget {
                                   message:
                                       'No items match the current section, category, or search filter.',
                                 )
+                              : section == VelaSection.live &&
+                                    liveViewMode == LiveCatalogViewMode.guide
+                              ? LiveGuideView(
+                                  items: visible,
+                                  selectedItemId: selected?.id,
+                                  dayStartMs: liveGuideDayStartMs,
+                                  epgPrograms: guideProgramsValue,
+                                  onSelect: ref
+                                      .read(navigationControllerProvider)
+                                      .selectItem,
+                                  onOpen: (item) => _openItem(ref, item),
+                                  onRefreshEpg: () => _refreshEpgForLiveGuide(
+                                    ref,
+                                    visible,
+                                    liveGuideDayStartMs,
+                                  ),
+                                  onDayChanged: ref
+                                      .read(navigationControllerProvider)
+                                      .setLiveGuideDayStartMs,
+                                )
                               : ItemGrid(
                                   items: visible,
                                   selectedItemId: selected?.id,
@@ -253,6 +299,13 @@ class _CatalogContent extends ConsumerWidget {
                           onPlay: (item) => _openItem(ref, item),
                           onRestart: (item) =>
                               _openItem(ref, item, restart: true),
+                          onRefreshEpg: selected == null
+                              ? null
+                              : () => _refreshEpgForSelected(
+                                  ref,
+                                  selected,
+                                  liveGuideDayStartMs,
+                                ),
                           onOpenEpisode: (item, episode) =>
                               _openEpisode(ref, item, episode),
                           onOpenDetails: (item) =>
@@ -417,14 +470,20 @@ class _CatalogContent extends ConsumerWidget {
 }
 
 class _CatalogToolbar extends ConsumerWidget {
-  const _CatalogToolbar({required this.section, required this.state});
+  const _CatalogToolbar({
+    required this.section,
+    required this.state,
+    required this.liveViewMode,
+  });
 
   final VelaSection section;
   final SectionState state;
+  final LiveCatalogViewMode liveViewMode;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final showLiveModeToggle = section == VelaSection.live;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(30, 24, 30, 22),
@@ -468,6 +527,30 @@ class _CatalogToolbar extends ConsumerWidget {
               ),
             ),
           ),
+          if (showLiveModeToggle) ...[
+            const SizedBox(width: 14),
+            SegmentedButton<LiveCatalogViewMode>(
+              segments: const [
+                ButtonSegment(
+                  value: LiveCatalogViewMode.list,
+                  icon: Icon(LucideIcons.list, size: 17),
+                  tooltip: 'List view',
+                ),
+                ButtonSegment(
+                  value: LiveCatalogViewMode.guide,
+                  icon: Icon(LucideIcons.calendarDays, size: 17),
+                  tooltip: 'Guide view',
+                ),
+              ],
+              selected: {liveViewMode},
+              showSelectedIcon: false,
+              onSelectionChanged: (selection) {
+                ref
+                    .read(navigationControllerProvider)
+                    .setLiveViewMode(selection.first);
+              },
+            ),
+          ],
         ],
       ),
     );
@@ -479,6 +562,30 @@ class _PlaybackTarget {
 
   final PlayableItem playable;
   final WatchHistoryUpdate? history;
+}
+
+class _EpgRefreshKey {
+  const _EpgRefreshKey({required this.providerId, required this.dayStartMs});
+
+  final String providerId;
+  final int dayStartMs;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _EpgRefreshKey &&
+        other.providerId == providerId &&
+        other.dayStartMs == dayStartMs;
+  }
+
+  @override
+  int get hashCode => Object.hash(providerId, dayStartMs);
+}
+
+class _EpgRefreshAttempt {
+  _EpgRefreshAttempt({required this.lastAttemptAtMs});
+
+  int lastAttemptAtMs;
+  bool inFlight = false;
 }
 
 class _SeriesEpisodesQuery {
@@ -504,29 +611,61 @@ class _SeriesEpisodesQuery {
 AsyncValue<List<EpgProgram>> _epgProgramsForSelected(
   WidgetRef ref,
   CatalogCardItem? selected,
+  int dayStartMs,
 ) {
   if (selected == null || selected.contentType != CatalogContentType.live) {
     return const AsyncValue.data(<EpgProgram>[]);
   }
-  final channelIds = _epgChannelAliases(selected);
+  final channelIds = epgChannelAliases(selected);
   if (channelIds.isEmpty) {
     return const AsyncValue.data(<EpgProgram>[]);
   }
 
-  final now = DateTime.now();
-  final dayStart = DateTime(now.year, now.month, now.day);
   return ref.watch(
     epgProgramsProvider(
       EpgProgramsQuery(
         providerId: selected.providerId,
         channelIds: channelIds,
-        fromMs: dayStart
-            .subtract(const Duration(hours: 3))
-            .millisecondsSinceEpoch,
-        toMs: dayStart.add(const Duration(days: 2)).millisecondsSinceEpoch,
+        fromMs: dayStartMs - const Duration(hours: 3).inMilliseconds,
+        toMs: dayStartMs + const Duration(days: 2).inMilliseconds,
       ),
     ),
   );
+}
+
+AsyncValue<List<EpgProgram>> _epgProgramsForLiveGuide(
+  WidgetRef ref,
+  List<CatalogCardItem> items,
+  int dayStartMs,
+) {
+  final providerIds = _liveProviderIds(items);
+  if (providerIds.isEmpty) {
+    return const AsyncValue.data(<EpgProgram>[]);
+  }
+
+  final values = <AsyncValue<List<EpgProgram>>>[
+    for (final providerId in providerIds)
+      ref.watch(
+        liveGuideEpgProgramsProvider(
+          ProviderDayEpgProgramsQuery(
+            providerId: providerId,
+            dayStartMs: dayStartMs,
+          ),
+        ),
+      ),
+  ];
+
+  final error = values.where((value) => value.hasError).firstOrNull;
+  if (error != null && values.every((value) => value.value == null)) {
+    return AsyncValue.error(error.error!, error.stackTrace!);
+  }
+  final combined = [
+    for (final value in values) ...(value.value ?? const <EpgProgram>[]),
+  ];
+  if (combined.isEmpty && values.any((value) => value.isLoading)) {
+    return const AsyncValue.loading();
+  }
+  return AsyncValue.data(combined);
 }
 
 void _refreshSeriesEpisodesIfNeeded(
@@ -570,11 +709,12 @@ void _refreshEpgIfNeeded(
   WidgetRef ref,
   CatalogCardItem? selected,
   AsyncValue<List<EpgProgram>> programsValue,
+  int dayStartMs,
 ) {
   if (selected == null || selected.contentType != CatalogContentType.live) {
     return;
   }
-  if (_epgChannelAliases(selected).isEmpty) {
+  if (epgChannelAliases(selected).isEmpty) {
     return;
   }
 
@@ -583,36 +723,113 @@ void _refreshEpgIfNeeded(
       return;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final force = _forcedEpgRefreshProviders.add(selected.providerId);
-      unawaited(
-        ref
-            .read(providerRefreshServiceProvider)
-            .refreshProviderEpg(selected.providerId, force: force)
-            .catchError((Object error, StackTrace stackTrace) {
-              debugPrint('Failed to load channel schedule: $error');
-              debugPrintStack(stackTrace: stackTrace);
-            }),
+      _refreshProviderEpgGuarded(
+        ref,
+        providerId: selected.providerId,
+        dayStartMs: dayStartMs,
+        force: false,
+        errorMessage: 'Failed to load channel schedule',
       );
     });
   });
 }
 
-List<String> _epgChannelAliases(CatalogCardItem item) {
-  final aliases = <String>[
-    if (item.epgChannelId?.trim().isNotEmpty == true) item.epgChannelId!.trim(),
-    if (item.externalId?.trim().isNotEmpty == true) item.externalId!.trim(),
-    if (item.title.trim().isNotEmpty) item.title.trim(),
-    _trailingCatalogId(item.id),
-  ];
-  return aliases.where((value) => value.trim().isNotEmpty).toSet().toList();
+void _refreshEpgForSelected(
+  WidgetRef ref,
+  CatalogCardItem selected,
+  int dayStartMs,
+) {
+  if (selected.contentType != CatalogContentType.live) {
+    return;
+  }
+  _refreshProviderEpgGuarded(
+    ref,
+    providerId: selected.providerId,
+    dayStartMs: dayStartMs,
+    force: true,
+    errorMessage: 'Failed to refresh channel schedule',
+  );
 }
 
-String _trailingCatalogId(String value) {
-  final separator = value.lastIndexOf(':');
-  if (separator < 0 || separator >= value.length - 1) {
-    return value;
+void _refreshEpgForLiveGuide(
+  WidgetRef ref,
+  List<CatalogCardItem> items,
+  int dayStartMs,
+) {
+  for (final providerId in _liveProviderIds(items)) {
+    _refreshProviderEpgGuarded(
+      ref,
+      providerId: providerId,
+      dayStartMs: dayStartMs,
+      force: true,
+      errorMessage: 'Failed to refresh live guide',
+    );
   }
-  return value.substring(separator + 1);
+}
+
+Set<String> _liveProviderIds(List<CatalogCardItem> items) {
+  final providerIds = <String>{};
+  for (final item in items) {
+    if (item.contentType == CatalogContentType.live) {
+      providerIds.add(item.providerId);
+    }
+  }
+  return providerIds;
+}
+
+void _refreshProviderEpgGuarded(
+  WidgetRef ref, {
+  required String providerId,
+  required int dayStartMs,
+  required bool force,
+  required String errorMessage,
+}) {
+  final key = _EpgRefreshKey(providerId: providerId, dayStartMs: dayStartMs);
+  final nowMs = DateTime.now().millisecondsSinceEpoch;
+  final attempt = _epgRefreshAttempts.putIfAbsent(
+    key,
+    () => _EpgRefreshAttempt(lastAttemptAtMs: 0),
+  );
+  if (attempt.inFlight) {
+    return;
+  }
+  if (!force &&
+      attempt.lastAttemptAtMs > 0 &&
+      nowMs - attempt.lastAttemptAtMs <
+          _epgAutoRefreshCooldown.inMilliseconds) {
+    return;
+  }
+
+  attempt
+    ..inFlight = true
+    ..lastAttemptAtMs = nowMs;
+  unawaited(
+    ref
+        .read(providerRefreshServiceProvider)
+        .refreshProviderEpg(providerId, force: force)
+        .catchError((Object error, StackTrace stackTrace) {
+          debugPrint('$errorMessage: $error');
+          debugPrintStack(stackTrace: stackTrace);
+        })
+        .whenComplete(() {
+          attempt.inFlight = false;
+        }),
+  );
+}
+
+void _syncLiveGuideDayIfNeeded(WidgetRef ref, int dayStartMs) {
+  final now = DateTime.now();
+  final todayStartMs = DateTime(
+    now.year,
+    now.month,
+    now.day,
+  ).millisecondsSinceEpoch;
+  if (dayStartMs == todayStartMs) {
+    return;
+  }
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    ref.read(navigationControllerProvider).setLiveGuideDayStartMs(todayStartMs);
+  });
 }
 
 AsyncValue<List<CatalogCardItem>> _combineCatalogItems(
