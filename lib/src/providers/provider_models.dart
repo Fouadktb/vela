@@ -187,6 +187,34 @@ class ProviderRefreshSummary {
   final DateTime? finishedAt;
 }
 
+enum ProviderImportStage {
+  validating,
+  live,
+  movies,
+  series,
+  epg,
+  indexing,
+  done,
+  failed,
+}
+
+class ProviderImportProgress {
+  const ProviderImportProgress({
+    required this.stage,
+    required this.message,
+    this.current,
+    this.total,
+  });
+
+  final ProviderImportStage stage;
+  final String message;
+  final int? current;
+  final int? total;
+}
+
+typedef ProviderImportProgressCallback =
+    void Function(ProviderImportProgress progress);
+
 class ProviderRefreshFailure implements Exception {
   const ProviderRefreshFailure(this.message);
 

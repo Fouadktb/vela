@@ -271,7 +271,7 @@ class _GridCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  item.subtitle ?? _contentLabel(item.contentType),
+                  _secondaryLabel(item),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall?.copyWith(
@@ -343,9 +343,7 @@ class _ListTileItem extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      item.epgSummary ??
-                          item.subtitle ??
-                          _contentLabel(item.contentType),
+                      _secondaryLabel(item),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodySmall,
@@ -444,4 +442,11 @@ String _contentLabel(CatalogContentType type) {
     CatalogContentType.movie => 'Movie',
     CatalogContentType.series => 'Series',
   };
+}
+
+String _secondaryLabel(CatalogCardItem item) {
+  return item.epgSummary ??
+      item.seriesPlaybackSummary ??
+      item.subtitle ??
+      _contentLabel(item.contentType);
 }

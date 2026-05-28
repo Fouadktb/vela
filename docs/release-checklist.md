@@ -21,7 +21,9 @@ Use this checklist for every local Vela release candidate before creating a GitH
 
 ## Manual Provider Import Checks
 
+- Confirm provider health status loads for each configured provider.
 - Import a known legal sample M3U provider.
+- Confirm import progress reports the expected stages from source fetch through catalog refresh.
 - Confirm the imported provider appears in the catalog.
 - Import a known legal Xtream provider, when credentials are available.
 - Confirm live channels, movies, and series appear in their expected sections.
@@ -30,11 +32,22 @@ Use this checklist for every local Vela release candidate before creating a GitH
 ## Manual Playback Checks
 
 - Launch the built app from the platform build output.
+- Open the live guide and confirm current and upcoming program data renders for a known provider.
 - Start playback for a known legal sample stream.
 - Confirm video renders inside the Vela player.
 - Confirm play, pause, seek, and volume controls respond.
+- Confirm player keyboard shortcuts respond while playback is focused.
+- Switch audio, subtitle, or quality tracks when available, then restart Vela and confirm the selected tracks persist.
 - Close the player and confirm the app remains open.
 - Relaunch Vela and confirm watch continuity resumes from the expected item.
+- Confirm detail pages show the expected continue state for partially watched movies and episodes.
+
+## Manual Reliability and Data Checks
+
+- Force a transient provider refresh or playback failure and confirm retry succeeds when the provider recovers.
+- Export diagnostics and confirm the generated file contains the expected app, provider, and recent error context without exposing credentials.
+- Export a backup and confirm the generated archive is present and non-empty.
+- Run global search and confirm live channels, movies, and series appear in the expected result groups.
 
 ## Local Packages
 

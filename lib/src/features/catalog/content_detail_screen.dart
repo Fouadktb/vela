@@ -408,6 +408,7 @@ class _MetadataPanel extends StatelessWidget {
               _MetaChip(label: 'Rating ${item.rating}'),
             if (item.durationSeconds != null)
               _MetaChip(label: _duration(item.durationSeconds!)),
+            if (item.isFavorite) const _MetaChip(label: 'Favorite'),
             if (item.hasPlaybackProgress)
               _MetaChip(
                 label: item.seriesPlaybackSummary ?? 'Resume available',
@@ -416,6 +417,10 @@ class _MetadataPanel extends StatelessWidget {
         ),
         const SizedBox(height: 24),
         _OverviewBlock(description: item.description),
+        if (item.hasPlaybackProgress) ...[
+          const SizedBox(height: 22),
+          _ResumeBlock(item: item),
+        ],
         if (item.contentType == CatalogContentType.series) ...[
           const SizedBox(height: 30),
           _EpisodeSection(
@@ -544,6 +549,12 @@ class _EpisodeSection extends StatelessWidget {
                     activeEpisode != null &&
                     episode.id == activeEpisode.id &&
                     episode.seasonId == activeEpisode.seasonId,
+                actionKind:
+                    activeEpisode != null &&
+                        episode.id == activeEpisode.id &&
+                        episode.seasonId == activeEpisode.seasonId
+                    ? seriesAction?.kind
+                    : null,
                 onOpenEpisode: onOpenEpisode,
               ),
           ],
@@ -597,6 +608,7 @@ class _EpisodeTile extends StatelessWidget {
     required this.episode,
     required this.position,
     required this.isCurrentResume,
+    required this.actionKind,
     required this.onOpenEpisode,
   });
 
@@ -604,6 +616,7 @@ class _EpisodeTile extends StatelessWidget {
   final CatalogEpisode episode;
   final PlaybackPosition? position;
   final bool isCurrentResume;
+  final SeriesPlaybackActionKind? actionKind;
   final EpisodePlayCallback onOpenEpisode;
 
   @override
@@ -661,6 +674,10 @@ class _EpisodeTile extends StatelessWidget {
                           color: const Color(0xFFA9A39A),
                         ),
                       ),
+                      if (actionKind != null) ...[
+                        const SizedBox(height: 8),
+                        _EpisodeActionLabel(kind: actionKind!),
+                      ],
                       if (position != null) ...[
                         const SizedBox(height: 8),
                         _EpisodeProgress(position: position!),
@@ -683,6 +700,25 @@ class _EpisodeTile extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _EpisodeActionLabel extends StatelessWidget {
+  const _EpisodeActionLabel({required this.kind});
+
+  final SeriesPlaybackActionKind kind;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Text(
+      _seriesActionLabel(kind),
+      style: theme.textTheme.labelSmall?.copyWith(
+        color: theme.colorScheme.primary,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 0,
       ),
     );
   }
@@ -774,6 +810,55 @@ class _NoticePanel extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ResumeBlock extends StatelessWidget {
+  const _ResumeBlock({required this.item});
+
+  final CatalogCardItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final progress = item.hasResumeProgress
+        ? (item.resumeProgress * 100).round().clamp(1, 100)
+        : null;
+    final label =
+        item.seriesPlaybackSummary ??
+        (progress == null
+            ? 'Resume from ${_duration(item.resumePositionSeconds)}'
+            : '$progress% watched');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Progress',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.primary,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(label, style: theme.textTheme.bodyMedium),
+        if (item.hasResumeProgress) ...[
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              minHeight: 7,
+              value: item.resumeProgress,
+              backgroundColor: const Color(0xFF292D31),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                theme.colorScheme.primary,
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -871,19 +956,18 @@ Future<CatalogCardItem> _catalogItemToCard(
   CatalogItem item,
 ) async {
   if (item.contentType == CatalogContentType.series) {
-    final latestPosition = await historyRepository
-        .lookupLatestPositionForSeries(
-          providerId: item.providerId,
-          seriesId: item.id,
-        );
-    final seriesAction = latestPosition == null
+    final positions = await historyRepository.listEpisodePositionsForSeries(
+      providerId: item.providerId,
+      seriesId: item.id,
+    );
+    final seriesAction = positions.isEmpty
         ? null
         : resolveSeriesPlaybackAction(
             episodes: await catalogRepository.listEpisodesForSeries(
               providerId: item.providerId,
               seriesId: item.id,
             ),
-            positions: [latestPosition],
+            positions: positions,
           );
     return _cardFromItem(
       item,
@@ -1031,4 +1115,12 @@ String _episodeSubtitle(CatalogEpisode episode) {
     if (episode.durationSeconds != null) _duration(episode.durationSeconds!),
   ];
   return parts.join(' / ');
+}
+
+String _seriesActionLabel(SeriesPlaybackActionKind kind) {
+  return switch (kind) {
+    SeriesPlaybackActionKind.resume => 'Current episode',
+    SeriesPlaybackActionKind.continueNext => 'Next up',
+    SeriesPlaybackActionKind.replay => 'Replay episode',
+  };
 }

@@ -7,6 +7,29 @@ import '../catalog/catalog_models.dart';
 import '../catalog/catalog_repository.dart';
 import 'provider_models.dart';
 
+class ProviderHealth {
+  const ProviderHealth({
+    required this.provider,
+    required this.stats,
+    required this.isEnabled,
+    this.latestRun,
+    this.nextRefreshAtMs,
+  });
+
+  final IptvProvider provider;
+  final ProviderCatalogStats stats;
+  final ProviderRefreshRun? latestRun;
+  final int? nextRefreshAtMs;
+  final bool isEnabled;
+
+  bool get hasImportedCatalog => stats.hasImportedCatalog;
+
+  bool get latestRefreshFailed {
+    return latestRun?.status == ProviderRefreshStatus.failed ||
+        provider.lastRefreshStatus == ProviderRefreshStatus.failed;
+  }
+}
+
 class ProviderRepository {
   ProviderRepository(this._db, this._catalogRepository);
 
@@ -28,6 +51,20 @@ class ProviderRepository {
       return null;
     }
     return _providerFromRow(rows.single);
+  }
+
+  Stream<List<ProviderHealth>> watchProviderHealth() {
+    return _providerHealthQuery().watch().map(_mapProviderHealthRows);
+  }
+
+  Future<ProviderRefreshRun?> latestRefreshRun(String providerId) async {
+    final row =
+        await (_db.select(_db.providerRefreshRuns)
+              ..where((run) => run.providerId.equals(providerId))
+              ..orderBy([(run) => OrderingTerm.desc(run.startedAt)])
+              ..limit(1))
+            .getSingleOrNull();
+    return row == null ? null : _refreshRunFromRow(row);
   }
 
   Future<IptvProvider> createOrUpdateProvider(ProviderInput input) async {
@@ -59,6 +96,26 @@ class ProviderRepository {
 
     await _db.into(_db.catalogProviders).insertOnConflictUpdate(row);
     return (await getProvider(id))!;
+  }
+
+  Future<void> updateProviderHealthSettings({
+    required String providerId,
+    required String name,
+    required bool refreshEnabled,
+    required int refreshIntervalMinutes,
+  }) async {
+    await (_db.update(
+      _db.catalogProviders,
+    )..where((row) => row.id.equals(providerId))).write(
+      CatalogProvidersCompanion(
+        name: Value(name.trim()),
+        autoRefreshEnabled: Value(refreshEnabled),
+        autoRefreshIntervalMinutes: Value(
+          _validIntervalMinutes(refreshIntervalMinutes),
+        ),
+        updatedAt: Value(DateTime.now().millisecondsSinceEpoch),
+      ),
+    );
   }
 
   Future<void> updateRefreshSettings({
@@ -174,6 +231,65 @@ class ProviderRepository {
     );
   }
 
+  Selectable<QueryRow> _providerHealthQuery() {
+    return _db.customSelect(
+      '''
+      SELECT p.*,
+             r.id AS run_id,
+             r.provider_id AS run_provider_id,
+             r.status AS last_refresh_status,
+             r.error_message AS last_refresh_message,
+             r.started_at AS run_started_at,
+             r.finished_at AS run_finished_at,
+             r.item_count AS run_item_count,
+             (SELECT COUNT(*)
+              FROM catalog_items
+              WHERE provider_id = p.id
+                AND content_type = ?
+                AND is_stale = 0) AS live_count,
+             (SELECT COUNT(*)
+              FROM catalog_items
+              WHERE provider_id = p.id
+                AND content_type = ?
+                AND is_stale = 0) AS movie_count,
+             (SELECT COUNT(*)
+              FROM catalog_items
+              WHERE provider_id = p.id
+                AND content_type = ?
+                AND is_stale = 0) AS series_count,
+             (SELECT COUNT(*)
+              FROM episodes
+              WHERE provider_id = p.id
+                AND is_stale = 0) AS episode_count,
+             (SELECT COUNT(*)
+              FROM epg_programs
+              WHERE provider_id = p.id) AS epg_program_count
+      FROM providers AS p
+      LEFT JOIN provider_refresh_runs AS r
+        ON r.id = (
+          SELECT id
+          FROM provider_refresh_runs
+          WHERE provider_id = p.id
+          ORDER BY started_at DESC
+          LIMIT 1
+        )
+      ORDER BY p.name ASC
+      ''',
+      variables: [
+        Variable<String>(CatalogContentType.live.name),
+        Variable<String>(CatalogContentType.movie.name),
+        Variable<String>(CatalogContentType.series.name),
+      ],
+      readsFrom: {
+        _db.catalogProviders,
+        _db.providerRefreshRuns,
+        _db.catalogItems,
+        _db.episodes,
+        _db.epgPrograms,
+      },
+    );
+  }
+
   Selectable<QueryRow> _providerQuery(String id) {
     return _db.customSelect(
       '''
@@ -212,7 +328,28 @@ List<IptvProvider> _mapProviderRows(List<QueryRow> rows) {
   return rows.map(_providerFromRow).toList();
 }
 
-IptvProvider _providerFromRow(QueryRow row) {
+List<ProviderHealth> _mapProviderHealthRows(List<QueryRow> rows) {
+  return rows.map(_providerHealthFromRow).toList();
+}
+
+ProviderHealth _providerHealthFromRow(QueryRow row) {
+  final provider = _providerFromRow(row, redactSource: true);
+  return ProviderHealth(
+    provider: provider,
+    stats: ProviderCatalogStats(
+      liveCount: row.read<int>('live_count'),
+      movieCount: row.read<int>('movie_count'),
+      seriesCount: row.read<int>('series_count'),
+      episodeCount: row.read<int>('episode_count'),
+      epgProgramCount: row.read<int>('epg_program_count'),
+    ),
+    latestRun: _refreshRunFromQueryRow(row),
+    nextRefreshAtMs: provider.nextRefreshAt?.millisecondsSinceEpoch,
+    isEnabled: row.read<bool>('is_enabled'),
+  );
+}
+
+IptvProvider _providerFromRow(QueryRow row, {bool redactSource = false}) {
   final type = _providerTypeFromDb(
     row.read<String>('type'),
     row.readNullable<String>('source_kind'),
@@ -226,11 +363,15 @@ IptvProvider _providerFromRow(QueryRow row) {
     id: row.read<String>('id'),
     name: row.read<String>('name'),
     type: type,
-    serverUrl: type == ProviderType.xtream ? row.read<String>('source') : null,
-    username: row.readNullable<String>('username'),
-    password: row.readNullable<String>('password'),
-    m3uUrl: type == ProviderType.m3uUrl ? row.read<String>('source') : null,
-    localFilePath: type == ProviderType.m3uFile
+    serverUrl: !redactSource && type == ProviderType.xtream
+        ? row.read<String>('source')
+        : null,
+    username: redactSource ? null : row.readNullable<String>('username'),
+    password: redactSource ? null : row.readNullable<String>('password'),
+    m3uUrl: !redactSource && type == ProviderType.m3uUrl
+        ? row.read<String>('source')
+        : null,
+    localFilePath: !redactSource && type == ProviderType.m3uFile
         ? row.read<String>('source')
         : null,
     refreshEnabled: row.read<bool>('auto_refresh_enabled'),
@@ -241,6 +382,37 @@ IptvProvider _providerFromRow(QueryRow row) {
       row.readNullable<String>('last_refresh_status'),
     ),
     lastRefreshMessage: row.readNullable<String>('last_refresh_message'),
+  );
+}
+
+ProviderRefreshRun _refreshRunFromRow(ProviderRefreshRunRow row) {
+  return ProviderRefreshRun(
+    id: row.id,
+    providerId: row.providerId,
+    status: ProviderRefreshStatus.fromDb(row.status),
+    startedAtMs: row.startedAt,
+    finishedAtMs: row.finishedAt,
+    itemCount: row.itemCount,
+    errorMessage: row.errorMessage,
+  );
+}
+
+ProviderRefreshRun? _refreshRunFromQueryRow(QueryRow row) {
+  final id = row.readNullable<String>('run_id');
+  final providerId = row.readNullable<String>('run_provider_id');
+  final status = row.readNullable<String>('last_refresh_status');
+  final startedAt = row.readNullable<int>('run_started_at');
+  if (id == null || providerId == null || status == null || startedAt == null) {
+    return null;
+  }
+  return ProviderRefreshRun(
+    id: id,
+    providerId: providerId,
+    status: ProviderRefreshStatus.fromDb(status),
+    startedAtMs: startedAt,
+    finishedAtMs: row.readNullable<int>('run_finished_at'),
+    itemCount: row.readNullable<int>('run_item_count') ?? 0,
+    errorMessage: row.readNullable<String>('last_refresh_message'),
   );
 }
 

@@ -1,7 +1,7 @@
 import 'playable_item.dart';
 import 'track_models.dart';
 
-enum VelaPlaybackStatus { idle, opening, ready, completed, error }
+enum VelaPlaybackStatus { idle, opening, ready, completed, error, stalled }
 
 class VelaPlayerState {
   const VelaPlayerState({
@@ -43,6 +43,10 @@ class VelaPlayerState {
   final List<PlaybackVideoTrack> videoTracks;
 
   bool get hasMedia => item != null;
+  bool get canRetry =>
+      item != null &&
+      (status == VelaPlaybackStatus.error ||
+          status == VelaPlaybackStatus.stalled);
   bool get isLive => item?.kind == PlayableKind.live;
   bool get isSeekable {
     final currentItem = item;

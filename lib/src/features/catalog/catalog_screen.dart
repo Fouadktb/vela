@@ -18,11 +18,14 @@ import '../providers/provider_setup_screen.dart';
 import 'category_list.dart';
 import 'content_detail_screen.dart';
 import 'detail_panel.dart';
+import 'global_search.dart';
 import 'item_grid.dart';
+import 'live_guide_view.dart';
 import 'series_playback_progress.dart';
 
 const _catalogCacheDuration = Duration(minutes: 10);
-final _forcedEpgRefreshProviders = <String>{};
+const _epgAutoRefreshCooldown = Duration(minutes: 15);
+final _epgRefreshAttempts = <_EpgRefreshKey, _EpgRefreshAttempt>{};
 
 final _recentCatalogCardsProvider =
     StreamProvider.autoDispose<List<CatalogCardItem>>((ref) {
@@ -136,135 +139,202 @@ class _CatalogContent extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final navigation = ref.watch(navigationControllerProvider);
     final state = navigation.stateFor(section);
+    final liveViewMode = navigation.liveViewMode;
+    final liveGuideDayStartMs = navigation.liveGuideDayStartMs;
     final itemsValue = _itemsForSection(ref, section, state.selectedCategoryId);
     final categoriesValue = _categoriesForSection(ref, section);
+    final globalSearchRequest = GlobalSearchRequest.fromToolbarQuery(
+      state.searchQuery,
+    );
+    if (section == VelaSection.live) {
+      _syncLiveGuideDayIfNeeded(ref, liveGuideDayStartMs);
+    }
 
     return ColoredBox(
       color: const Color(0xFF0C0D0E),
       child: SafeArea(
         child: Column(
           children: [
-            _CatalogToolbar(section: section, state: state),
+            _CatalogToolbar(
+              section: section,
+              state: state,
+              liveViewMode: liveViewMode,
+            ),
             Expanded(
-              child: AsyncValueView(
-                value: itemsValue,
-                data: (items) {
-                  final visible = _filterItems(items, state.searchQuery);
-                  final selected = _selectedItem(visible, state.selectedItemId);
-                  final seriesEpisodesValue =
-                      selected?.contentType == CatalogContentType.series
-                      ? ref.watch(
-                          _seriesEpisodesProvider(
-                            _SeriesEpisodesQuery(
-                              providerId: selected!.providerId,
-                              seriesId: selected.id,
-                            ),
-                          ),
-                        )
-                      : const AsyncValue.data(<CatalogEpisode>[]);
-                  final seriesEpisodePositionsValue =
-                      selected?.contentType == CatalogContentType.series
-                      ? ref.watch(
-                          _seriesEpisodePositionsProvider(
-                            _SeriesEpisodesQuery(
-                              providerId: selected!.providerId,
-                              seriesId: selected.id,
-                            ),
-                          ),
-                        )
-                      : const AsyncValue.data(<PlaybackPosition>[]);
-                  final epgProgramsValue = _epgProgramsForSelected(
-                    ref,
-                    selected,
-                  );
-                  _refreshSeriesEpisodesIfNeeded(
-                    ref,
-                    selected,
-                    seriesEpisodesValue,
-                  );
-                  _refreshEpgIfNeeded(ref, selected, epgProgramsValue);
-                  if (selected != null && selected.id != state.selectedItemId) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      ref
-                          .read(navigationControllerProvider)
-                          .selectItem(selected.id);
-                    });
-                  }
-
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (section.contentType != null)
-                        SizedBox(
-                          width: 292,
-                          child: AsyncValueView(
-                            value: categoriesValue,
-                            data: (categories) => CategoryList(
-                              categories: categories,
-                              searchQuery: state.categorySearchQuery,
-                              selectedCategoryId: state.selectedCategoryId,
-                              onSearchChanged: ref
-                                  .read(navigationControllerProvider)
-                                  .setCategorySearchQuery,
-                              onSelect: ref
-                                  .read(navigationControllerProvider)
-                                  .selectCategory,
-                              onToggleFavorite: (category) =>
-                                  _toggleCategoryFavorite(ref, category),
-                              onMove: (category, delta) => _moveCategory(
+              child: globalSearchRequest != null
+                  ? GlobalSearchResultsView(
+                      request: globalSearchRequest,
+                      onOpenResult: (result) =>
+                          _openGlobalSearchResult(context, ref, result),
+                    )
+                  : AsyncValueView(
+                      value: itemsValue,
+                      data: (items) {
+                        final visible = _filterItems(items, state.searchQuery);
+                        final selected = _selectedItem(
+                          visible,
+                          state.selectedItemId,
+                        );
+                        final seriesEpisodesValue =
+                            selected?.contentType == CatalogContentType.series
+                            ? ref.watch(
+                                _seriesEpisodesProvider(
+                                  _SeriesEpisodesQuery(
+                                    providerId: selected!.providerId,
+                                    seriesId: selected.id,
+                                  ),
+                                ),
+                              )
+                            : const AsyncValue.data(<CatalogEpisode>[]);
+                        final seriesEpisodePositionsValue =
+                            selected?.contentType == CatalogContentType.series
+                            ? ref.watch(
+                                _seriesEpisodePositionsProvider(
+                                  _SeriesEpisodesQuery(
+                                    providerId: selected!.providerId,
+                                    seriesId: selected.id,
+                                  ),
+                                ),
+                              )
+                            : const AsyncValue.data(<PlaybackPosition>[]);
+                        final epgProgramsValue = _epgProgramsForSelected(
+                          ref,
+                          selected,
+                          liveGuideDayStartMs,
+                        );
+                        final guideProgramsValue =
+                            section == VelaSection.live &&
+                                liveViewMode == LiveCatalogViewMode.guide
+                            ? _epgProgramsForLiveGuide(
                                 ref,
-                                categories,
-                                category,
-                                delta,
+                                visible,
+                                liveGuideDayStartMs,
+                              )
+                            : const AsyncValue.data(<EpgProgram>[]);
+                        _refreshSeriesEpisodesIfNeeded(
+                          ref,
+                          selected,
+                          seriesEpisodesValue,
+                        );
+                        _refreshEpgIfNeeded(
+                          ref,
+                          selected,
+                          epgProgramsValue,
+                          liveGuideDayStartMs,
+                        );
+                        if (selected != null &&
+                            selected.id != state.selectedItemId) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            ref
+                                .read(navigationControllerProvider)
+                                .selectItem(selected.id);
+                          });
+                        }
+
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (section.contentType != null)
+                              SizedBox(
+                                width: 292,
+                                child: AsyncValueView(
+                                  value: categoriesValue,
+                                  data: (categories) => CategoryList(
+                                    categories: categories,
+                                    searchQuery: state.categorySearchQuery,
+                                    selectedCategoryId:
+                                        state.selectedCategoryId,
+                                    onSearchChanged: ref
+                                        .read(navigationControllerProvider)
+                                        .setCategorySearchQuery,
+                                    onSelect: ref
+                                        .read(navigationControllerProvider)
+                                        .selectCategory,
+                                    onToggleFavorite: (category) =>
+                                        _toggleCategoryFavorite(ref, category),
+                                    onMove: (category, delta) => _moveCategory(
+                                      ref,
+                                      categories,
+                                      category,
+                                      delta,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            Expanded(
+                              child: Padding(
+                                padding: EdgeInsets.only(
+                                  left: section.contentType == null ? 30 : 0,
+                                  right: section.contentType == null ? 6 : 0,
+                                ),
+                                child: visible.isEmpty
+                                    ? EmptyState(
+                                        icon: section.icon,
+                                        title: section.emptyTitle,
+                                        message:
+                                            'No items match the current section, category, or search filter.',
+                                      )
+                                    : section == VelaSection.live &&
+                                          liveViewMode ==
+                                              LiveCatalogViewMode.guide
+                                    ? LiveGuideView(
+                                        items: visible,
+                                        selectedItemId: selected?.id,
+                                        dayStartMs: liveGuideDayStartMs,
+                                        epgPrograms: guideProgramsValue,
+                                        onSelect: ref
+                                            .read(navigationControllerProvider)
+                                            .selectItem,
+                                        onOpen: (item) => _openItem(ref, item),
+                                        onRefreshEpg: () =>
+                                            _refreshEpgForLiveGuide(
+                                              ref,
+                                              visible,
+                                              liveGuideDayStartMs,
+                                            ),
+                                        onDayChanged: ref
+                                            .read(navigationControllerProvider)
+                                            .setLiveGuideDayStartMs,
+                                      )
+                                    : ItemGrid(
+                                        items: visible,
+                                        selectedItemId: selected?.id,
+                                        onSelect: ref
+                                            .read(navigationControllerProvider)
+                                            .selectItem,
+                                        onOpen: (item) => _openItem(ref, item),
+                                      ),
                               ),
                             ),
-                          ),
-                        ),
-                      Expanded(
-                        child: Padding(
-                          padding: EdgeInsets.only(
-                            left: section.contentType == null ? 30 : 0,
-                            right: section.contentType == null ? 6 : 0,
-                          ),
-                          child: visible.isEmpty
-                              ? EmptyState(
-                                  icon: section.icon,
-                                  title: section.emptyTitle,
-                                  message:
-                                      'No items match the current section, category, or search filter.',
-                                )
-                              : ItemGrid(
-                                  items: visible,
-                                  selectedItemId: selected?.id,
-                                  onSelect: ref
-                                      .read(navigationControllerProvider)
-                                      .selectItem,
-                                  onOpen: (item) => _openItem(ref, item),
-                                ),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 360,
-                        child: DetailPanel(
-                          item: selected,
-                          seriesEpisodes: seriesEpisodesValue,
-                          episodePositions: seriesEpisodePositionsValue,
-                          epgPrograms: epgProgramsValue,
-                          onPlay: (item) => _openItem(ref, item),
-                          onRestart: (item) =>
-                              _openItem(ref, item, restart: true),
-                          onOpenEpisode: (item, episode) =>
-                              _openEpisode(ref, item, episode),
-                          onOpenDetails: (item) =>
-                              _openDetails(context, ref, item),
-                          onToggleFavorite: (item) =>
-                              _toggleItemFavorite(ref, item),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
+                            SizedBox(
+                              width: 360,
+                              child: DetailPanel(
+                                item: selected,
+                                seriesEpisodes: seriesEpisodesValue,
+                                episodePositions: seriesEpisodePositionsValue,
+                                epgPrograms: epgProgramsValue,
+                                onPlay: (item) => _openItem(ref, item),
+                                onRestart: (item) =>
+                                    _openItem(ref, item, restart: true),
+                                onRefreshEpg: selected == null
+                                    ? null
+                                    : () => _refreshEpgForSelected(
+                                        ref,
+                                        selected,
+                                        liveGuideDayStartMs,
+                                      ),
+                                onOpenEpisode: (item, episode) =>
+                                    _openEpisode(ref, item, episode),
+                                onOpenDetails: (item) =>
+                                    _openDetails(context, ref, item),
+                                onToggleFavorite: (item) =>
+                                    _toggleItemFavorite(ref, item),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
             ),
           ],
         ),
@@ -414,17 +484,70 @@ class _CatalogContent extends ConsumerWidget {
       ),
     );
   }
+
+  Future<void> _openGlobalSearchResult(
+    BuildContext context,
+    WidgetRef ref,
+    GlobalSearchResult result,
+  ) async {
+    final item = result.item;
+    if (item.contentType == CatalogContentType.live) {
+      await _openItem(ref, item);
+      return;
+    }
+    await _openDetails(context, ref, item);
+  }
 }
 
-class _CatalogToolbar extends ConsumerWidget {
-  const _CatalogToolbar({required this.section, required this.state});
+class _CatalogToolbar extends ConsumerStatefulWidget {
+  const _CatalogToolbar({
+    required this.section,
+    required this.state,
+    required this.liveViewMode,
+  });
 
   final VelaSection section;
   final SectionState state;
+  final LiveCatalogViewMode liveViewMode;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_CatalogToolbar> createState() => _CatalogToolbarState();
+}
+
+class _CatalogToolbarState extends ConsumerState<_CatalogToolbar> {
+  late final TextEditingController _searchController;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController(text: widget.state.searchQuery);
+  }
+
+  @override
+  void didUpdateWidget(_CatalogToolbar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.state.searchQuery != _searchController.text) {
+      _searchController
+        ..text = widget.state.searchQuery
+        ..selection = TextSelection.collapsed(
+          offset: widget.state.searchQuery.length,
+        );
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final showLiveModeToggle = widget.section == VelaSection.live;
+    final globalSearchActive = GlobalSearchRequest.isGlobalToolbarQuery(
+      widget.state.searchQuery,
+    );
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(30, 24, 30, 22),
@@ -437,7 +560,7 @@ class _CatalogToolbar extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  section.eyebrow,
+                  widget.section.eyebrow,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.primary,
                     fontWeight: FontWeight.w800,
@@ -446,7 +569,7 @@ class _CatalogToolbar extends ConsumerWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  section.label,
+                  widget.section.label,
                   style: theme.textTheme.headlineMedium?.copyWith(
                     fontWeight: FontWeight.w800,
                     letterSpacing: 0,
@@ -457,17 +580,68 @@ class _CatalogToolbar extends ConsumerWidget {
           ),
           Expanded(
             child: TextField(
+              controller: _searchController,
               onChanged: ref.read(navigationControllerProvider).setSearchQuery,
-              controller: TextEditingController(text: state.searchQuery)
-                ..selection = TextSelection.collapsed(
-                  offset: state.searchQuery.length,
-                ),
               decoration: InputDecoration(
-                hintText: section.searchPlaceholder,
-                prefixIcon: const Icon(LucideIcons.search),
+                hintText: globalSearchActive
+                    ? 'Global search'
+                    : '${widget.section.searchPlaceholder} or / global',
+                prefixIcon: Icon(
+                  globalSearchActive ? LucideIcons.globe2 : LucideIcons.search,
+                ),
               ),
             ),
           ),
+          const SizedBox(width: 14),
+          IconButton.filledTonal(
+            tooltip: globalSearchActive
+                ? 'Search this section'
+                : 'Search everything',
+            onPressed: () {
+              final controller = ref.read(navigationControllerProvider);
+              if (globalSearchActive) {
+                controller.setSearchQuery(
+                  GlobalSearchRequest.disableToolbarQuery(
+                    widget.state.searchQuery,
+                  ),
+                );
+              } else {
+                controller.setSearchQuery(
+                  GlobalSearchRequest.enableToolbarQuery(
+                    widget.state.searchQuery,
+                  ),
+                );
+              }
+            },
+            icon: Icon(
+              globalSearchActive ? LucideIcons.search : LucideIcons.globe2,
+              size: 18,
+            ),
+          ),
+          if (showLiveModeToggle) ...[
+            const SizedBox(width: 14),
+            SegmentedButton<LiveCatalogViewMode>(
+              segments: const [
+                ButtonSegment(
+                  value: LiveCatalogViewMode.list,
+                  icon: Icon(LucideIcons.list, size: 17),
+                  tooltip: 'List view',
+                ),
+                ButtonSegment(
+                  value: LiveCatalogViewMode.guide,
+                  icon: Icon(LucideIcons.calendarDays, size: 17),
+                  tooltip: 'Guide view',
+                ),
+              ],
+              selected: {widget.liveViewMode},
+              showSelectedIcon: false,
+              onSelectionChanged: (selection) {
+                ref
+                    .read(navigationControllerProvider)
+                    .setLiveViewMode(selection.first);
+              },
+            ),
+          ],
         ],
       ),
     );
@@ -479,6 +653,30 @@ class _PlaybackTarget {
 
   final PlayableItem playable;
   final WatchHistoryUpdate? history;
+}
+
+class _EpgRefreshKey {
+  const _EpgRefreshKey({required this.providerId, required this.dayStartMs});
+
+  final String providerId;
+  final int dayStartMs;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _EpgRefreshKey &&
+        other.providerId == providerId &&
+        other.dayStartMs == dayStartMs;
+  }
+
+  @override
+  int get hashCode => Object.hash(providerId, dayStartMs);
+}
+
+class _EpgRefreshAttempt {
+  _EpgRefreshAttempt({required this.lastAttemptAtMs});
+
+  int lastAttemptAtMs;
+  bool inFlight = false;
 }
 
 class _SeriesEpisodesQuery {
@@ -504,29 +702,61 @@ class _SeriesEpisodesQuery {
 AsyncValue<List<EpgProgram>> _epgProgramsForSelected(
   WidgetRef ref,
   CatalogCardItem? selected,
+  int dayStartMs,
 ) {
   if (selected == null || selected.contentType != CatalogContentType.live) {
     return const AsyncValue.data(<EpgProgram>[]);
   }
-  final channelIds = _epgChannelAliases(selected);
+  final channelIds = epgChannelAliases(selected);
   if (channelIds.isEmpty) {
     return const AsyncValue.data(<EpgProgram>[]);
   }
 
-  final now = DateTime.now();
-  final dayStart = DateTime(now.year, now.month, now.day);
   return ref.watch(
     epgProgramsProvider(
       EpgProgramsQuery(
         providerId: selected.providerId,
         channelIds: channelIds,
-        fromMs: dayStart
-            .subtract(const Duration(hours: 3))
-            .millisecondsSinceEpoch,
-        toMs: dayStart.add(const Duration(days: 2)).millisecondsSinceEpoch,
+        fromMs: dayStartMs - const Duration(hours: 3).inMilliseconds,
+        toMs: dayStartMs + const Duration(days: 2).inMilliseconds,
       ),
     ),
   );
+}
+
+AsyncValue<List<EpgProgram>> _epgProgramsForLiveGuide(
+  WidgetRef ref,
+  List<CatalogCardItem> items,
+  int dayStartMs,
+) {
+  final providerIds = _liveProviderIds(items);
+  if (providerIds.isEmpty) {
+    return const AsyncValue.data(<EpgProgram>[]);
+  }
+
+  final values = <AsyncValue<List<EpgProgram>>>[
+    for (final providerId in providerIds)
+      ref.watch(
+        liveGuideEpgProgramsProvider(
+          ProviderDayEpgProgramsQuery(
+            providerId: providerId,
+            dayStartMs: dayStartMs,
+          ),
+        ),
+      ),
+  ];
+
+  final error = values.where((value) => value.hasError).firstOrNull;
+  if (error != null && values.every((value) => value.value == null)) {
+    return AsyncValue.error(error.error!, error.stackTrace!);
+  }
+  final combined = [
+    for (final value in values) ...(value.value ?? const <EpgProgram>[]),
+  ];
+  if (combined.isEmpty && values.any((value) => value.isLoading)) {
+    return const AsyncValue.loading();
+  }
+  return AsyncValue.data(combined);
 }
 
 void _refreshSeriesEpisodesIfNeeded(
@@ -570,11 +800,12 @@ void _refreshEpgIfNeeded(
   WidgetRef ref,
   CatalogCardItem? selected,
   AsyncValue<List<EpgProgram>> programsValue,
+  int dayStartMs,
 ) {
   if (selected == null || selected.contentType != CatalogContentType.live) {
     return;
   }
-  if (_epgChannelAliases(selected).isEmpty) {
+  if (epgChannelAliases(selected).isEmpty) {
     return;
   }
 
@@ -583,36 +814,113 @@ void _refreshEpgIfNeeded(
       return;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final force = _forcedEpgRefreshProviders.add(selected.providerId);
-      unawaited(
-        ref
-            .read(providerRefreshServiceProvider)
-            .refreshProviderEpg(selected.providerId, force: force)
-            .catchError((Object error, StackTrace stackTrace) {
-              debugPrint('Failed to load channel schedule: $error');
-              debugPrintStack(stackTrace: stackTrace);
-            }),
+      _refreshProviderEpgGuarded(
+        ref,
+        providerId: selected.providerId,
+        dayStartMs: dayStartMs,
+        force: false,
+        errorMessage: 'Failed to load channel schedule',
       );
     });
   });
 }
 
-List<String> _epgChannelAliases(CatalogCardItem item) {
-  final aliases = <String>[
-    if (item.epgChannelId?.trim().isNotEmpty == true) item.epgChannelId!.trim(),
-    if (item.externalId?.trim().isNotEmpty == true) item.externalId!.trim(),
-    if (item.title.trim().isNotEmpty) item.title.trim(),
-    _trailingCatalogId(item.id),
-  ];
-  return aliases.where((value) => value.trim().isNotEmpty).toSet().toList();
+void _refreshEpgForSelected(
+  WidgetRef ref,
+  CatalogCardItem selected,
+  int dayStartMs,
+) {
+  if (selected.contentType != CatalogContentType.live) {
+    return;
+  }
+  _refreshProviderEpgGuarded(
+    ref,
+    providerId: selected.providerId,
+    dayStartMs: dayStartMs,
+    force: true,
+    errorMessage: 'Failed to refresh channel schedule',
+  );
 }
 
-String _trailingCatalogId(String value) {
-  final separator = value.lastIndexOf(':');
-  if (separator < 0 || separator >= value.length - 1) {
-    return value;
+void _refreshEpgForLiveGuide(
+  WidgetRef ref,
+  List<CatalogCardItem> items,
+  int dayStartMs,
+) {
+  for (final providerId in _liveProviderIds(items)) {
+    _refreshProviderEpgGuarded(
+      ref,
+      providerId: providerId,
+      dayStartMs: dayStartMs,
+      force: true,
+      errorMessage: 'Failed to refresh live guide',
+    );
   }
-  return value.substring(separator + 1);
+}
+
+Set<String> _liveProviderIds(List<CatalogCardItem> items) {
+  final providerIds = <String>{};
+  for (final item in items) {
+    if (item.contentType == CatalogContentType.live) {
+      providerIds.add(item.providerId);
+    }
+  }
+  return providerIds;
+}
+
+void _refreshProviderEpgGuarded(
+  WidgetRef ref, {
+  required String providerId,
+  required int dayStartMs,
+  required bool force,
+  required String errorMessage,
+}) {
+  final key = _EpgRefreshKey(providerId: providerId, dayStartMs: dayStartMs);
+  final nowMs = DateTime.now().millisecondsSinceEpoch;
+  final attempt = _epgRefreshAttempts.putIfAbsent(
+    key,
+    () => _EpgRefreshAttempt(lastAttemptAtMs: 0),
+  );
+  if (attempt.inFlight) {
+    return;
+  }
+  if (!force &&
+      attempt.lastAttemptAtMs > 0 &&
+      nowMs - attempt.lastAttemptAtMs <
+          _epgAutoRefreshCooldown.inMilliseconds) {
+    return;
+  }
+
+  attempt
+    ..inFlight = true
+    ..lastAttemptAtMs = nowMs;
+  unawaited(
+    ref
+        .read(providerRefreshServiceProvider)
+        .refreshProviderEpg(providerId, force: force)
+        .catchError((Object error, StackTrace stackTrace) {
+          debugPrint('$errorMessage: $error');
+          debugPrintStack(stackTrace: stackTrace);
+        })
+        .whenComplete(() {
+          attempt.inFlight = false;
+        }),
+  );
+}
+
+void _syncLiveGuideDayIfNeeded(WidgetRef ref, int dayStartMs) {
+  final now = DateTime.now();
+  final todayStartMs = DateTime(
+    now.year,
+    now.month,
+    now.day,
+  ).millisecondsSinceEpoch;
+  if (dayStartMs == todayStartMs) {
+    return;
+  }
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    ref.read(navigationControllerProvider).setLiveGuideDayStartMs(todayStartMs);
+  });
 }
 
 AsyncValue<List<CatalogCardItem>> _combineCatalogItems(
@@ -649,10 +957,12 @@ Future<List<CatalogCardItem>> _catalogItemsToCards(
         )
       : <({String providerId, String itemId}), PlaybackPosition>{};
   final seriesPositions = hasSeries
-      ? await historyRepository.listLatestPositionsBySeries(
-          providerIds: providerIds,
+      ? await historyRepository.listEpisodePositionsBySeries(
+          seriesKeys: items
+              .where((item) => item.contentType == CatalogContentType.series)
+              .map((item) => (providerId: item.providerId, seriesId: item.id)),
         )
-      : <({String providerId, String seriesId}), PlaybackPosition>{};
+      : <({String providerId, String seriesId}), List<PlaybackPosition>>{};
   final cards = <CatalogCardItem>[];
   for (final item in items) {
     if (item.contentType != CatalogContentType.series) {
@@ -666,14 +976,14 @@ Future<List<CatalogCardItem>> _catalogItemsToCards(
       );
       continue;
     }
-    final latestPosition =
+    final positions =
         seriesPositions[(providerId: item.providerId, seriesId: item.id)];
-    final seriesAction = latestPosition == null
+    final seriesAction = positions == null || positions.isEmpty
         ? null
-        : await _seriesPlaybackActionForPosition(
+        : await _seriesPlaybackActionForPositions(
             catalogRepository: catalogRepository,
             item: item,
-            position: latestPosition,
+            positions: positions,
           );
     cards.add(
       _catalogItemToCard(
@@ -687,16 +997,16 @@ Future<List<CatalogCardItem>> _catalogItemsToCards(
   return cards;
 }
 
-Future<SeriesPlaybackAction?> _seriesPlaybackActionForPosition({
+Future<SeriesPlaybackAction?> _seriesPlaybackActionForPositions({
   required CatalogRepository catalogRepository,
   required CatalogItem item,
-  required PlaybackPosition position,
+  required List<PlaybackPosition> positions,
 }) async {
   final episodes = await catalogRepository.listEpisodesForSeries(
     providerId: item.providerId,
     seriesId: item.id,
   );
-  return resolveSeriesPlaybackAction(episodes: episodes, positions: [position]);
+  return resolveSeriesPlaybackAction(episodes: episodes, positions: positions);
 }
 
 void _keepCatalogProviderWarm(Ref ref) {
@@ -876,21 +1186,15 @@ Future<CatalogCardItem?> _recentEpisodeToSeriesCard(
     completed: entry.completed,
     updatedAtMs: entry.lastWatchedAtMs,
   );
-  final latestResume = await historyRepository.lookupLatestResumeForSeries(
+  final positions = await historyRepository.listEpisodePositionsForSeries(
     providerId: entry.providerId,
     seriesId: seriesId,
   );
-  final latestPosition = await historyRepository.lookupLatestPositionForSeries(
-    providerId: entry.providerId,
-    seriesId: seriesId,
-  );
-  final seriesAction = latestPosition == null
+  final seriesAction = positions.isEmpty
       ? null
-      : resolveSeriesPlaybackAction(
-          episodes: episodes,
-          positions: [latestPosition],
-        );
-  final effectiveResume = seriesAction?.resume ?? latestResume ?? resume;
+      : resolveSeriesPlaybackAction(episodes: episodes, positions: positions);
+  final effectiveResume =
+      seriesAction?.resume ?? latestResumablePosition(positions) ?? resume;
   return _catalogItemToCard(
     series,
     canPlayOverride: true,
@@ -996,16 +1300,19 @@ Future<void> _moveCategory(
   CatalogCategory category,
   int delta,
 ) async {
-  final scoped = categories
-      .where(
-        (candidate) =>
-            candidate.providerId == category.providerId &&
-            candidate.contentType == category.contentType,
-      )
-      .toList();
+  final scoped = _favoritePinnedCategories(
+    categories
+        .where(
+          (candidate) =>
+              candidate.providerId == category.providerId &&
+              candidate.contentType == category.contentType,
+        )
+        .toList(),
+  );
   final index = scoped.indexWhere((candidate) => candidate.id == category.id);
   final nextIndex = index + delta;
   if (index < 0 || nextIndex < 0 || nextIndex >= scoped.length) return;
+  if (scoped[nextIndex].isFavorite != category.isFavorite) return;
   final ids = scoped.map((candidate) => candidate.id).toList();
   final moved = ids.removeAt(index);
   ids.insert(nextIndex, moved);
@@ -1016,6 +1323,15 @@ Future<void> _moveCategory(
         contentType: category.contentType,
         categoryIds: ids,
       );
+}
+
+List<CatalogCategory> _favoritePinnedCategories(
+  List<CatalogCategory> categories,
+) {
+  return [
+    ...categories.where((category) => category.isFavorite),
+    ...categories.where((category) => !category.isFavorite),
+  ];
 }
 
 Future<void> _toggleItemFavorite(WidgetRef ref, CatalogCardItem item) {
@@ -1039,20 +1355,17 @@ Future<_PlaybackTarget?> _playbackTargetForCard(
 
   if (item.contentType == CatalogContentType.series) {
     final episodes = await _episodesForSeries(ref, item);
-    final latestPosition = restart
+    final positions = restart
         ? null
         : await ref
               .read(watchHistoryRepositoryProvider)
-              .lookupLatestPositionForSeries(
+              .listEpisodePositionsForSeries(
                 providerId: item.providerId,
                 seriesId: item.id,
               );
-    final seriesAction = latestPosition == null
+    final seriesAction = positions == null || positions.isEmpty
         ? null
-        : resolveSeriesPlaybackAction(
-            episodes: episodes,
-            positions: [latestPosition],
-          );
+        : resolveSeriesPlaybackAction(episodes: episodes, positions: positions);
     final firstPlayableEpisode = episodes
         .where(_episodeHasPlayableStream)
         .firstOrNull;

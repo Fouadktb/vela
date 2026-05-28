@@ -25,6 +25,30 @@ class WatchHistoryRepository {
     return rows.map(_toWatchHistoryEntry).toList();
   }
 
+  Future<int> recentlyWatchedCount() async {
+    final row = await _db
+        .customSelect(
+          'SELECT COUNT(*) AS count FROM watch_history',
+          readsFrom: {_db.watchHistory},
+        )
+        .getSingle();
+    return row.read<int>('count');
+  }
+
+  Future<List<Map<String, Object?>>> exportWatchHistory() async {
+    final query = _db.select(_db.watchHistory)
+      ..orderBy([(history) => OrderingTerm.desc(history.lastWatchedAt)]);
+    final rows = await query.get();
+    return rows.map(_watchHistoryToJson).toList();
+  }
+
+  Future<List<Map<String, Object?>>> exportPlaybackPositions() async {
+    final query = _db.select(_db.playbackPositions)
+      ..orderBy([(position) => OrderingTerm.desc(position.updatedAt)]);
+    final rows = await query.get();
+    return rows.map(_playbackPositionToJson).toList();
+  }
+
   Future<void> clearRecentlyWatched({String? providerId}) async {
     await _db.transaction(() async {
       if (providerId == null) {
@@ -317,6 +341,58 @@ class WatchHistoryRepository {
     return positions;
   }
 
+  Future<List<PlaybackPosition>> listEpisodePositionsForSeries({
+    required String providerId,
+    required String seriesId,
+  }) async {
+    final grouped = await listEpisodePositionsBySeries(
+      seriesKeys: [(providerId: providerId, seriesId: seriesId)],
+    );
+    return grouped[(providerId: providerId, seriesId: seriesId)] ??
+        const <PlaybackPosition>[];
+  }
+
+  Future<Map<({String providerId, String seriesId}), List<PlaybackPosition>>>
+  listEpisodePositionsBySeries({
+    required Iterable<({String providerId, String seriesId})> seriesKeys,
+  }) async {
+    final keys = {
+      for (final key in seriesKeys)
+        if (key.providerId.trim().isNotEmpty && key.seriesId.trim().isNotEmpty)
+          (providerId: key.providerId, seriesId: key.seriesId),
+    };
+    if (keys.isEmpty) {
+      return <({String providerId, String seriesId}), List<PlaybackPosition>>{};
+    }
+
+    final providerIds = keys.map((key) => key.providerId).toSet();
+    final query = _db.select(_db.playbackPositions)
+      ..where((position) {
+        return position.itemType.equals(PlayableContentType.episode.name) &
+            position.providerId.isIn(providerIds) &
+            (position.completed.equals(true) |
+                position.positionSeconds.isBiggerThanValue(0));
+      })
+      ..orderBy([(position) => OrderingTerm.desc(position.updatedAt)]);
+    final rows = await query.get();
+    final grouped =
+        <({String providerId, String seriesId}), List<PlaybackPosition>>{};
+
+    for (final row in rows) {
+      final seriesId = row.seriesId;
+      if (seriesId == null || seriesId.trim().isEmpty) {
+        continue;
+      }
+      final key = (providerId: row.providerId, seriesId: seriesId);
+      if (!keys.contains(key)) {
+        continue;
+      }
+      grouped.putIfAbsent(key, () => []).add(_toPlaybackPosition(row));
+    }
+
+    return grouped;
+  }
+
   Stream<List<PlaybackPosition>> watchEpisodePositionsForSeries({
     required String providerId,
     required String seriesId,
@@ -396,6 +472,41 @@ WatchHistoryEntry _toWatchHistoryEntry(WatchHistoryRow row) {
     lastWatchedAtMs: row.lastWatchedAt,
     watchCount: row.watchCount,
   );
+}
+
+Map<String, Object?> _watchHistoryToJson(WatchHistoryRow row) {
+  return {
+    'provider_id': row.providerId,
+    'catalog_key': row.catalogKey,
+    'item_id': row.itemId,
+    'item_type': row.itemType,
+    'title': row.title,
+    'subtitle': row.subtitle,
+    'series_id': row.seriesId,
+    'season_id': row.seasonId,
+    'position_seconds': row.positionSeconds,
+    'duration_seconds': row.durationSeconds,
+    'completion_percentage': row.completionPercentage,
+    'completed': row.completed,
+    'last_watched_at_ms': row.lastWatchedAt,
+    'watch_count': row.watchCount,
+  };
+}
+
+Map<String, Object?> _playbackPositionToJson(PlaybackPositionRow row) {
+  return {
+    'provider_id': row.providerId,
+    'catalog_key': row.catalogKey,
+    'item_id': row.itemId,
+    'item_type': row.itemType,
+    'series_id': row.seriesId,
+    'season_id': row.seasonId,
+    'position_seconds': row.positionSeconds,
+    'duration_seconds': row.durationSeconds,
+    'completion_percentage': row.completionPercentage,
+    'completed': row.completed,
+    'updated_at_ms': row.updatedAt,
+  };
 }
 
 double _normalizedCompletionPercentage(double value) {

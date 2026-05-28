@@ -1,23 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../app/app_version.dart';
 import '../../app/navigation_controller.dart';
+import '../../backup/backup_service.dart';
 import '../../catalog/catalog_models.dart';
+import '../../diagnostics/diagnostics_exporter.dart';
 import '../../providers/provider_models.dart';
+import '../../providers/provider_repository.dart';
 import '../../providers/refresh_interval.dart';
 import '../../shared/async_value_view.dart';
 import '../../shared/empty_state.dart';
 import '../../updates/update_checker.dart';
 import '../providers/provider_setup_screen.dart';
 
+final providerHealthOverviewProvider =
+    StreamProvider.autoDispose<List<ProviderHealth>>((ref) {
+      return ref.watch(providerRepositoryProvider).watchProviderHealth();
+    });
+
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final providers = ref.watch(providersProvider);
+    final providers = ref.watch(providerHealthOverviewProvider);
     final settings = ref.watch(appSettingsProvider);
 
     return ColoredBox(
@@ -51,7 +60,7 @@ class SettingsScreen extends ConsumerWidget {
                               : ListView.separated(
                                   itemBuilder: (context, index) {
                                     return _ProviderSettingsRow(
-                                      provider: items[index],
+                                      health: items[index],
                                     );
                                   },
                                   separatorBuilder: (_, _) =>
@@ -60,9 +69,15 @@ class SettingsScreen extends ConsumerWidget {
                                 ),
                         ),
                         const SizedBox(width: 18),
-                        const SizedBox(
+                        SizedBox(
                           width: 430,
-                          child: ProviderSetupScreen(),
+                          child: Column(
+                            children: [
+                              _DataDiagnosticsCard(settings: settings),
+                              const SizedBox(height: 12),
+                              const Expanded(child: ProviderSetupScreen()),
+                            ],
+                          ),
                         ),
                       ],
                     );
@@ -74,6 +89,207 @@ class SettingsScreen extends ConsumerWidget {
         ),
       ),
     );
+  }
+}
+
+class _DataDiagnosticsCard extends ConsumerStatefulWidget {
+  const _DataDiagnosticsCard({required this.settings});
+
+  final AsyncValue<Map<String, String>> settings;
+
+  @override
+  ConsumerState<_DataDiagnosticsCard> createState() =>
+      _DataDiagnosticsCardState();
+}
+
+class _DataDiagnosticsCardState extends ConsumerState<_DataDiagnosticsCard> {
+  bool _busy = false;
+  String? _message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF151719),
+        border: Border.all(color: const Color(0xFF292D31)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(LucideIcons.database, color: theme.colorScheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Data & diagnostics',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _exportDiagnostics,
+                  icon: const Icon(LucideIcons.fileText, size: 17),
+                  label: const Text('Export diagnostics'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _exportBackup,
+                  icon: const Icon(LucideIcons.archive, size: 17),
+                  label: const Text('Export backup'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _clearHistory,
+                  icon: const Icon(LucideIcons.history, size: 17),
+                  label: const Text('Clear history'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _clearCatalogCache,
+                  icon: const Icon(LucideIcons.databaseZap, size: 17),
+                  label: const Text('Clear catalog cache'),
+                ),
+                FilledButton.icon(
+                  onPressed: _busy ? null : _resetAppData,
+                  icon: const Icon(LucideIcons.trash2, size: 17),
+                  label: const Text('Reset app data'),
+                ),
+              ],
+            ),
+            if (_message != null) ...[
+              const SizedBox(height: 10),
+              Text(_message!, style: theme.textTheme.bodySmall),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _exportDiagnostics() async {
+    await _run((setMessage) async {
+      final updateValue = ref.read(updateStatusProvider);
+      UpdateStatus? status;
+      Object? updateError;
+      var updateLoading = false;
+      updateValue.when(
+        data: (value) => status = value,
+        error: (error, _) => updateError = error,
+        loading: () => updateLoading = true,
+      );
+      final path =
+          await DiagnosticsExporter(
+            catalogRepository: ref.read(catalogRepositoryProvider),
+            watchHistoryRepository: ref.read(watchHistoryRepositoryProvider),
+          ).export(
+            appSettings: widget.settings.value,
+            updateStatus: status,
+            updateError: updateError,
+            updateLoading: updateLoading,
+          );
+      setMessage(path == null ? 'Diagnostics export canceled' : 'Saved $path');
+    });
+  }
+
+  Future<void> _exportBackup() async {
+    await _run((setMessage) async {
+      final path = await BackupService(
+        catalogRepository: ref.read(catalogRepositoryProvider),
+        watchHistoryRepository: ref.read(watchHistoryRepositoryProvider),
+      ).export(appSettings: widget.settings.value);
+      setMessage(path == null ? 'Backup export canceled' : 'Saved $path');
+    });
+  }
+
+  Future<void> _clearHistory() async {
+    final confirmed = await _confirmAction(
+      context: context,
+      title: 'Clear recently watched and progress?',
+      message:
+          'This deletes recently watched history and playback progress for all '
+          'providers. Providers, catalog data, favorites, category order, and '
+          'app settings are kept.',
+      confirmLabel: 'Clear history',
+    );
+    if (!mounted || !confirmed) return;
+
+    await _run((setMessage) async {
+      await ref.read(watchHistoryRepositoryProvider).clearRecentlyWatched();
+      setMessage('Recently watched and playback progress cleared');
+    });
+  }
+
+  Future<void> _clearCatalogCache() async {
+    final confirmed = await _confirmAction(
+      context: context,
+      title: 'Clear provider catalog cache?',
+      message:
+          'This deletes imported live, movie, series, episode, EPG catalog '
+          'cache, and refresh run records for all providers. Providers, '
+          'favorites, category order, recently watched history, playback '
+          'progress, and app settings are kept.',
+      confirmLabel: 'Clear catalog cache',
+    );
+    if (!mounted || !confirmed) return;
+
+    await _run((setMessage) async {
+      await ref.read(catalogRepositoryProvider).clearCatalogCache();
+      setMessage('Provider catalog cache cleared');
+    });
+  }
+
+  Future<void> _resetAppData() async {
+    final confirmed = await _confirmAction(
+      context: context,
+      title: 'Reset all app data?',
+      message:
+          'This deletes provider configurations and credentials, imported '
+          'catalog data, EPG data, favorites, category order, recently watched '
+          'history, playback progress, refresh records, and app settings.',
+      confirmLabel: 'Reset app data',
+    );
+    if (!mounted || !confirmed) return;
+
+    await _run((setMessage) async {
+      await ref.read(catalogRepositoryProvider).clearAllAppData();
+      setMessage('All app data reset');
+    });
+  }
+
+  Future<void> _run(
+    Future<void> Function(void Function(String message) setMessage) action,
+  ) async {
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      await action((message) {
+        if (mounted) {
+          setState(() => _message = message);
+        }
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() => _message = error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
   }
 }
 
@@ -292,9 +508,9 @@ class _UpdateCardContent extends StatelessWidget {
 }
 
 class _ProviderSettingsRow extends ConsumerStatefulWidget {
-  const _ProviderSettingsRow({required this.provider});
+  const _ProviderSettingsRow({required this.health});
 
-  final IptvProvider provider;
+  final ProviderHealth health;
 
   @override
   ConsumerState<_ProviderSettingsRow> createState() =>
@@ -310,24 +526,24 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.provider.name);
+    _nameController = TextEditingController(text: widget.health.provider.name);
     _refreshIntervalMinutes = supportedRefreshIntervalMinutes(
-      widget.provider.refreshIntervalMinutes,
+      widget.health.provider.refreshIntervalMinutes,
     );
   }
 
   @override
   void didUpdateWidget(covariant _ProviderSettingsRow oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.provider.id != widget.provider.id ||
-        oldWidget.provider.name != widget.provider.name) {
-      _nameController.text = widget.provider.name;
+    if (oldWidget.health.provider.id != widget.health.provider.id ||
+        oldWidget.health.provider.name != widget.health.provider.name) {
+      _nameController.text = widget.health.provider.name;
     }
-    if (oldWidget.provider.id != widget.provider.id ||
-        oldWidget.provider.refreshIntervalMinutes !=
-            widget.provider.refreshIntervalMinutes) {
+    if (oldWidget.health.provider.id != widget.health.provider.id ||
+        oldWidget.health.provider.refreshIntervalMinutes !=
+            widget.health.provider.refreshIntervalMinutes) {
       _refreshIntervalMinutes = supportedRefreshIntervalMinutes(
-        widget.provider.refreshIntervalMinutes,
+        widget.health.provider.refreshIntervalMinutes,
       );
     }
   }
@@ -340,8 +556,14 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
 
   @override
   Widget build(BuildContext context) {
-    final provider = widget.provider;
+    final health = widget.health;
+    final provider = health.provider;
     final theme = Theme.of(context);
+    final lastError =
+        health.latestRefreshFailed &&
+            provider.lastRefreshMessage?.trim().isNotEmpty == true
+        ? provider.lastRefreshMessage!.trim()
+        : null;
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -369,9 +591,80 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
                     style: theme.textTheme.titleMedium,
                   ),
                 ),
-                _RefreshStatus(provider: provider),
+                _RefreshStatus(health: health),
               ],
             ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _StatusPill(
+                  icon: health.isEnabled
+                      ? LucideIcons.circleCheck
+                      : LucideIcons.circleOff,
+                  label: health.isEnabled ? 'Enabled' : 'Disabled',
+                  color: health.isEnabled
+                      ? const Color(0xFF8FB7B0)
+                      : const Color(0xFF8E8980),
+                ),
+                _StatusPill(
+                  icon: _providerIcon(provider.type),
+                  label: _providerTypeLabel(provider.type),
+                  color: const Color(0xFFA9A39A),
+                ),
+                _StatusPill(
+                  icon: provider.refreshEnabled
+                      ? LucideIcons.clock3
+                      : LucideIcons.alarmClockOff,
+                  label: provider.refreshEnabled
+                      ? 'Auto refresh on'
+                      : 'Auto refresh off',
+                  color: provider.refreshEnabled
+                      ? theme.colorScheme.primary
+                      : const Color(0xFF8E8980),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _CatalogStat(label: 'Live', count: health.stats.liveCount),
+                _CatalogStat(label: 'Movies', count: health.stats.movieCount),
+                _CatalogStat(label: 'Series', count: health.stats.seriesCount),
+                _CatalogStat(
+                  label: 'Episodes',
+                  count: health.stats.episodeCount,
+                ),
+                _CatalogStat(label: 'EPG', count: health.stats.epgProgramCount),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: _RefreshTime(
+                    label: 'Last refresh',
+                    value: _formatDateTime(provider.lastRefreshAt),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _RefreshTime(
+                    label: 'Next refresh',
+                    value: provider.refreshEnabled
+                        ? _formatMs(health.nextRefreshAtMs)
+                        : 'Off',
+                  ),
+                ),
+              ],
+            ),
+            if (lastError != null) ...[
+              const SizedBox(height: 12),
+              _ProviderError(message: lastError),
+            ],
             const SizedBox(height: 14),
             Row(
               children: [
@@ -440,16 +733,6 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
                 ),
               ],
             ),
-            if (provider.lastRefreshMessage?.trim().isNotEmpty == true) ...[
-              const SizedBox(height: 10),
-              Text(
-                provider.lastRefreshMessage!,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: const Color(0xFFB9B1A6),
-                  letterSpacing: 0,
-                ),
-              ),
-            ],
             if (_message != null) ...[
               const SizedBox(height: 10),
               Text(_message!, style: theme.textTheme.bodySmall),
@@ -464,19 +747,11 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
     await _run('Saved provider settings', () async {
       await ref
           .read(providerRepositoryProvider)
-          .createOrUpdateProvider(
-            ProviderInput(
-              id: widget.provider.id,
-              name: _nameController.text,
-              type: widget.provider.type,
-              serverUrl: widget.provider.serverUrl,
-              username: widget.provider.username,
-              password: widget.provider.password,
-              m3uUrl: widget.provider.m3uUrl,
-              localFilePath: widget.provider.localFilePath,
-              refreshEnabled: widget.provider.refreshEnabled,
-              refreshIntervalMinutes: _refreshIntervalMinutes,
-            ),
+          .updateProviderHealthSettings(
+            providerId: widget.health.provider.id,
+            name: _nameController.text,
+            refreshEnabled: widget.health.provider.refreshEnabled,
+            refreshIntervalMinutes: _refreshIntervalMinutes,
           );
     });
   }
@@ -486,10 +761,10 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
       final result = await ref
           .read(providerRefreshServiceProvider)
           .refreshProvider(
-            widget.provider.id,
-            onProgress: (message) {
+            widget.health.provider.id,
+            onProgress: (progress) {
               if (mounted) {
-                setState(() => _message = message);
+                setState(() => _message = progress.message);
               }
             },
           );
@@ -506,23 +781,29 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
     await _run('Provider catalog cleared', () {
       return ref
           .read(providerRepositoryProvider)
-          .clearProviderCatalog(widget.provider.id);
+          .clearProviderCatalog(widget.health.provider.id);
     });
   }
 
   Future<void> _clearRecent() async {
+    final confirmed = await _confirmClearRecent();
+    if (!mounted || !confirmed) return;
+
     await _run('Provider recently watched cleared', () {
       return ref
           .read(watchHistoryRepositoryProvider)
-          .clearRecentlyWatched(providerId: widget.provider.id);
+          .clearRecentlyWatched(providerId: widget.health.provider.id);
     });
   }
 
   Future<void> _delete() async {
+    final confirmed = await _confirmDeleteProvider();
+    if (!mounted || !confirmed) return;
+
     await _run('Provider deleted', () {
       return ref
           .read(providerRepositoryProvider)
-          .deleteProvider(widget.provider.id);
+          .deleteProvider(widget.health.provider.id);
     });
   }
 
@@ -546,7 +827,7 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
   }
 
   Future<bool> _confirmClearCatalog() async {
-    final providerName = widget.provider.name;
+    final providerName = widget.health.provider.name;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -571,6 +852,197 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
       },
     );
     return confirmed ?? false;
+  }
+
+  Future<bool> _confirmClearRecent() async {
+    final providerName = widget.health.provider.name;
+    return _confirmAction(
+      context: context,
+      title: 'Clear provider recently watched?',
+      message:
+          'This deletes recently watched history and playback progress for '
+          '"$providerName". Provider configuration, catalog data, favorites, '
+          'category order, and app settings are kept.',
+      confirmLabel: 'Clear recent',
+    );
+  }
+
+  Future<bool> _confirmDeleteProvider() async {
+    final providerName = widget.health.provider.name;
+    return _confirmAction(
+      context: context,
+      title: 'Delete provider?',
+      message:
+          'This deletes "$providerName", its credentials, imported catalog, '
+          'EPG data, favorites, category order, recently watched history, '
+          'playback progress, and refresh records.',
+      confirmLabel: 'Delete provider',
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF101214),
+        border: Border.all(color: const Color(0xFF292D31)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: color,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CatalogStat extends StatelessWidget {
+  const _CatalogStat({required this.label, required this.count});
+
+  final String label;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF101214),
+        border: Border.all(color: const Color(0xFF292D31)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              NumberFormat.compact().format(count),
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: theme.colorScheme.primary,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: const Color(0xFFA9A39A),
+                letterSpacing: 0,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RefreshTime extends StatelessWidget {
+  const _RefreshTime({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: const Color(0xFF8E8980),
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: const Color(0xFFE6E0D7),
+            letterSpacing: 0,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProviderError extends StatelessWidget {
+  const _ProviderError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF241817),
+        border: Border.all(color: const Color(0xFF5A2924)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(
+              LucideIcons.triangleAlert,
+              size: 16,
+              color: Color(0xFFE26D5A),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFFE0B1A8),
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -604,14 +1076,15 @@ class _PreferenceMenu extends StatelessWidget {
 }
 
 class _RefreshStatus extends StatelessWidget {
-  const _RefreshStatus({required this.provider});
+  const _RefreshStatus({required this.health});
 
-  final IptvProvider provider;
+  final ProviderHealth health;
 
   @override
   Widget build(BuildContext context) {
+    final provider = health.provider;
     final status = provider.lastRefreshStatus;
-    final hasCatalog = provider.hasImportedCatalog;
+    final hasCatalog = health.hasImportedCatalog;
     final label = switch (status) {
       ProviderRefreshStatus.running => 'Checking',
       ProviderRefreshStatus.failed when hasCatalog => 'Valid, refresh failed',
@@ -644,4 +1117,53 @@ IconData _providerIcon(ProviderType type) {
     ProviderType.m3uUrl => LucideIcons.link,
     ProviderType.m3uFile => LucideIcons.fileVideo,
   };
+}
+
+String _providerTypeLabel(ProviderType type) {
+  return switch (type) {
+    ProviderType.xtream => 'Xtream',
+    ProviderType.m3uUrl => 'M3U URL',
+    ProviderType.m3uFile => 'M3U file',
+  };
+}
+
+Future<bool> _confirmAction({
+  required BuildContext context,
+  required String title,
+  required String message,
+  required String confirmLabel,
+}) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(confirmLabel),
+          ),
+        ],
+      );
+    },
+  );
+  return confirmed ?? false;
+}
+
+String _formatMs(int? value) {
+  return value == null
+      ? 'Not scheduled'
+      : _formatDateTime(DateTime.fromMillisecondsSinceEpoch(value));
+}
+
+String _formatDateTime(DateTime? value) {
+  if (value == null) {
+    return 'Never';
+  }
+  return DateFormat('MMM d, h:mm a').format(value);
 }

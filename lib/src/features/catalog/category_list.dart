@@ -3,7 +3,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../catalog/catalog_models.dart';
 
-class CategoryList extends StatelessWidget {
+class CategoryList extends StatefulWidget {
   const CategoryList({
     required this.categories,
     required this.searchQuery,
@@ -24,15 +24,47 @@ class CategoryList extends StatelessWidget {
   final void Function(CatalogCategory category, int delta) onMove;
 
   @override
+  State<CategoryList> createState() => _CategoryListState();
+}
+
+class _CategoryListState extends State<CategoryList> {
+  late final TextEditingController _searchController;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController(text: widget.searchQuery);
+  }
+
+  @override
+  void didUpdateWidget(CategoryList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.searchQuery != _searchController.text) {
+      _searchController
+        ..text = widget.searchQuery
+        ..selection = TextSelection.collapsed(
+          offset: widget.searchQuery.length,
+        );
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final query = searchQuery.trim().toLowerCase();
+    final query = widget.searchQuery.trim().toLowerCase();
+    final orderedCategories = _favoritePinnedCategories(widget.categories);
     final visibleCategories = query.isEmpty
-        ? categories
-        : categories.where((category) {
+        ? orderedCategories
+        : orderedCategories.where((category) {
             return category.name.toLowerCase().contains(query);
           }).toList();
     final reorderDisabled = query.isNotEmpty;
-    final totalCount = categories.fold<int>(
+    final totalCount = widget.categories.fold<int>(
       0,
       (count, category) => count + category.itemCount,
     );
@@ -72,11 +104,8 @@ class CategoryList extends StatelessWidget {
             SizedBox(
               height: 40,
               child: TextField(
-                onChanged: onSearchChanged,
-                controller: TextEditingController(text: searchQuery)
-                  ..selection = TextSelection.collapsed(
-                    offset: searchQuery.length,
-                  ),
+                controller: _searchController,
+                onChanged: widget.onSearchChanged,
                 decoration: const InputDecoration(
                   hintText: 'Search categories',
                   prefixIcon: Icon(LucideIcons.search, size: 18),
@@ -88,30 +117,39 @@ class CategoryList extends StatelessWidget {
             _CategoryRow(
               label: 'All',
               count: totalCount,
-              active: selectedCategoryId == null,
+              active: widget.selectedCategoryId == null,
               favorite: false,
-              onSelect: () => onSelect(null),
+              onSelect: () => widget.onSelect(null),
             ),
             const SizedBox(height: 8),
             Expanded(
               child: ListView.separated(
                 itemBuilder: (context, index) {
                   final category = visibleCategories[index];
+                  final canMoveUp =
+                      !reorderDisabled &&
+                      index > 0 &&
+                      visibleCategories[index - 1].isFavorite ==
+                          category.isFavorite;
+                  final canMoveDown =
+                      !reorderDisabled &&
+                      index < visibleCategories.length - 1 &&
+                      visibleCategories[index + 1].isFavorite ==
+                          category.isFavorite;
                   return _CategoryRow(
                     label: category.name,
                     count: category.itemCount,
-                    active: selectedCategoryId == category.id,
+                    active: widget.selectedCategoryId == category.id,
                     favorite: category.isFavorite,
-                    onSelect: () => onSelect(category.id),
-                    onToggleFavorite: () => onToggleFavorite(category),
+                    onSelect: () => widget.onSelect(category.id),
+                    onToggleFavorite: () => widget.onToggleFavorite(category),
                     reorderDisabled: reorderDisabled,
-                    onMoveUp: reorderDisabled || index == 0
-                        ? null
-                        : () => onMove(category, -1),
-                    onMoveDown:
-                        reorderDisabled || index == visibleCategories.length - 1
-                        ? null
-                        : () => onMove(category, 1),
+                    onMoveUp: canMoveUp
+                        ? () => widget.onMove(category, -1)
+                        : null,
+                    onMoveDown: canMoveDown
+                        ? () => widget.onMove(category, 1)
+                        : null,
                   );
                 },
                 separatorBuilder: (_, _) => const SizedBox(height: 6),
@@ -123,6 +161,15 @@ class CategoryList extends StatelessWidget {
       ),
     );
   }
+}
+
+List<CatalogCategory> _favoritePinnedCategories(
+  List<CatalogCategory> categories,
+) {
+  return [
+    ...categories.where((category) => category.isFavorite),
+    ...categories.where((category) => !category.isFavorite),
+  ];
 }
 
 class _CategoryRow extends StatelessWidget {
@@ -162,7 +209,7 @@ class _CategoryRow extends StatelessWidget {
         onTap: onSelect,
         borderRadius: BorderRadius.circular(8),
         child: SizedBox(
-          height: 42,
+          height: 46,
           child: Row(
             children: [
               Expanded(
@@ -180,16 +227,21 @@ class _CategoryRow extends StatelessWidget {
                   ),
                 ),
               ),
-              Text(
-                count.toString(),
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: const Color(0xFF8E8980),
-                  letterSpacing: 0,
+              SizedBox(
+                width: 34,
+                child: Text(
+                  count.toString(),
+                  textAlign: TextAlign.right,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: const Color(0xFF8E8980),
+                    letterSpacing: 0,
+                  ),
                 ),
               ),
-              const SizedBox(width: 4),
               if (onToggleFavorite != null)
-                IconButton(
+                _CategoryIconButton(
                   tooltip: favorite
                       ? 'Unfavorite category'
                       : 'Favorite category',
@@ -205,14 +257,14 @@ class _CategoryRow extends StatelessWidget {
               if (onMoveUp != null ||
                   onMoveDown != null ||
                   reorderDisabled) ...[
-                IconButton(
+                _CategoryIconButton(
                   tooltip: reorderDisabled
                       ? 'Clear category search to reorder'
                       : 'Move up',
                   onPressed: onMoveUp,
                   icon: const Icon(LucideIcons.chevronUp, size: 15),
                 ),
-                IconButton(
+                _CategoryIconButton(
                   tooltip: reorderDisabled
                       ? 'Clear category search to reorder'
                       : 'Move down',
@@ -224,6 +276,33 @@ class _CategoryRow extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _CategoryIconButton extends StatelessWidget {
+  const _CategoryIconButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final Widget icon;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      icon: icon,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 28, height: 36),
+      style: IconButton.styleFrom(
+        minimumSize: const Size(28, 36),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
     );
   }
