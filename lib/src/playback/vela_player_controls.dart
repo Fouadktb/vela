@@ -12,6 +12,9 @@ class VelaPlayerControls extends StatelessWidget {
     required this.state,
     required this.onClose,
     required this.onNextEpisode,
+    required this.onAudioTrackSelected,
+    required this.onSubtitleTrackSelected,
+    required this.onVideoTrackSelected,
     super.key,
   });
 
@@ -19,6 +22,9 @@ class VelaPlayerControls extends StatelessWidget {
   final VelaPlayerState state;
   final VoidCallback onClose;
   final ValueChanged<PlayableItem> onNextEpisode;
+  final ValueChanged<String> onAudioTrackSelected;
+  final ValueChanged<String> onSubtitleTrackSelected;
+  final ValueChanged<String> onVideoTrackSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -76,6 +82,9 @@ class VelaPlayerControls extends StatelessWidget {
                   controller: controller,
                   state: state,
                   onNextEpisode: onNextEpisode,
+                  onAudioTrackSelected: onAudioTrackSelected,
+                  onSubtitleTrackSelected: onSubtitleTrackSelected,
+                  onVideoTrackSelected: onVideoTrackSelected,
                 ),
               ],
             ),
@@ -212,11 +221,17 @@ class _ControlRow extends StatelessWidget {
     required this.controller,
     required this.state,
     required this.onNextEpisode,
+    required this.onAudioTrackSelected,
+    required this.onSubtitleTrackSelected,
+    required this.onVideoTrackSelected,
   });
 
   final PlaybackController controller;
   final VelaPlayerState state;
   final ValueChanged<PlayableItem> onNextEpisode;
+  final ValueChanged<String> onAudioTrackSelected;
+  final ValueChanged<String> onSubtitleTrackSelected;
+  final ValueChanged<String> onVideoTrackSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -251,9 +266,12 @@ class _ControlRow extends StatelessWidget {
               : null,
         ),
         _VolumeControl(controller: controller, state: state),
-        _AudioMenu(controller: controller, tracks: state.audioTracks),
-        _SubtitleMenu(controller: controller, tracks: state.subtitleTracks),
-        _VideoMenu(controller: controller, tracks: state.videoTracks),
+        _AudioMenu(tracks: state.audioTracks, onSelected: onAudioTrackSelected),
+        _SubtitleMenu(
+          tracks: state.subtitleTracks,
+          onSelected: onSubtitleTrackSelected,
+        ),
+        _VideoMenu(tracks: state.videoTracks, onSelected: onVideoTrackSelected),
         _SpeedMenu(controller: controller, speed: state.playbackSpeed),
         if (item?.nextEpisode != null)
           FilledButton.icon(
@@ -322,10 +340,10 @@ class _VolumeControl extends StatelessWidget {
 }
 
 class _AudioMenu extends StatelessWidget {
-  const _AudioMenu({required this.controller, required this.tracks});
+  const _AudioMenu({required this.tracks, required this.onSelected});
 
-  final PlaybackController controller;
   final List<PlaybackAudioTrack> tracks;
+  final ValueChanged<String> onSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -338,16 +356,16 @@ class _AudioMenu extends StatelessWidget {
       labelFor: (track) => _trackLabel(track.title, track.language),
       valueFor: (track) => track.id,
       selectedFor: (track) => track.isSelected,
-      onSelected: controller.selectAudioTrack,
+      onSelected: onSelected,
     );
   }
 }
 
 class _SubtitleMenu extends StatelessWidget {
-  const _SubtitleMenu({required this.controller, required this.tracks});
+  const _SubtitleMenu({required this.tracks, required this.onSelected});
 
-  final PlaybackController controller;
   final List<PlaybackSubtitleTrack> tracks;
+  final ValueChanged<String> onSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -361,13 +379,7 @@ class _SubtitleMenu extends StatelessWidget {
       color: const Color(0xFF17191C),
       elevation: 8,
       constraints: const BoxConstraints(minWidth: 260, maxWidth: 360),
-      onSelected: (value) {
-        if (value == 'off') {
-          controller.turnSubtitlesOff();
-          return;
-        }
-        controller.selectSubtitleTrack(value);
-      },
+      onSelected: onSelected,
       itemBuilder: (context) {
         return [
           if (!hasOffTrack)
@@ -396,10 +408,10 @@ class _SubtitleMenu extends StatelessWidget {
 }
 
 class _VideoMenu extends StatelessWidget {
-  const _VideoMenu({required this.controller, required this.tracks});
+  const _VideoMenu({required this.tracks, required this.onSelected});
 
-  final PlaybackController controller;
   final List<PlaybackVideoTrack> tracks;
+  final ValueChanged<String> onSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -412,7 +424,7 @@ class _VideoMenu extends StatelessWidget {
       labelFor: (track) => _trackLabel(track.title, track.language),
       valueFor: (track) => track.id,
       selectedFor: (track) => track.isSelected,
-      onSelected: controller.selectVideoTrack,
+      onSelected: onSelected,
     );
   }
 }

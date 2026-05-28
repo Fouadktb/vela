@@ -42,12 +42,16 @@ class PlaybackController extends ChangeNotifier {
   late media_kit.Tracks _tracks;
   late media_kit.Track _selectedTrack;
   final List<StreamSubscription<dynamic>> _subscriptions = [];
+  Timer? _stalledTimer;
+  Duration _stallStartPosition = Duration.zero;
+  Duration _stallStartBuffer = Duration.zero;
   double _lastAudibleVolume = 100;
   bool _disposed = false;
 
   VelaPlayerState get state => _state;
 
   Future<void> open(PlayableItem item) async {
+    _cancelStalledTimer();
     _emit(
       _state.copyWith(
         item: item,
@@ -58,6 +62,9 @@ class PlaybackController extends ChangeNotifier {
         bufferingPercentage: 0,
         completed: false,
         errorMessage: null,
+        audioTracks: const [],
+        subtitleTracks: const [],
+        videoTracks: const [],
       ),
     );
 
@@ -79,6 +86,7 @@ class PlaybackController extends ChangeNotifier {
         ),
       );
     } catch (error) {
+      _cancelStalledTimer();
       _emit(
         _state.copyWith(
           status: VelaPlaybackStatus.error,
@@ -165,6 +173,7 @@ class PlaybackController extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    _cancelStalledTimer();
     await _player.stop();
     _emit(
       _state.copyWith(
@@ -177,6 +186,9 @@ class PlaybackController extends ChangeNotifier {
         buffer: Duration.zero,
         bufferingPercentage: 0,
         errorMessage: null,
+        audioTracks: const [],
+        subtitleTracks: const [],
+        videoTracks: const [],
       ),
     );
   }
@@ -187,6 +199,7 @@ class PlaybackController extends ChangeNotifier {
     for (final subscription in _subscriptions) {
       subscription.cancel();
     }
+    _cancelStalledTimer();
     _player.dispose();
     super.dispose();
   }
@@ -195,7 +208,7 @@ class PlaybackController extends ChangeNotifier {
     _subscriptions
       ..add(
         _player.stream.position.listen((value) {
-          _emit(_state.copyWith(position: value));
+          _handlePositionChanged(value);
         }),
       )
       ..add(
@@ -205,7 +218,7 @@ class PlaybackController extends ChangeNotifier {
       )
       ..add(
         _player.stream.buffer.listen((value) {
-          _emit(_state.copyWith(buffer: value));
+          _handleBufferChanged(value);
         }),
       )
       ..add(
@@ -215,15 +228,12 @@ class PlaybackController extends ChangeNotifier {
       )
       ..add(
         _player.stream.buffering.listen((value) {
-          _emit(_state.copyWith(buffering: value));
+          _handleBufferingChanged(value);
         }),
       )
       ..add(
         _player.stream.playing.listen((value) {
-          final status = value && _state.status == VelaPlaybackStatus.opening
-              ? VelaPlaybackStatus.ready
-              : _state.status;
-          _emit(_state.copyWith(playing: value, status: status));
+          _handlePlayingChanged(value);
         }),
       )
       ..add(
@@ -232,6 +242,7 @@ class PlaybackController extends ChangeNotifier {
             _emit(_state.copyWith(completed: false));
             return;
           }
+          _cancelStalledTimer();
           _emit(
             _state.copyWith(
               completed: true,
@@ -243,6 +254,7 @@ class PlaybackController extends ChangeNotifier {
       )
       ..add(
         _player.stream.error.listen((value) {
+          _cancelStalledTimer();
           _emit(
             _state.copyWith(
               status: VelaPlaybackStatus.error,
@@ -282,6 +294,101 @@ class PlaybackController extends ChangeNotifier {
   Future<void> _syncFullscreen() async {
     final isFullscreen = await windowManager.isFullScreen();
     _emit(_state.copyWith(isFullscreen: isFullscreen));
+  }
+
+  void _handlePositionChanged(Duration value) {
+    final progressed = value > _state.position;
+    _emit(_state.copyWith(position: value));
+    if (!progressed) return;
+
+    _clearStalledStatus();
+    if (_state.buffering) {
+      _startStalledTimer();
+    }
+  }
+
+  void _handleBufferChanged(Duration value) {
+    final progressed = value > _state.buffer;
+    _emit(_state.copyWith(buffer: value));
+    if (progressed && _state.buffering) {
+      _startStalledTimer();
+    }
+  }
+
+  void _handleBufferingChanged(bool value) {
+    _emit(_state.copyWith(buffering: value));
+    if (value) {
+      _startStalledTimer();
+      return;
+    }
+
+    _cancelStalledTimer();
+    _clearStalledStatus();
+  }
+
+  void _handlePlayingChanged(bool value) {
+    if (value) {
+      _cancelStalledTimer();
+      final status =
+          _state.status == VelaPlaybackStatus.opening ||
+              _state.status == VelaPlaybackStatus.stalled
+          ? VelaPlaybackStatus.ready
+          : _state.status;
+      final next = _state.copyWith(playing: true, status: status);
+      _emit(
+        status == VelaPlaybackStatus.ready
+            ? next.copyWith(errorMessage: null)
+            : next,
+      );
+      return;
+    }
+
+    _emit(_state.copyWith(playing: false));
+    if (_state.buffering) {
+      _startStalledTimer();
+    }
+  }
+
+  void _startStalledTimer() {
+    _cancelStalledTimer();
+    if (_state.status == VelaPlaybackStatus.idle ||
+        _state.status == VelaPlaybackStatus.completed ||
+        _state.status == VelaPlaybackStatus.error) {
+      return;
+    }
+
+    _stallStartPosition = _state.position;
+    _stallStartBuffer = _state.buffer;
+    _stalledTimer = Timer(const Duration(seconds: 12), () {
+      if (_disposed || !_state.buffering || _state.playing) return;
+      if (_state.status == VelaPlaybackStatus.idle ||
+          _state.status == VelaPlaybackStatus.completed ||
+          _state.status == VelaPlaybackStatus.error) {
+        return;
+      }
+      if (_state.position > _stallStartPosition ||
+          _state.buffer > _stallStartBuffer) {
+        return;
+      }
+      _emit(
+        _state.copyWith(
+          status: VelaPlaybackStatus.stalled,
+          errorMessage: 'The stream stopped receiving data.',
+        ),
+      );
+    });
+  }
+
+  void _cancelStalledTimer() {
+    _stalledTimer?.cancel();
+    _stalledTimer = null;
+  }
+
+  void _clearStalledStatus() {
+    if (_state.status != VelaPlaybackStatus.stalled) return;
+    _emit(
+      _state.copyWith(status: VelaPlaybackStatus.ready, errorMessage: null),
+    );
   }
 
   void _syncTrackModels({bool notify = true}) {
