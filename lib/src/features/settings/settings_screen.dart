@@ -1,23 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../app/app_version.dart';
 import '../../app/navigation_controller.dart';
 import '../../catalog/catalog_models.dart';
 import '../../providers/provider_models.dart';
+import '../../providers/provider_repository.dart';
 import '../../providers/refresh_interval.dart';
 import '../../shared/async_value_view.dart';
 import '../../shared/empty_state.dart';
 import '../../updates/update_checker.dart';
 import '../providers/provider_setup_screen.dart';
 
+final providerHealthOverviewProvider =
+    StreamProvider.autoDispose<List<ProviderHealth>>((ref) {
+      return ref.watch(providerRepositoryProvider).watchProviderHealth();
+    });
+
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final providers = ref.watch(providersProvider);
+    final providers = ref.watch(providerHealthOverviewProvider);
     final settings = ref.watch(appSettingsProvider);
 
     return ColoredBox(
@@ -51,7 +58,7 @@ class SettingsScreen extends ConsumerWidget {
                               : ListView.separated(
                                   itemBuilder: (context, index) {
                                     return _ProviderSettingsRow(
-                                      provider: items[index],
+                                      health: items[index],
                                     );
                                   },
                                   separatorBuilder: (_, _) =>
@@ -292,9 +299,9 @@ class _UpdateCardContent extends StatelessWidget {
 }
 
 class _ProviderSettingsRow extends ConsumerStatefulWidget {
-  const _ProviderSettingsRow({required this.provider});
+  const _ProviderSettingsRow({required this.health});
 
-  final IptvProvider provider;
+  final ProviderHealth health;
 
   @override
   ConsumerState<_ProviderSettingsRow> createState() =>
@@ -310,24 +317,24 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.provider.name);
+    _nameController = TextEditingController(text: widget.health.provider.name);
     _refreshIntervalMinutes = supportedRefreshIntervalMinutes(
-      widget.provider.refreshIntervalMinutes,
+      widget.health.provider.refreshIntervalMinutes,
     );
   }
 
   @override
   void didUpdateWidget(covariant _ProviderSettingsRow oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.provider.id != widget.provider.id ||
-        oldWidget.provider.name != widget.provider.name) {
-      _nameController.text = widget.provider.name;
+    if (oldWidget.health.provider.id != widget.health.provider.id ||
+        oldWidget.health.provider.name != widget.health.provider.name) {
+      _nameController.text = widget.health.provider.name;
     }
-    if (oldWidget.provider.id != widget.provider.id ||
-        oldWidget.provider.refreshIntervalMinutes !=
-            widget.provider.refreshIntervalMinutes) {
+    if (oldWidget.health.provider.id != widget.health.provider.id ||
+        oldWidget.health.provider.refreshIntervalMinutes !=
+            widget.health.provider.refreshIntervalMinutes) {
       _refreshIntervalMinutes = supportedRefreshIntervalMinutes(
-        widget.provider.refreshIntervalMinutes,
+        widget.health.provider.refreshIntervalMinutes,
       );
     }
   }
@@ -340,8 +347,14 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
 
   @override
   Widget build(BuildContext context) {
-    final provider = widget.provider;
+    final health = widget.health;
+    final provider = health.provider;
     final theme = Theme.of(context);
+    final lastError =
+        health.latestRefreshFailed &&
+            provider.lastRefreshMessage?.trim().isNotEmpty == true
+        ? provider.lastRefreshMessage!.trim()
+        : null;
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -369,9 +382,80 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
                     style: theme.textTheme.titleMedium,
                   ),
                 ),
-                _RefreshStatus(provider: provider),
+                _RefreshStatus(health: health),
               ],
             ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _StatusPill(
+                  icon: health.isEnabled
+                      ? LucideIcons.circleCheck
+                      : LucideIcons.circleOff,
+                  label: health.isEnabled ? 'Enabled' : 'Disabled',
+                  color: health.isEnabled
+                      ? const Color(0xFF8FB7B0)
+                      : const Color(0xFF8E8980),
+                ),
+                _StatusPill(
+                  icon: _providerIcon(provider.type),
+                  label: _providerTypeLabel(provider.type),
+                  color: const Color(0xFFA9A39A),
+                ),
+                _StatusPill(
+                  icon: provider.refreshEnabled
+                      ? LucideIcons.clock3
+                      : LucideIcons.alarmClockOff,
+                  label: provider.refreshEnabled
+                      ? 'Auto refresh on'
+                      : 'Auto refresh off',
+                  color: provider.refreshEnabled
+                      ? theme.colorScheme.primary
+                      : const Color(0xFF8E8980),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _CatalogStat(label: 'Live', count: health.stats.liveCount),
+                _CatalogStat(label: 'Movies', count: health.stats.movieCount),
+                _CatalogStat(label: 'Series', count: health.stats.seriesCount),
+                _CatalogStat(
+                  label: 'Episodes',
+                  count: health.stats.episodeCount,
+                ),
+                _CatalogStat(label: 'EPG', count: health.stats.epgProgramCount),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: _RefreshTime(
+                    label: 'Last refresh',
+                    value: _formatDateTime(provider.lastRefreshAt),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _RefreshTime(
+                    label: 'Next refresh',
+                    value: provider.refreshEnabled
+                        ? _formatMs(health.nextRefreshAtMs)
+                        : 'Off',
+                  ),
+                ),
+              ],
+            ),
+            if (lastError != null) ...[
+              const SizedBox(height: 12),
+              _ProviderError(message: lastError),
+            ],
             const SizedBox(height: 14),
             Row(
               children: [
@@ -440,16 +524,6 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
                 ),
               ],
             ),
-            if (provider.lastRefreshMessage?.trim().isNotEmpty == true) ...[
-              const SizedBox(height: 10),
-              Text(
-                provider.lastRefreshMessage!,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: const Color(0xFFB9B1A6),
-                  letterSpacing: 0,
-                ),
-              ),
-            ],
             if (_message != null) ...[
               const SizedBox(height: 10),
               Text(_message!, style: theme.textTheme.bodySmall),
@@ -464,19 +538,11 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
     await _run('Saved provider settings', () async {
       await ref
           .read(providerRepositoryProvider)
-          .createOrUpdateProvider(
-            ProviderInput(
-              id: widget.provider.id,
-              name: _nameController.text,
-              type: widget.provider.type,
-              serverUrl: widget.provider.serverUrl,
-              username: widget.provider.username,
-              password: widget.provider.password,
-              m3uUrl: widget.provider.m3uUrl,
-              localFilePath: widget.provider.localFilePath,
-              refreshEnabled: widget.provider.refreshEnabled,
-              refreshIntervalMinutes: _refreshIntervalMinutes,
-            ),
+          .updateProviderHealthSettings(
+            providerId: widget.health.provider.id,
+            name: _nameController.text,
+            refreshEnabled: widget.health.provider.refreshEnabled,
+            refreshIntervalMinutes: _refreshIntervalMinutes,
           );
     });
   }
@@ -486,7 +552,7 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
       final result = await ref
           .read(providerRefreshServiceProvider)
           .refreshProvider(
-            widget.provider.id,
+            widget.health.provider.id,
             onProgress: (message) {
               if (mounted) {
                 setState(() => _message = message);
@@ -506,7 +572,7 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
     await _run('Provider catalog cleared', () {
       return ref
           .read(providerRepositoryProvider)
-          .clearProviderCatalog(widget.provider.id);
+          .clearProviderCatalog(widget.health.provider.id);
     });
   }
 
@@ -514,7 +580,7 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
     await _run('Provider recently watched cleared', () {
       return ref
           .read(watchHistoryRepositoryProvider)
-          .clearRecentlyWatched(providerId: widget.provider.id);
+          .clearRecentlyWatched(providerId: widget.health.provider.id);
     });
   }
 
@@ -522,7 +588,7 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
     await _run('Provider deleted', () {
       return ref
           .read(providerRepositoryProvider)
-          .deleteProvider(widget.provider.id);
+          .deleteProvider(widget.health.provider.id);
     });
   }
 
@@ -546,7 +612,7 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
   }
 
   Future<bool> _confirmClearCatalog() async {
-    final providerName = widget.provider.name;
+    final providerName = widget.health.provider.name;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -571,6 +637,171 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
       },
     );
     return confirmed ?? false;
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF101214),
+        border: Border.all(color: const Color(0xFF292D31)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: color,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CatalogStat extends StatelessWidget {
+  const _CatalogStat({required this.label, required this.count});
+
+  final String label;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF101214),
+        border: Border.all(color: const Color(0xFF292D31)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              NumberFormat.compact().format(count),
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: theme.colorScheme.primary,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: const Color(0xFFA9A39A),
+                letterSpacing: 0,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RefreshTime extends StatelessWidget {
+  const _RefreshTime({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: const Color(0xFF8E8980),
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: const Color(0xFFE6E0D7),
+            letterSpacing: 0,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProviderError extends StatelessWidget {
+  const _ProviderError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF241817),
+        border: Border.all(color: const Color(0xFF5A2924)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(
+              LucideIcons.triangleAlert,
+              size: 16,
+              color: Color(0xFFE26D5A),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFFE0B1A8),
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -604,14 +835,15 @@ class _PreferenceMenu extends StatelessWidget {
 }
 
 class _RefreshStatus extends StatelessWidget {
-  const _RefreshStatus({required this.provider});
+  const _RefreshStatus({required this.health});
 
-  final IptvProvider provider;
+  final ProviderHealth health;
 
   @override
   Widget build(BuildContext context) {
+    final provider = health.provider;
     final status = provider.lastRefreshStatus;
-    final hasCatalog = provider.hasImportedCatalog;
+    final hasCatalog = health.hasImportedCatalog;
     final label = switch (status) {
       ProviderRefreshStatus.running => 'Checking',
       ProviderRefreshStatus.failed when hasCatalog => 'Valid, refresh failed',
@@ -644,4 +876,25 @@ IconData _providerIcon(ProviderType type) {
     ProviderType.m3uUrl => LucideIcons.link,
     ProviderType.m3uFile => LucideIcons.fileVideo,
   };
+}
+
+String _providerTypeLabel(ProviderType type) {
+  return switch (type) {
+    ProviderType.xtream => 'Xtream',
+    ProviderType.m3uUrl => 'M3U URL',
+    ProviderType.m3uFile => 'M3U file',
+  };
+}
+
+String _formatMs(int? value) {
+  return value == null
+      ? 'Not scheduled'
+      : _formatDateTime(DateTime.fromMillisecondsSinceEpoch(value));
+}
+
+String _formatDateTime(DateTime? value) {
+  if (value == null) {
+    return 'Never';
+  }
+  return DateFormat('MMM d, h:mm a').format(value);
 }

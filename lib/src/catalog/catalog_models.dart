@@ -192,6 +192,33 @@ class ProviderRefreshRun {
   final String? errorMessage;
 }
 
+class ProviderCatalogStats {
+  const ProviderCatalogStats({
+    required this.liveCount,
+    required this.movieCount,
+    required this.seriesCount,
+    required this.episodeCount,
+    required this.epgProgramCount,
+  });
+
+  final int liveCount;
+  final int movieCount;
+  final int seriesCount;
+  final int episodeCount;
+  final int epgProgramCount;
+
+  int get catalogItemCount => liveCount + movieCount + seriesCount;
+
+  int get totalCount => catalogItemCount + episodeCount + epgProgramCount;
+
+  bool get hasImportedCatalog {
+    return liveCount > 0 ||
+        movieCount > 0 ||
+        seriesCount > 0 ||
+        episodeCount > 0;
+  }
+}
+
 class CatalogCategory {
   const CatalogCategory({
     required this.id,

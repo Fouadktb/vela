@@ -102,6 +102,9 @@ class CatalogRepository {
         _db.playbackPositions,
       )..where((row) => row.providerId.equals(providerId))).go();
       await (_db.delete(
+        _db.epgPrograms,
+      )..where((row) => row.providerId.equals(providerId))).go();
+      await (_db.delete(
         _db.episodes,
       )..where((row) => row.providerId.equals(providerId))).go();
       await (_db.delete(
@@ -315,6 +318,11 @@ class CatalogRepository {
               ..limit(1))
             .getSingleOrNull();
     return row != null;
+  }
+
+  Future<ProviderCatalogStats> providerCatalogStats(String providerId) async {
+    final row = await _providerCatalogStatsQuery(providerId).getSingle();
+    return _catalogStatsFromRow(row);
   }
 
   Stream<List<CatalogItem>> watchItems({
@@ -637,6 +645,47 @@ class CatalogRepository {
         Variable<String>(catalogItemId),
       ],
       readsFrom: {_db.episodes, _db.series},
+    );
+  }
+
+  Selectable<QueryRow> _providerCatalogStatsQuery(String providerId) {
+    return _db.customSelect(
+      '''
+      SELECT
+        (SELECT COUNT(*)
+         FROM catalog_items
+         WHERE provider_id = ?
+           AND content_type = ?
+           AND is_stale = 0) AS live_count,
+        (SELECT COUNT(*)
+         FROM catalog_items
+         WHERE provider_id = ?
+           AND content_type = ?
+           AND is_stale = 0) AS movie_count,
+        (SELECT COUNT(*)
+         FROM catalog_items
+         WHERE provider_id = ?
+           AND content_type = ?
+           AND is_stale = 0) AS series_count,
+        (SELECT COUNT(*)
+         FROM episodes
+         WHERE provider_id = ?
+           AND is_stale = 0) AS episode_count,
+        (SELECT COUNT(*)
+         FROM epg_programs
+         WHERE provider_id = ?) AS epg_program_count
+      ''',
+      variables: [
+        Variable<String>(providerId),
+        Variable<String>(CatalogContentType.live.name),
+        Variable<String>(providerId),
+        Variable<String>(CatalogContentType.movie.name),
+        Variable<String>(providerId),
+        Variable<String>(CatalogContentType.series.name),
+        Variable<String>(providerId),
+        Variable<String>(providerId),
+      ],
+      readsFrom: {_db.catalogItems, _db.episodes, _db.epgPrograms},
     );
   }
 
@@ -1230,6 +1279,16 @@ ProviderRefreshRun _toRefreshRun(ProviderRefreshRunRow row) {
     finishedAtMs: row.finishedAt,
     itemCount: row.itemCount,
     errorMessage: row.errorMessage,
+  );
+}
+
+ProviderCatalogStats _catalogStatsFromRow(QueryRow row) {
+  return ProviderCatalogStats(
+    liveCount: row.read<int>('live_count'),
+    movieCount: row.read<int>('movie_count'),
+    seriesCount: row.read<int>('series_count'),
+    episodeCount: row.read<int>('episode_count'),
+    epgProgramCount: row.read<int>('epg_program_count'),
   );
 }
 
