@@ -553,9 +553,9 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
           .read(providerRefreshServiceProvider)
           .refreshProvider(
             widget.health.provider.id,
-            onProgress: (message) {
+            onProgress: (progress) {
               if (mounted) {
-                setState(() => _message = message);
+                setState(() => _message = progress.message);
               }
             },
           );

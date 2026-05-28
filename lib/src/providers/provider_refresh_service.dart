@@ -27,7 +27,7 @@ class ProviderRefreshService {
   final bool _ownsHttpClient;
   final Duration playlistTimeout;
   final int maxPlaylistBytes;
-  final Map<String, Future<ProviderRefreshSummary>> _inFlightRefreshes = {};
+  final Map<String, _InFlightProviderRefresh> _inFlightRefreshes = {};
   final Map<String, Future<void>> _inFlightEpgRefreshes = {};
   final Map<String, Future<void>> _inFlightItemDetailRefreshes = {};
   final Map<String, Future<void>> _inFlightSeriesEpisodeRefreshes = {};
@@ -37,7 +37,7 @@ class ProviderRefreshService {
 
   Future<ProviderRefreshSummary> refreshProvider(
     String providerId, {
-    void Function(String message)? onProgress,
+    ProviderImportProgressCallback? onProgress,
   }) async {
     final provider = await _providerRepository.getProvider(providerId);
     if (provider == null) {
@@ -291,11 +291,12 @@ class ProviderRefreshService {
 
   Future<ProviderRefreshSummary> refresh(
     IptvProvider provider, {
-    void Function(String message)? onProgress,
+    ProviderImportProgressCallback? onProgress,
   }) async {
     final existing = _inFlightRefreshes[provider.id];
     if (existing != null) {
-      return existing;
+      existing.addListener(onProgress);
+      return existing.future;
     }
 
     if (_disposed) {
@@ -308,11 +309,17 @@ class ProviderRefreshService {
       );
     }
 
-    final refresh = _refresh(provider, onProgress: onProgress);
-    _inFlightRefreshes[provider.id] = refresh;
+    late _InFlightProviderRefresh inFlight;
+    final refresh = _refresh(
+      provider,
+      onProgress: (progress) => inFlight.emit(progress),
+    );
+    inFlight = _InFlightProviderRefresh(refresh);
+    inFlight.addListener(onProgress);
+    _inFlightRefreshes[provider.id] = inFlight;
     unawaited(
       refresh.whenComplete(() {
-        if (identical(_inFlightRefreshes[provider.id], refresh)) {
+        if (identical(_inFlightRefreshes[provider.id], inFlight)) {
           _inFlightRefreshes.remove(provider.id);
         }
       }),
@@ -322,7 +329,7 @@ class ProviderRefreshService {
 
   Future<ProviderRefreshSummary> _refresh(
     IptvProvider provider, {
-    void Function(String message)? onProgress,
+    ProviderImportProgressCallback? onProgress,
   }) async {
     final run = await _providerRepository.createRefreshRun(provider.id);
     final startedAt = dateTimeFromMs(run.startedAtMs);
@@ -335,7 +342,18 @@ class ProviderRefreshService {
           'Provider did not return any playable items',
         );
       }
-      onProgress?.call('Saving catalog');
+      _emitImportProgress(
+        onProgress,
+        ProviderImportStage.epg,
+        'EPG will load on demand',
+      );
+      _emitImportProgress(
+        onProgress,
+        ProviderImportStage.indexing,
+        'Indexing catalog',
+        current: itemCount,
+        total: itemCount,
+      );
       await _providerRepository.replaceProviderCatalog(importResult.snapshot);
       final message = _successMessage(itemCount, importResult.warningMessage);
       await _providerRepository.finishRefreshRun(
@@ -343,6 +361,13 @@ class ProviderRefreshService {
         status: ProviderRefreshStatus.succeeded,
         itemCount: itemCount,
         message: message,
+      );
+      _emitImportProgress(
+        onProgress,
+        ProviderImportStage.done,
+        message,
+        current: itemCount,
+        total: itemCount,
       );
       return ProviderRefreshSummary(
         providerId: provider.id,
@@ -354,6 +379,7 @@ class ProviderRefreshService {
       );
     } catch (error) {
       final message = _safeRefreshError(error);
+      _emitImportProgress(onProgress, ProviderImportStage.failed, message);
       await _providerRepository.finishRefreshRun(
         runId: run.id,
         status: ProviderRefreshStatus.failed,
@@ -438,7 +464,9 @@ class ProviderRefreshService {
       await staleRefresh;
     }
     if (_inFlightRefreshes.isNotEmpty) {
-      await Future.wait(_inFlightRefreshes.values);
+      await Future.wait(
+        _inFlightRefreshes.values.map((refresh) => refresh.future),
+      );
     }
     if (_inFlightEpgRefreshes.isNotEmpty) {
       await Future.wait(_inFlightEpgRefreshes.values);
@@ -479,7 +507,7 @@ class ProviderRefreshService {
 
   Future<_ProviderImportResult> _snapshotFor(
     IptvProvider provider, {
-    void Function(String message)? onProgress,
+    ProviderImportProgressCallback? onProgress,
   }) {
     if (!provider.canRefresh) {
       throw const ProviderRefreshFailure('Provider details are incomplete');
@@ -493,21 +521,39 @@ class ProviderRefreshService {
 
   Future<_ProviderImportResult> _importM3uUrl(
     IptvProvider provider, {
-    void Function(String message)? onProgress,
+    ProviderImportProgressCallback? onProgress,
   }) async {
     final source = provider.m3uUrl?.trim();
     if (source == null || source.isEmpty) {
       throw const ProviderRefreshFailure('Playlist source is incomplete');
     }
-    onProgress?.call('Loading M3U playlist');
+    _emitImportProgress(
+      onProgress,
+      ProviderImportStage.validating,
+      'Validating M3U playlist',
+    );
+    _emitImportProgress(
+      onProgress,
+      ProviderImportStage.live,
+      'Loading M3U playlist',
+    );
     final playlist = await _loadPlaylistUrl(source);
-    onProgress?.call('Parsing M3U playlist');
+    _emitImportProgress(
+      onProgress,
+      ProviderImportStage.movies,
+      'Parsing M3U playlist',
+    );
+    _emitImportProgress(
+      onProgress,
+      ProviderImportStage.series,
+      'Preparing playlist catalog',
+    );
     return _parsePlaylist(provider.id, playlist);
   }
 
   Future<_ProviderImportResult> _importM3uFile(
     IptvProvider provider, {
-    void Function(String message)? onProgress,
+    ProviderImportProgressCallback? onProgress,
   }) async {
     final path = provider.localFilePath?.trim();
     if (path == null || path.isEmpty) {
@@ -515,13 +561,31 @@ class ProviderRefreshService {
     }
     final file = File(path);
     try {
-      onProgress?.call('Reading local playlist');
+      _emitImportProgress(
+        onProgress,
+        ProviderImportStage.validating,
+        'Validating local playlist',
+      );
+      _emitImportProgress(
+        onProgress,
+        ProviderImportStage.live,
+        'Reading local playlist',
+      );
       final length = await file.length();
       if (length > maxPlaylistBytes) {
         throw const ProviderRefreshFailure('Playlist is too large to import');
       }
       final playlist = await file.readAsString();
-      onProgress?.call('Parsing M3U playlist');
+      _emitImportProgress(
+        onProgress,
+        ProviderImportStage.movies,
+        'Parsing M3U playlist',
+      );
+      _emitImportProgress(
+        onProgress,
+        ProviderImportStage.series,
+        'Preparing playlist catalog',
+      );
       return _parsePlaylist(provider.id, playlist);
     } on ProviderRefreshFailure {
       rethrow;
@@ -534,7 +598,7 @@ class ProviderRefreshService {
 
   Future<_ProviderImportResult> _importXtream(
     IptvProvider provider, {
-    void Function(String message)? onProgress,
+    ProviderImportProgressCallback? onProgress,
   }) async {
     final serverUrl = provider.serverUrl?.trim();
     final username = provider.username?.trim();
@@ -581,14 +645,27 @@ class ProviderRefreshService {
     required String providerId,
     required XtreamClient client,
     required XtreamClientException originalError,
-    void Function(String message)? onProgress,
+    ProviderImportProgressCallback? onProgress,
   }) async {
-    onProgress?.call('Xtream API was rejected; loading generated M3U playlist');
+    _emitImportProgress(
+      onProgress,
+      ProviderImportStage.live,
+      'Xtream API was rejected; loading generated M3U playlist',
+    );
     try {
       final playlist = await _loadPlaylistUrl(
         client.buildM3uPlaylistUri().toString(),
       );
-      onProgress?.call('Parsing generated M3U playlist');
+      _emitImportProgress(
+        onProgress,
+        ProviderImportStage.movies,
+        'Parsing generated M3U playlist',
+      );
+      _emitImportProgress(
+        onProgress,
+        ProviderImportStage.series,
+        'Preparing generated playlist catalog',
+      );
       final parsed = _parsePlaylist(providerId, playlist);
       return XtreamImportResult(
         snapshot: parsed.snapshot,
@@ -672,6 +749,51 @@ class _ProviderImportResult {
 
   final ProviderCatalogSnapshot snapshot;
   final String? warningMessage;
+}
+
+class _InFlightProviderRefresh {
+  _InFlightProviderRefresh(this.future);
+
+  final Future<ProviderRefreshSummary> future;
+  final List<ProviderImportProgressCallback> _listeners = [];
+  ProviderImportProgress? _latest;
+
+  void addListener(ProviderImportProgressCallback? listener) {
+    if (listener == null) {
+      return;
+    }
+    _listeners.add(listener);
+    final latest = _latest;
+    if (latest != null) {
+      listener(latest);
+    }
+  }
+
+  void emit(ProviderImportProgress progress) {
+    _latest = progress;
+    for (final listener in List<ProviderImportProgressCallback>.of(
+      _listeners,
+    )) {
+      listener(progress);
+    }
+  }
+}
+
+void _emitImportProgress(
+  ProviderImportProgressCallback? onProgress,
+  ProviderImportStage stage,
+  String message, {
+  int? current,
+  int? total,
+}) {
+  onProgress?.call(
+    ProviderImportProgress(
+      stage: stage,
+      message: message,
+      current: current,
+      total: total,
+    ),
+  );
 }
 
 int _snapshotItemCount(ProviderCatalogSnapshot snapshot) {

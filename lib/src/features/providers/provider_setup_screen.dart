@@ -7,6 +7,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../app/navigation_controller.dart';
 import '../../catalog/catalog_models.dart';
 import '../../providers/provider_models.dart';
+import '../../providers/provider_repository.dart';
 import '../../providers/refresh_interval.dart';
 
 final providerSetupImportControllerProvider =
@@ -18,30 +19,40 @@ class ProviderSetupImportController extends ChangeNotifier {
   bool _isImporting = false;
   String? _statusMessage;
   String? _errorMessage;
-  ProviderImportStep _step = ProviderImportStep.idle;
-  ProviderImportStep _failedStep = ProviderImportStep.idle;
+  ProviderImportStage _stage = ProviderImportStage.validating;
+  ProviderImportStage? _failedStage;
 
   bool get isImporting => _isImporting;
   String? get statusMessage => _statusMessage;
   String? get errorMessage => _errorMessage;
-  ProviderImportStep get step => _step;
-  ProviderImportStep get failedStep => _failedStep;
+  ProviderImportStage get stage => _stage;
+  ProviderImportStage? get failedStage => _failedStage;
   bool get shouldKeepSetupVisible => _isImporting || _errorMessage != null;
 
-  void start(String message) {
+  void start() {
     _isImporting = true;
-    _statusMessage = message;
+    _statusMessage = 'Validating provider';
     _errorMessage = null;
-    _step = _stepForMessage(message);
-    _failedStep = ProviderImportStep.idle;
+    _stage = ProviderImportStage.validating;
+    _failedStage = null;
     notifyListeners();
   }
 
-  void progress(String message) {
-    _statusMessage = message;
+  void progress(ProviderImportProgress progress) {
+    if (progress.stage == ProviderImportStage.failed) {
+      _statusMessage = null;
+      _errorMessage = progress.message;
+      _failedStage = _stage == ProviderImportStage.done
+          ? ProviderImportStage.indexing
+          : _stage;
+      _stage = ProviderImportStage.failed;
+      notifyListeners();
+      return;
+    }
+    _statusMessage = progress.message;
     _errorMessage = null;
-    _step = _stepForMessage(message);
-    _failedStep = ProviderImportStep.idle;
+    _stage = progress.stage;
+    _failedStage = null;
     notifyListeners();
   }
 
@@ -49,8 +60,8 @@ class ProviderSetupImportController extends ChangeNotifier {
     _isImporting = false;
     _statusMessage = message;
     _errorMessage = null;
-    _step = ProviderImportStep.finished;
-    _failedStep = ProviderImportStep.idle;
+    _stage = ProviderImportStage.done;
+    _failedStage = null;
     notifyListeners();
   }
 
@@ -58,51 +69,15 @@ class ProviderSetupImportController extends ChangeNotifier {
     _isImporting = false;
     _statusMessage = null;
     _errorMessage = message;
-    _failedStep = switch (_step) {
-      ProviderImportStep.idle ||
-      ProviderImportStep.finished ||
-      ProviderImportStep.failed => ProviderImportStep.loadingCatalog,
-      _ => _step,
+    _failedStage = switch (_stage) {
+      ProviderImportStage.done => ProviderImportStage.indexing,
+      ProviderImportStage.failed =>
+        _failedStage ?? ProviderImportStage.validating,
+      _ => _stage,
     };
-    _step = ProviderImportStep.failed;
+    _stage = ProviderImportStage.failed;
     notifyListeners();
   }
-}
-
-enum ProviderImportStep {
-  idle,
-  savingProvider,
-  checkingSource,
-  loadingCatalog,
-  preparingCatalog,
-  savingCatalog,
-  finished,
-  failed,
-}
-
-ProviderImportStep _stepForMessage(String message) {
-  final value = message.toLowerCase();
-  if (value.contains('saving provider')) {
-    return ProviderImportStep.savingProvider;
-  }
-  if (value.contains('checking') || value.contains('login')) {
-    return ProviderImportStep.checkingSource;
-  }
-  if (value.contains('loading') ||
-      value.contains('reading') ||
-      value.contains('importing')) {
-    return ProviderImportStep.loadingCatalog;
-  }
-  if (value.contains('parsing') || value.contains('preparing')) {
-    return ProviderImportStep.preparingCatalog;
-  }
-  if (value.contains('saving catalog')) {
-    return ProviderImportStep.savingCatalog;
-  }
-  if (value.contains('imported')) {
-    return ProviderImportStep.finished;
-  }
-  return ProviderImportStep.loadingCatalog;
 }
 
 class ProviderSetupScreen extends ConsumerStatefulWidget {
@@ -326,12 +301,12 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
                           color: theme.colorScheme.primary,
                         ),
                       if (importState.isImporting ||
-                          importState.step == ProviderImportStep.finished ||
-                          importState.step == ProviderImportStep.failed) ...[
+                          importState.stage == ProviderImportStage.done ||
+                          importState.stage == ProviderImportStage.failed) ...[
                         const SizedBox(height: 12),
                         _ImportStepper(
-                          currentStep: importState.step,
-                          failedStep: importState.failedStep,
+                          currentStage: importState.stage,
+                          failedStage: importState.failedStage,
                           isImporting: importState.isImporting,
                         ),
                       ],
@@ -383,10 +358,11 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
     final importController = ref.read(providerSetupImportControllerProvider);
     final providerRepository = ref.read(providerRepositoryProvider);
     final refreshService = ref.read(providerRefreshServiceProvider);
-    importController.start('Saving provider details');
+    importController.start();
+    IptvProvider? provider;
 
     try {
-      final provider = await providerRepository.createOrUpdateProvider(
+      provider = await providerRepository.createOrUpdateProvider(
         _providerInput(),
       );
       final result = await refreshService.refreshProvider(
@@ -395,7 +371,7 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
       );
       if (result.status == ProviderRefreshStatus.failed) {
         if (!provider.hasImportedCatalog) {
-          await providerRepository.deleteProvider(provider.id);
+          await _deleteFailedProvider(providerRepository, provider);
         }
         importController.fail(result.message ?? 'Provider import failed');
         return;
@@ -404,7 +380,23 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
         result.message ?? 'Imported ${result.itemCount} items',
       );
     } catch (error) {
+      final createdProvider = provider;
+      if (createdProvider != null && !createdProvider.hasImportedCatalog) {
+        await _deleteFailedProvider(providerRepository, createdProvider);
+      }
       importController.fail(error.toString());
+    }
+  }
+
+  Future<void> _deleteFailedProvider(
+    ProviderRepository providerRepository,
+    IptvProvider provider,
+  ) async {
+    try {
+      await providerRepository.deleteProvider(provider.id);
+    } catch (_) {
+      // Best-effort cleanup. The failed provider remains locked because it has
+      // no successful catalog import, but the form must not stay busy forever.
     }
   }
 
@@ -433,20 +425,22 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
 
 class _ImportStepper extends StatelessWidget {
   const _ImportStepper({
-    required this.currentStep,
-    required this.failedStep,
+    required this.currentStage,
+    required this.failedStage,
     required this.isImporting,
   });
 
-  final ProviderImportStep currentStep;
-  final ProviderImportStep failedStep;
+  final ProviderImportStage currentStage;
+  final ProviderImportStage? failedStage;
   final bool isImporting;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final activeIndex = _stepIndex(
-      currentStep == ProviderImportStep.failed ? failedStep : currentStep,
+    final activeIndex = _stageIndex(
+      currentStage == ProviderImportStage.failed
+          ? failedStage ?? ProviderImportStage.validating
+          : currentStage,
     );
 
     return DecoratedBox(
@@ -459,16 +453,21 @@ class _ImportStepper extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
-            for (var index = 0; index < _importStepLabels.length; index += 1)
+            for (
+              var index = 0;
+              index < _importChecklistStages.length;
+              index += 1
+            )
               _ImportStepRow(
-                label: _importStepLabels[index],
+                label: _importChecklistStages[index].label,
+                message: _importChecklistStages[index].message,
                 isActive: isImporting && index == activeIndex,
                 isComplete:
-                    currentStep == ProviderImportStep.finished ||
-                    (currentStep != ProviderImportStep.failed &&
+                    currentStage == ProviderImportStage.done ||
+                    (currentStage != ProviderImportStage.failed &&
                         index < activeIndex),
                 isFailed:
-                    currentStep == ProviderImportStep.failed &&
+                    currentStage == ProviderImportStage.failed &&
                     index == activeIndex,
                 accent: theme.colorScheme.primary,
               ),
@@ -482,6 +481,7 @@ class _ImportStepper extends StatelessWidget {
 class _ImportStepRow extends StatelessWidget {
   const _ImportStepRow({
     required this.label,
+    required this.message,
     required this.isActive,
     required this.isComplete,
     required this.isFailed,
@@ -489,6 +489,7 @@ class _ImportStepRow extends StatelessWidget {
   });
 
   final String label;
+  final String message;
   final bool isActive;
   final bool isComplete;
   final bool isFailed;
@@ -523,42 +524,106 @@ class _ImportStepRow extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              label,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: isActive || isComplete
-                    ? const Color(0xFFF4F0E8)
-                    : const Color(0xFF8E8980),
-                fontWeight: isActive ? FontWeight.w800 : FontWeight.w500,
-                letterSpacing: 0,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: isActive || isComplete
+                        ? const Color(0xFFF4F0E8)
+                        : const Color(0xFF8E8980),
+                    fontWeight: isActive ? FontWeight.w800 : FontWeight.w500,
+                    letterSpacing: 0,
+                  ),
+                ),
+                Text(
+                  _statusText,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: isFailed
+                        ? const Color(0xFFE26D5A)
+                        : const Color(0xFF8E8980),
+                    letterSpacing: 0,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
       ),
     );
   }
+
+  String get _statusText {
+    if (isFailed) {
+      return 'Error';
+    }
+    if (isActive) {
+      return message;
+    }
+    if (isComplete) {
+      return 'Done';
+    }
+    return 'Pending';
+  }
 }
 
-const _importStepLabels = [
-  'Save provider',
-  'Check credentials',
-  'Load live TV, movies, and series',
-  'Prepare catalog',
-  'Save catalog',
+const _importChecklistStages = [
+  _ImportChecklistStage(
+    stage: ProviderImportStage.validating,
+    label: 'Validating account',
+    message: 'Running',
+  ),
+  _ImportChecklistStage(
+    stage: ProviderImportStage.live,
+    label: 'Live TV',
+    message: 'Loading catalog',
+  ),
+  _ImportChecklistStage(
+    stage: ProviderImportStage.movies,
+    label: 'Movies',
+    message: 'Loading catalog',
+  ),
+  _ImportChecklistStage(
+    stage: ProviderImportStage.series,
+    label: 'Series',
+    message: 'Loading catalog',
+  ),
+  _ImportChecklistStage(
+    stage: ProviderImportStage.epg,
+    label: 'EPG',
+    message: 'Preparing metadata',
+  ),
+  _ImportChecklistStage(
+    stage: ProviderImportStage.indexing,
+    label: 'Indexing',
+    message: 'Saving catalog',
+  ),
 ];
 
-int _stepIndex(ProviderImportStep step) {
-  return switch (step) {
-    ProviderImportStep.idle => 0,
-    ProviderImportStep.savingProvider => 0,
-    ProviderImportStep.checkingSource => 1,
-    ProviderImportStep.loadingCatalog => 2,
-    ProviderImportStep.preparingCatalog => 3,
-    ProviderImportStep.savingCatalog => 4,
-    ProviderImportStep.finished => _importStepLabels.length,
-    ProviderImportStep.failed => 2,
-  };
+int _stageIndex(ProviderImportStage stage) {
+  if (stage == ProviderImportStage.done) {
+    return _importChecklistStages.length;
+  }
+  if (stage == ProviderImportStage.failed) {
+    return _stageIndex(ProviderImportStage.validating);
+  }
+  final index = _importChecklistStages.indexWhere((item) {
+    return item.stage == stage;
+  });
+  return index < 0 ? 0 : index;
+}
+
+class _ImportChecklistStage {
+  const _ImportChecklistStage({
+    required this.stage,
+    required this.label,
+    required this.message,
+  });
+
+  final ProviderImportStage stage;
+  final String label;
+  final String message;
 }
 
 class _StatusBanner extends StatelessWidget {

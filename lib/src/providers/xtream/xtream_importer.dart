@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../../catalog/catalog_models.dart';
+import '../provider_models.dart';
 import 'xtream_client.dart';
 
 class XtreamImporter {
@@ -10,12 +11,15 @@ class XtreamImporter {
 
   Future<XtreamImportResult> importProvider({
     required String providerId,
-    void Function(String message)? onProgress,
+    ProviderImportProgressCallback? onProgress,
   }) async {
-    onProgress?.call('Checking Xtream login');
+    _emitProgress(
+      onProgress,
+      ProviderImportStage.validating,
+      'Validating Xtream account',
+    );
     await client.getPlayerApiInfo();
 
-    onProgress?.call('Importing live TV, movies, and series');
     final liveCategoriesFuture = client.getLiveCategories();
     final liveStreamsFuture = client.getLiveStreams();
     final vodCategoriesFuture = client.getVodCategories();
@@ -23,14 +27,50 @@ class XtreamImporter {
     final seriesCategoriesFuture = client.getSeriesCategories();
     final seriesItemsFuture = client.getSeries();
 
+    _emitProgress(
+      onProgress,
+      ProviderImportStage.live,
+      'Loading live TV catalog',
+    );
     final liveCategories = await liveCategoriesFuture;
     final liveStreams = await liveStreamsFuture;
+    _emitProgress(
+      onProgress,
+      ProviderImportStage.live,
+      'Loaded live TV catalog',
+      current: liveStreams.length,
+      total: liveStreams.length,
+    );
+
+    _emitProgress(
+      onProgress,
+      ProviderImportStage.movies,
+      'Loading movie catalog',
+    );
     final vodCategories = await vodCategoriesFuture;
     final vodStreams = await vodStreamsFuture;
+    _emitProgress(
+      onProgress,
+      ProviderImportStage.movies,
+      'Loaded movie catalog',
+      current: vodStreams.length,
+      total: vodStreams.length,
+    );
+
+    _emitProgress(
+      onProgress,
+      ProviderImportStage.series,
+      'Loading series catalog',
+    );
     final seriesCategories = await seriesCategoriesFuture;
     final seriesItems = await seriesItemsFuture;
-
-    onProgress?.call('Preparing catalog');
+    _emitProgress(
+      onProgress,
+      ProviderImportStage.series,
+      'Loaded series catalog',
+      current: seriesItems.length,
+      total: seriesItems.length,
+    );
 
     final categories = <CatalogCategoryInput>[
       ..._categoryInputs(providerId, CatalogContentType.live, liveCategories),
@@ -85,6 +125,23 @@ class XtreamImporter {
       ),
     );
   }
+}
+
+void _emitProgress(
+  ProviderImportProgressCallback? onProgress,
+  ProviderImportStage stage,
+  String message, {
+  int? current,
+  int? total,
+}) {
+  onProgress?.call(
+    ProviderImportProgress(
+      stage: stage,
+      message: message,
+      current: current,
+      total: total,
+    ),
+  );
 }
 
 class XtreamImportResult {
