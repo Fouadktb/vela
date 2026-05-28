@@ -26,6 +26,8 @@ class CatalogCardItem {
     this.seasonId,
     this.resumePositionSeconds = 0,
     this.resumeDurationSeconds,
+    this.seriesPlaybackLabel,
+    this.seriesPlaybackSummary,
     this.isFavorite = false,
     this.isRecent = false,
   });
@@ -50,6 +52,8 @@ class CatalogCardItem {
   final String? seasonId;
   final int resumePositionSeconds;
   final int? resumeDurationSeconds;
+  final String? seriesPlaybackLabel;
+  final String? seriesPlaybackSummary;
   final bool isFavorite;
   final bool isRecent;
   final bool canPlay;
@@ -57,6 +61,15 @@ class CatalogCardItem {
   bool get hasArtwork => artworkUrl?.trim().isNotEmpty == true;
   bool get hasResume {
     return contentType != CatalogContentType.live && resumePositionSeconds > 0;
+  }
+
+  bool get hasSeriesPlaybackAction {
+    return contentType == CatalogContentType.series &&
+        seriesPlaybackLabel?.trim().isNotEmpty == true;
+  }
+
+  bool get hasPlaybackProgress {
+    return hasResume || hasSeriesPlaybackAction;
   }
 
   bool get hasResumeProgress {
@@ -90,6 +103,8 @@ class CatalogCardItem {
     String? seasonId,
     int? resumePositionSeconds,
     int? resumeDurationSeconds,
+    String? seriesPlaybackLabel,
+    String? seriesPlaybackSummary,
     bool? isFavorite,
     bool? isRecent,
     bool? canPlay,
@@ -117,6 +132,9 @@ class CatalogCardItem {
           resumePositionSeconds ?? this.resumePositionSeconds,
       resumeDurationSeconds:
           resumeDurationSeconds ?? this.resumeDurationSeconds,
+      seriesPlaybackLabel: seriesPlaybackLabel ?? this.seriesPlaybackLabel,
+      seriesPlaybackSummary:
+          seriesPlaybackSummary ?? this.seriesPlaybackSummary,
       isFavorite: isFavorite ?? this.isFavorite,
       isRecent: isRecent ?? this.isRecent,
       canPlay: canPlay ?? this.canPlay,
@@ -124,7 +142,7 @@ class CatalogCardItem {
   }
 }
 
-class ItemGrid extends StatelessWidget {
+class ItemGrid extends StatefulWidget {
   const ItemGrid({
     required this.items,
     required this.selectedItemId,
@@ -139,28 +157,43 @@ class ItemGrid extends StatelessWidget {
   final ValueChanged<CatalogCardItem> onOpen;
 
   @override
+  State<ItemGrid> createState() => _ItemGridState();
+}
+
+class _ItemGridState extends State<ItemGrid> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     final useList = width < 1220;
 
     return Scrollbar(
+      controller: _scrollController,
       child: CustomScrollView(
+        controller: _scrollController,
         slivers: [
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(0, 0, 18, 28),
             sliver: useList
                 ? SliverList.separated(
                     itemBuilder: (context, index) {
-                      final item = items[index];
+                      final item = widget.items[index];
                       return _ListTileItem(
                         item: item,
-                        selected: item.id == selectedItemId,
-                        onSelect: () => onSelect(item.id),
-                        onOpen: item.canPlay ? () => onOpen(item) : null,
+                        selected: item.id == widget.selectedItemId,
+                        onSelect: () => widget.onSelect(item.id),
+                        onOpen: item.canPlay ? () => widget.onOpen(item) : null,
                       );
                     },
                     separatorBuilder: (_, _) => const SizedBox(height: 8),
-                    itemCount: items.length,
+                    itemCount: widget.items.length,
                   )
                 : SliverGrid.builder(
                     gridDelegate:
@@ -171,15 +204,15 @@ class ItemGrid extends StatelessWidget {
                           childAspectRatio: 0.78,
                         ),
                     itemBuilder: (context, index) {
-                      final item = items[index];
+                      final item = widget.items[index];
                       return _GridCard(
                         item: item,
-                        selected: item.id == selectedItemId,
-                        onSelect: () => onSelect(item.id),
-                        onOpen: item.canPlay ? () => onOpen(item) : null,
+                        selected: item.id == widget.selectedItemId,
+                        onSelect: () => widget.onSelect(item.id),
+                        onOpen: item.canPlay ? () => widget.onOpen(item) : null,
                       );
                     },
-                    itemCount: items.length,
+                    itemCount: widget.items.length,
                   ),
           ),
         ],

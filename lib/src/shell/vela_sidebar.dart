@@ -331,28 +331,37 @@ class _SidebarItem extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
             child: SizedBox(
               height: 44,
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: _sidebarIconSlotWidth,
-                    child: Icon(section.icon, color: foreground, size: 21),
-                  ),
-                  Expanded(
-                    child: AnimatedOpacity(
-                      opacity: isExpanded ? 1 : 0,
-                      duration: const Duration(milliseconds: 120),
-                      child: Text(
-                        section.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.labelLarge?.copyWith(
-                          color: foreground,
-                          letterSpacing: 0,
-                        ),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final iconSlotWidth =
+                      constraints.maxWidth < _sidebarIconSlotWidth
+                      ? constraints.maxWidth
+                      : _sidebarIconSlotWidth;
+                  return Row(
+                    children: [
+                      SizedBox(
+                        width: iconSlotWidth,
+                        child: Icon(section.icon, color: foreground, size: 21),
                       ),
-                    ),
-                  ),
-                ],
+                      if (isExpanded)
+                        Expanded(
+                          child: AnimatedOpacity(
+                            opacity: 1,
+                            duration: const Duration(milliseconds: 120),
+                            child: Text(
+                              section.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelLarge?.copyWith(
+                                color: foreground,
+                                letterSpacing: 0,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
               ),
             ),
           ),

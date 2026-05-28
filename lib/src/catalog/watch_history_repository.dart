@@ -207,6 +207,27 @@ class WatchHistoryRepository {
     );
   }
 
+  Future<PlaybackPosition?> lookupLatestPositionForSeries({
+    required String providerId,
+    required String seriesId,
+  }) async {
+    final row =
+        await (_db.select(_db.playbackPositions)
+              ..where(
+                (position) =>
+                    position.providerId.equals(providerId) &
+                    position.itemType.equals(PlayableContentType.episode.name) &
+                    position.seriesId.equals(seriesId) &
+                    (position.completed.equals(true) |
+                        position.positionSeconds.isBiggerThanValue(0)),
+              )
+              ..orderBy([(position) => OrderingTerm.desc(position.updatedAt)])
+              ..limit(1))
+            .getSingleOrNull();
+
+    return row == null ? null : _toPlaybackPosition(row);
+  }
+
   Future<Map<({String providerId, String itemId}), PlaybackPosition>>
   listActiveResumePositions({
     required PlayableContentType itemType,
@@ -243,6 +264,37 @@ class WatchHistoryRepository {
             position.itemType.equals(PlayableContentType.episode.name) &
             position.completed.equals(false) &
             position.positionSeconds.isBiggerThanValue(0);
+        if (ids.isNotEmpty) {
+          predicate = predicate & position.providerId.isIn(ids);
+        }
+        return predicate;
+      })
+      ..orderBy([(position) => OrderingTerm.desc(position.updatedAt)]);
+    final rows = await query.get();
+    final positions =
+        <({String providerId, String seriesId}), PlaybackPosition>{};
+
+    for (final row in rows) {
+      final seriesId = row.seriesId;
+      if (seriesId == null || seriesId.trim().isEmpty) {
+        continue;
+      }
+      final key = (providerId: row.providerId, seriesId: seriesId);
+      positions.putIfAbsent(key, () => _toPlaybackPosition(row));
+    }
+
+    return positions;
+  }
+
+  Future<Map<({String providerId, String seriesId}), PlaybackPosition>>
+  listLatestPositionsBySeries({Iterable<String>? providerIds}) async {
+    final ids = _normalizedProviderIds(providerIds);
+    final query = _db.select(_db.playbackPositions)
+      ..where((position) {
+        Expression<bool> predicate =
+            position.itemType.equals(PlayableContentType.episode.name) &
+            (position.completed.equals(true) |
+                position.positionSeconds.isBiggerThanValue(0));
         if (ids.isNotEmpty) {
           predicate = predicate & position.providerId.isIn(ids);
         }

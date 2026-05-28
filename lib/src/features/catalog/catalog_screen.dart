@@ -19,6 +19,7 @@ import 'category_list.dart';
 import 'content_detail_screen.dart';
 import 'detail_panel.dart';
 import 'item_grid.dart';
+import 'series_playback_progress.dart';
 
 const _catalogCacheDuration = Duration(minutes: 10);
 final _forcedEpgRefreshProviders = <String>{};
@@ -647,8 +648,8 @@ Future<List<CatalogCardItem>> _catalogItemsToCards(
           providerIds: providerIds,
         )
       : <({String providerId, String itemId}), PlaybackPosition>{};
-  final seriesResumes = hasSeries
-      ? await historyRepository.listLatestResumePositionsBySeries(
+  final seriesPositions = hasSeries
+      ? await historyRepository.listLatestPositionsBySeries(
           providerIds: providerIds,
         )
       : <({String providerId, String seriesId}), PlaybackPosition>{};
@@ -665,26 +666,37 @@ Future<List<CatalogCardItem>> _catalogItemsToCards(
       );
       continue;
     }
-    final latestResume =
-        seriesResumes[(providerId: item.providerId, seriesId: item.id)];
-    final resumeEpisode = latestResume == null
+    final latestPosition =
+        seriesPositions[(providerId: item.providerId, seriesId: item.id)];
+    final seriesAction = latestPosition == null
         ? null
-        : await _episodeForPosition(
+        : await _seriesPlaybackActionForPosition(
             catalogRepository: catalogRepository,
-            providerId: item.providerId,
-            seriesId: item.id,
-            position: latestResume,
+            item: item,
+            position: latestPosition,
           );
     cards.add(
       _catalogItemToCard(
         item,
         canPlayOverride: true,
-        resume: latestResume,
-        subtitleOverride: _seriesResumeSubtitle(resumeEpisode),
+        resume: seriesAction?.resume,
+        seriesPlaybackAction: seriesAction,
       ),
     );
   }
   return cards;
+}
+
+Future<SeriesPlaybackAction?> _seriesPlaybackActionForPosition({
+  required CatalogRepository catalogRepository,
+  required CatalogItem item,
+  required PlaybackPosition position,
+}) async {
+  final episodes = await catalogRepository.listEpisodesForSeries(
+    providerId: item.providerId,
+    seriesId: item.id,
+  );
+  return resolveSeriesPlaybackAction(episodes: episodes, positions: [position]);
 }
 
 void _keepCatalogProviderWarm(Ref ref) {
@@ -708,6 +720,7 @@ CatalogCardItem _catalogItemToCard(
   bool? canPlayOverride,
   PlaybackPosition? resume,
   String? subtitleOverride,
+  SeriesPlaybackAction? seriesPlaybackAction,
 }) {
   return CatalogCardItem(
     id: item.id,
@@ -715,7 +728,10 @@ CatalogCardItem _catalogItemToCard(
     contentType: item.contentType,
     title: item.title,
     externalId: item.externalId,
-    subtitle: subtitleOverride ?? _subtitleFor(item),
+    subtitle:
+        subtitleOverride ??
+        seriesPlaybackAction?.subtitle ??
+        _subtitleFor(item),
     description: item.description,
     artworkUrl: item.artworkUrl,
     streamUrl: item.streamUrl,
@@ -727,8 +743,15 @@ CatalogCardItem _catalogItemToCard(
     epgSummary: item.contentType == CatalogContentType.live
         ? item.subtitle ?? item.description ?? item.epgChannelId
         : null,
-    resumePositionSeconds: resume?.positionSeconds ?? 0,
-    resumeDurationSeconds: resume?.durationSeconds,
+    resumePositionSeconds:
+        seriesPlaybackAction?.resume?.positionSeconds ??
+        resume?.positionSeconds ??
+        0,
+    resumeDurationSeconds:
+        seriesPlaybackAction?.resume?.durationSeconds ??
+        resume?.durationSeconds,
+    seriesPlaybackLabel: seriesPlaybackAction?.primaryLabel,
+    seriesPlaybackSummary: seriesPlaybackAction?.summaryLabel,
     isFavorite: item.isFavorite,
     canPlay:
         canPlayOverride ??
@@ -837,6 +860,10 @@ Future<CatalogCardItem?> _recentEpisodeToSeriesCard(
     episodeId: entry.itemId,
     seasonId: entry.seasonId,
   );
+  final episodes = await catalogRepository.listEpisodesForSeries(
+    providerId: entry.providerId,
+    seriesId: seriesId,
+  );
   final resume = PlaybackPosition(
     providerId: entry.providerId,
     itemId: entry.itemId,
@@ -853,21 +880,24 @@ Future<CatalogCardItem?> _recentEpisodeToSeriesCard(
     providerId: entry.providerId,
     seriesId: seriesId,
   );
-  final effectiveResume = latestResume ?? resume;
-  final effectiveEpisode = latestResume == null
-      ? episode
-      : await _episodeForPosition(
-          catalogRepository: catalogRepository,
-          providerId: entry.providerId,
-          seriesId: seriesId,
-          position: latestResume,
+  final latestPosition = await historyRepository.lookupLatestPositionForSeries(
+    providerId: entry.providerId,
+    seriesId: seriesId,
+  );
+  final seriesAction = latestPosition == null
+      ? null
+      : resolveSeriesPlaybackAction(
+          episodes: episodes,
+          positions: [latestPosition],
         );
+  final effectiveResume = seriesAction?.resume ?? latestResume ?? resume;
   return _catalogItemToCard(
     series,
     canPlayOverride: true,
     resume: effectiveResume,
+    seriesPlaybackAction: seriesAction,
     subtitleOverride:
-        _seriesResumeSubtitle(effectiveEpisode) ??
+        seriesAction?.subtitle ??
         _seriesResumeSubtitle(episode) ??
         entry.subtitle,
   ).copyWith(isRecent: true);
@@ -1009,27 +1039,35 @@ Future<_PlaybackTarget?> _playbackTargetForCard(
 
   if (item.contentType == CatalogContentType.series) {
     final episodes = await _episodesForSeries(ref, item);
-    final resume = restart
+    final latestPosition = restart
         ? null
         : await ref
               .read(watchHistoryRepositoryProvider)
-              .lookupLatestResumeForSeries(
+              .lookupLatestPositionForSeries(
                 providerId: item.providerId,
                 seriesId: item.id,
               );
+    final seriesAction = latestPosition == null
+        ? null
+        : resolveSeriesPlaybackAction(
+            episodes: episodes,
+            positions: [latestPosition],
+          );
     final firstPlayableEpisode = episodes
         .where(_episodeHasPlayableStream)
         .firstOrNull;
     final episode = restart
         ? firstPlayableEpisode
-        : _episodeForResume(episodes, resume) ?? firstPlayableEpisode;
+        : seriesAction?.episode ?? firstPlayableEpisode;
     if (episode == null) return null;
     return _episodePlaybackTarget(
       ref,
       episode: episode,
       episodes: episodes,
       fallbackPosterUrl: item.artworkUrl,
-      resume: restart ? null : resume,
+      resume: !restart && seriesAction?.kind == SeriesPlaybackActionKind.resume
+          ? seriesAction?.resume
+          : null,
     );
   }
 
@@ -1246,19 +1284,6 @@ Future<List<PlayableItem>> _episodePlayableItems(
   return items;
 }
 
-CatalogEpisode? _episodeForResume(
-  List<CatalogEpisode> episodes,
-  PlaybackPosition? resume,
-) {
-  if (resume == null) return null;
-  return episodes.where((episode) {
-    return episode.id == resume.itemId &&
-        episode.seriesId == resume.seriesId &&
-        (resume.seasonId == null || episode.seasonId == resume.seasonId) &&
-        _episodeHasPlayableStream(episode);
-  }).firstOrNull;
-}
-
 PlayableItem _episodePlayable({
   required CatalogEpisode episode,
   required String streamUrl,
@@ -1369,20 +1394,6 @@ String? _subtitleFor(CatalogItem item) {
     return null;
   }
   return parts.join(' / ');
-}
-
-Future<CatalogEpisode?> _episodeForPosition({
-  required CatalogRepository catalogRepository,
-  required String providerId,
-  required String seriesId,
-  required PlaybackPosition position,
-}) {
-  return catalogRepository.getEpisode(
-    providerId: providerId,
-    seriesId: seriesId,
-    episodeId: position.itemId,
-    seasonId: position.seasonId,
-  );
 }
 
 String? _seriesResumeSubtitle(CatalogEpisode? episode) {

@@ -6,8 +6,10 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../app/navigation_controller.dart';
 import '../../catalog/catalog_models.dart';
+import '../../catalog/catalog_repository.dart';
 import '../../catalog/watch_history_repository.dart';
 import 'item_grid.dart';
+import 'series_playback_progress.dart';
 
 typedef CatalogPlayCallback =
     Future<void> Function(CatalogCardItem item, {bool restart});
@@ -26,7 +28,11 @@ final _detailCardProvider = StreamProvider.autoDispose
           )
           .asyncMap((item) async {
             if (item == null) return null;
-            return _catalogItemToCard(historyRepository, item);
+            return _catalogItemToCard(
+              catalogRepository,
+              historyRepository,
+              item,
+            );
           });
     });
 
@@ -349,7 +355,7 @@ class _PosterPanel extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
           ),
         ),
-        if (item.hasResume) ...[
+        if (item.hasPlaybackProgress) ...[
           const SizedBox(height: 10),
           OutlinedButton.icon(
             onPressed: () => unawaited(onPlayItem(item, restart: true)),
@@ -402,7 +408,10 @@ class _MetadataPanel extends StatelessWidget {
               _MetaChip(label: 'Rating ${item.rating}'),
             if (item.durationSeconds != null)
               _MetaChip(label: _duration(item.durationSeconds!)),
-            if (item.hasResume) _MetaChip(label: 'Resume available'),
+            if (item.hasPlaybackProgress)
+              _MetaChip(
+                label: item.seriesPlaybackSummary ?? 'Resume available',
+              ),
           ],
         ),
         const SizedBox(height: 24),
@@ -476,7 +485,7 @@ class _EpisodeSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return episodes.when(
       data: (items) {
-        final playable = items.where(_episodeCanPlay).toList();
+        final playable = items.where(episodeCanPlay).toList();
         if (playable.isEmpty) {
           return const _NoticePanel(
             icon: LucideIcons.listVideo,
@@ -485,19 +494,20 @@ class _EpisodeSection extends StatelessWidget {
           );
         }
         final positions = episodePositions.value ?? const <PlaybackPosition>[];
-        final positionByEpisode = _positionsByEpisode(positions);
-        final latestResume = _latestResumablePosition(positions);
-        final resumeEpisode = latestResume == null
-            ? null
-            : _episodeForPosition(playable, latestResume);
+        final positionByEpisode = positionsByEpisode(positions);
+        final seriesAction = resolveSeriesPlaybackAction(
+          episodes: playable,
+          positions: positions,
+        );
+        final activeEpisode = seriesAction?.episode;
         final seasons = playable.map((episode) => episode.seasonNumber).toSet();
         final sortedSeasons = seasons.toList()..sort();
         final activeSeason =
             selectedSeason != null && sortedSeasons.contains(selectedSeason)
             ? selectedSeason!
-            : resumeEpisode != null &&
-                  sortedSeasons.contains(resumeEpisode.seasonNumber)
-            ? resumeEpisode.seasonNumber
+            : activeEpisode != null &&
+                  sortedSeasons.contains(activeEpisode.seasonNumber)
+            ? activeEpisode.seasonNumber
             : sortedSeasons.first;
         final visible = playable
             .where((episode) => episode.seasonNumber == activeSeason)
@@ -529,10 +539,11 @@ class _EpisodeSection extends StatelessWidget {
               _EpisodeTile(
                 item: item,
                 episode: episode,
-                position: positionByEpisode[_episodePositionKey(episode)],
+                position: positionByEpisode[catalogEpisodePositionKey(episode)],
                 isCurrentResume:
-                    latestResume != null &&
-                    _matchesPosition(episode, latestResume),
+                    activeEpisode != null &&
+                    episode.id == activeEpisode.id &&
+                    episode.seasonId == activeEpisode.seasonId,
                 onOpenEpisode: onOpenEpisode,
               ),
           ],
@@ -855,15 +866,31 @@ class _SeriesEpisodesQuery {
 }
 
 Future<CatalogCardItem> _catalogItemToCard(
+  CatalogRepository catalogRepository,
   WatchHistoryRepository historyRepository,
   CatalogItem item,
 ) async {
   if (item.contentType == CatalogContentType.series) {
-    final latestResume = await historyRepository.lookupLatestResumeForSeries(
-      providerId: item.providerId,
-      seriesId: item.id,
+    final latestPosition = await historyRepository
+        .lookupLatestPositionForSeries(
+          providerId: item.providerId,
+          seriesId: item.id,
+        );
+    final seriesAction = latestPosition == null
+        ? null
+        : resolveSeriesPlaybackAction(
+            episodes: await catalogRepository.listEpisodesForSeries(
+              providerId: item.providerId,
+              seriesId: item.id,
+            ),
+            positions: [latestPosition],
+          );
+    return _cardFromItem(
+      item,
+      resume: seriesAction?.resume,
+      seriesPlaybackAction: seriesAction,
+      canPlayOverride: true,
     );
-    return _cardFromItem(item, resume: latestResume, canPlayOverride: true);
   }
   final resume = item.contentType == CatalogContentType.movie
       ? await historyRepository.lookupResumePosition(
@@ -878,6 +905,7 @@ Future<CatalogCardItem> _catalogItemToCard(
 CatalogCardItem _cardFromItem(
   CatalogItem item, {
   PlaybackPosition? resume,
+  SeriesPlaybackAction? seriesPlaybackAction,
   bool? canPlayOverride,
 }) {
   return CatalogCardItem(
@@ -886,7 +914,7 @@ CatalogCardItem _cardFromItem(
     contentType: item.contentType,
     title: item.title,
     externalId: item.externalId,
-    subtitle: _subtitleFor(item),
+    subtitle: seriesPlaybackAction?.subtitle ?? _subtitleFor(item),
     description: item.description,
     artworkUrl: item.artworkUrl,
     streamUrl: item.streamUrl,
@@ -895,8 +923,15 @@ CatalogCardItem _cardFromItem(
     rating: item.rating,
     durationSeconds: item.durationSeconds,
     epgChannelId: item.epgChannelId,
-    resumePositionSeconds: resume?.positionSeconds ?? 0,
-    resumeDurationSeconds: resume?.durationSeconds,
+    resumePositionSeconds:
+        seriesPlaybackAction?.resume?.positionSeconds ??
+        resume?.positionSeconds ??
+        0,
+    resumeDurationSeconds:
+        seriesPlaybackAction?.resume?.durationSeconds ??
+        resume?.durationSeconds,
+    seriesPlaybackLabel: seriesPlaybackAction?.primaryLabel,
+    seriesPlaybackSummary: seriesPlaybackAction?.summaryLabel,
     isFavorite: item.isFavorite,
     canPlay:
         canPlayOverride ??
@@ -924,6 +959,10 @@ String _typeLabel(CatalogCardItem item) {
 
 String _primaryActionLabel(CatalogCardItem item) {
   if (!item.canPlay) return 'Unavailable';
+  final seriesLabel = item.seriesPlaybackLabel?.trim();
+  if (seriesLabel?.isNotEmpty == true) {
+    return seriesLabel!;
+  }
   if (item.hasResume) {
     final episodePrefix = _resumeEpisodePrefix(item);
     if (episodePrefix != null) {
@@ -947,72 +986,23 @@ CatalogCardItem _withLatestSeriesResume(
   if (item.contentType != CatalogContentType.series) {
     return item;
   }
-  final resume = _latestResumablePosition(positions);
-  if (resume == null) {
+  final resume = latestResumablePosition(positions);
+  final seriesAction = resolveSeriesPlaybackAction(
+    episodes: episodes,
+    positions: positions,
+  );
+  if (seriesAction == null && resume == null) {
     return item;
   }
-  final episode = _episodeForPosition(episodes, resume);
   return item.copyWith(
-    subtitle: _seriesResumeSubtitle(episode) ?? item.subtitle,
-    resumePositionSeconds: resume.positionSeconds,
-    resumeDurationSeconds: resume.durationSeconds,
+    subtitle: seriesAction?.subtitle ?? item.subtitle,
+    resumePositionSeconds:
+        seriesAction?.resume?.positionSeconds ?? resume?.positionSeconds ?? 0,
+    resumeDurationSeconds:
+        seriesAction?.resume?.durationSeconds ?? resume?.durationSeconds,
+    seriesPlaybackLabel: seriesAction?.primaryLabel,
+    seriesPlaybackSummary: seriesAction?.summaryLabel,
   );
-}
-
-Map<String, PlaybackPosition> _positionsByEpisode(
-  List<PlaybackPosition> positions,
-) {
-  final byEpisode = <String, PlaybackPosition>{};
-  for (final position in positions) {
-    final key = _positionKey(position.seasonId, position.itemId);
-    final existing = byEpisode[key];
-    if (existing == null || position.updatedAtMs > existing.updatedAtMs) {
-      byEpisode[key] = position;
-    }
-  }
-  return byEpisode;
-}
-
-PlaybackPosition? _latestResumablePosition(List<PlaybackPosition> positions) {
-  final resumable =
-      positions
-          .where(
-            (position) => !position.completed && position.positionSeconds > 0,
-          )
-          .toList()
-        ..sort((a, b) => b.updatedAtMs.compareTo(a.updatedAtMs));
-  return resumable.isEmpty ? null : resumable.first;
-}
-
-CatalogEpisode? _episodeForPosition(
-  List<CatalogEpisode> episodes,
-  PlaybackPosition position,
-) {
-  return episodes
-      .where((episode) => _matchesPosition(episode, position))
-      .firstOrNull;
-}
-
-bool _matchesPosition(CatalogEpisode episode, PlaybackPosition position) {
-  return episode.id == position.itemId &&
-      (position.seasonId == null || episode.seasonId == position.seasonId);
-}
-
-String _episodePositionKey(CatalogEpisode episode) {
-  return _positionKey(episode.seasonId, episode.id);
-}
-
-String _positionKey(String? seasonId, String itemId) {
-  return '${seasonId ?? ''}|$itemId';
-}
-
-String? _seriesResumeSubtitle(CatalogEpisode? episode) {
-  if (episode == null) {
-    return null;
-  }
-  final prefix = 'S${episode.seasonNumber} E${episode.episodeNumber}';
-  final title = episode.title.trim();
-  return title.isEmpty ? prefix : '$prefix / $title';
 }
 
 String? _resumeEpisodePrefix(CatalogCardItem item) {
@@ -1041,17 +1031,4 @@ String _episodeSubtitle(CatalogEpisode episode) {
     if (episode.durationSeconds != null) _duration(episode.durationSeconds!),
   ];
   return parts.join(' / ');
-}
-
-bool _episodeCanPlay(CatalogEpisode episode) {
-  return episode.streamUrl?.trim().isNotEmpty == true ||
-      episode.streamJson?.trim().isNotEmpty == true;
-}
-
-extension _FirstOrNull<T> on Iterable<T> {
-  T? get firstOrNull {
-    final iterator = this.iterator;
-    if (!iterator.moveNext()) return null;
-    return iterator.current;
-  }
 }

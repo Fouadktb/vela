@@ -5,6 +5,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../catalog/catalog_models.dart';
 import 'item_grid.dart';
+import 'series_playback_progress.dart';
 
 class DetailPanel extends StatelessWidget {
   const DetailPanel({
@@ -52,7 +53,7 @@ class DetailPanel extends StatelessWidget {
                   episodePositions: episodePositions,
                   epgPrograms: epgPrograms,
                   onPlay: selected.canPlay ? () => onPlay(selected) : null,
-                  onRestart: selected.canPlay && selected.hasResume
+                  onRestart: selected.canPlay && selected.hasPlaybackProgress
                       ? () => onRestart(selected)
                       : null,
                   onOpenEpisode: (episode) => onOpenEpisode(selected, episode),
@@ -208,7 +209,7 @@ class _SelectedDetails extends StatelessWidget {
                     const SizedBox(height: 16),
                     _InfoBlock(title: 'Overview', body: item.description!),
                   ],
-                  if (item.hasResume) ...[
+                  if (item.hasPlaybackProgress) ...[
                     const SizedBox(height: 16),
                     _ResumeBlock(item: item),
                   ],
@@ -474,7 +475,7 @@ class _SeriesEpisodeBlockState extends State<_SeriesEpisodeBlock> {
   Widget build(BuildContext context) {
     return widget.episodes.when(
       data: (episodes) {
-        final playable = episodes.where(_episodeCanPlay).toList();
+        final playable = episodes.where(episodeCanPlay).toList();
         if (playable.isEmpty) {
           return const _PanelNotice(
             icon: LucideIcons.listVideo,
@@ -485,11 +486,12 @@ class _SeriesEpisodeBlockState extends State<_SeriesEpisodeBlock> {
 
         final positions =
             widget.episodePositions.value ?? const <PlaybackPosition>[];
-        final positionByEpisode = _positionsByEpisode(positions);
-        final latestResume = _latestResumablePosition(positions);
-        final resumeEpisode = latestResume == null
-            ? null
-            : _episodeForPosition(playable, latestResume);
+        final positionByEpisode = positionsByEpisode(positions);
+        final seriesAction = resolveSeriesPlaybackAction(
+          episodes: playable,
+          positions: positions,
+        );
+        final activeEpisode = seriesAction?.episode;
         final seasons = playable.map((episode) => episode.seasonNumber).toSet();
         final sortedSeasons = seasons.toList()..sort();
         final selectedSeason =
@@ -497,16 +499,16 @@ class _SeriesEpisodeBlockState extends State<_SeriesEpisodeBlock> {
                 _selectedSeason != null &&
                 sortedSeasons.contains(_selectedSeason)
             ? _selectedSeason!
-            : resumeEpisode != null &&
-                  sortedSeasons.contains(resumeEpisode.seasonNumber)
-            ? resumeEpisode.seasonNumber
+            : activeEpisode != null &&
+                  sortedSeasons.contains(activeEpisode.seasonNumber)
+            ? activeEpisode.seasonNumber
             : _selectedSeason != null && sortedSeasons.contains(_selectedSeason)
             ? _selectedSeason!
             : sortedSeasons.first;
         final visible = playable
             .where((episode) => episode.seasonNumber == selectedSeason)
             .toList();
-        _scrollToEpisodeIfNeeded(visible, latestResume);
+        _scrollToEpisodeIfNeeded(visible, activeEpisode);
 
         return _PanelSection(
           title: 'Episodes',
@@ -529,10 +531,12 @@ class _SeriesEpisodeBlockState extends State<_SeriesEpisodeBlock> {
                 final episode = visible[index];
                 return _EpisodeRow(
                   episode: episode,
-                  position: positionByEpisode[_episodePositionKey(episode)],
+                  position:
+                      positionByEpisode[catalogEpisodePositionKey(episode)],
                   isCurrentResume:
-                      latestResume != null &&
-                      _matchesPosition(episode, latestResume),
+                      activeEpisode != null &&
+                      episode.id == activeEpisode.id &&
+                      episode.seasonId == activeEpisode.seasonId,
                   onOpen: () => widget.onOpenEpisode(episode),
                 );
               },
@@ -555,20 +559,22 @@ class _SeriesEpisodeBlockState extends State<_SeriesEpisodeBlock> {
 
   void _scrollToEpisodeIfNeeded(
     List<CatalogEpisode> visible,
-    PlaybackPosition? latestResume,
+    CatalogEpisode? activeEpisode,
   ) {
-    if (latestResume == null) {
+    if (activeEpisode == null) {
       return;
     }
 
     final index = visible.indexWhere(
-      (episode) => _matchesPosition(episode, latestResume),
+      (episode) =>
+          episode.id == activeEpisode.id &&
+          episode.seasonId == activeEpisode.seasonId,
     );
     if (index < 0) {
       return;
     }
 
-    final key = _positionKey(latestResume.seasonId, latestResume.itemId);
+    final key = catalogEpisodePositionKey(activeEpisode);
     if (_lastScrolledEpisodeKey == key) {
       return;
     }
@@ -860,14 +866,17 @@ class _ResumeBlock extends StatelessWidget {
     final progress = item.hasResumeProgress
         ? (item.resumeProgress * 100).round().clamp(1, 100)
         : null;
+    final label =
+        item.seriesPlaybackSummary ??
+        (progress == null
+            ? 'Resume from ${_duration(item.resumePositionSeconds)}'
+            : '$progress% watched');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          progress == null
-              ? 'Resume from ${_duration(item.resumePositionSeconds)}'
-              : '$progress% watched',
+          label,
           style: theme.textTheme.labelSmall?.copyWith(
             color: theme.colorScheme.primary,
             fontWeight: FontWeight.w800,
@@ -973,6 +982,10 @@ String _primaryActionLabel(CatalogCardItem item) {
   if (!item.canPlay) {
     return 'Unavailable';
   }
+  final seriesLabel = item.seriesPlaybackLabel?.trim();
+  if (seriesLabel?.isNotEmpty == true) {
+    return seriesLabel!;
+  }
   if (item.hasResume) {
     final episodePrefix = _resumeEpisodePrefix(item);
     if (episodePrefix != null) {
@@ -1043,56 +1056,4 @@ EpgProgram? _currentProgram(List<EpgProgram> programs, int timestampMs) {
     }
   }
   return null;
-}
-
-Map<String, PlaybackPosition> _positionsByEpisode(
-  List<PlaybackPosition> positions,
-) {
-  final byEpisode = <String, PlaybackPosition>{};
-  for (final position in positions) {
-    final key = _positionKey(position.seasonId, position.itemId);
-    final existing = byEpisode[key];
-    if (existing == null || position.updatedAtMs > existing.updatedAtMs) {
-      byEpisode[key] = position;
-    }
-  }
-  return byEpisode;
-}
-
-PlaybackPosition? _latestResumablePosition(List<PlaybackPosition> positions) {
-  final resumable =
-      positions
-          .where(
-            (position) => !position.completed && position.positionSeconds > 0,
-          )
-          .toList()
-        ..sort((a, b) => b.updatedAtMs.compareTo(a.updatedAtMs));
-  return resumable.isEmpty ? null : resumable.first;
-}
-
-CatalogEpisode? _episodeForPosition(
-  List<CatalogEpisode> episodes,
-  PlaybackPosition position,
-) {
-  return episodes
-      .where((episode) => _matchesPosition(episode, position))
-      .firstOrNull;
-}
-
-bool _matchesPosition(CatalogEpisode episode, PlaybackPosition position) {
-  return episode.id == position.itemId &&
-      (position.seasonId == null || episode.seasonId == position.seasonId);
-}
-
-String _episodePositionKey(CatalogEpisode episode) {
-  return _positionKey(episode.seasonId, episode.id);
-}
-
-String _positionKey(String? seasonId, String itemId) {
-  return '${seasonId ?? ''}|$itemId';
-}
-
-bool _episodeCanPlay(CatalogEpisode episode) {
-  return episode.streamUrl?.trim().isNotEmpty == true ||
-      episode.streamJson?.trim().isNotEmpty == true;
 }
