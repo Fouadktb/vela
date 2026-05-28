@@ -8,6 +8,7 @@ RELEASE_ROOT="${ROOT_DIR}/release"
 PACKAGE_DIR="${RELEASE_ROOT}/vela-macos"
 DMG_STAGING_DIR="${RELEASE_ROOT}/vela-macos-dmg"
 DMG_PATH="${RELEASE_ROOT}/vela-macos.dmg"
+DMG_VERIFY_MOUNT="${RELEASE_ROOT}/vela-macos-verify-mount"
 
 cd "${ROOT_DIR}"
 
@@ -23,6 +24,7 @@ rm -rf "${PACKAGE_DIR}"
 mkdir -p "${PACKAGE_DIR}"
 rm -rf "${DMG_STAGING_DIR}"
 mkdir -p "${DMG_STAGING_DIR}"
+rm -rf "${DMG_VERIFY_MOUNT}"
 rm -f "${DMG_PATH}"
 
 ditto "${BUILD_APP}" "${PACKAGE_DIR}/${APP_NAME}"
@@ -35,5 +37,18 @@ hdiutil create \
   -ov \
   -format UDZO \
   "${DMG_PATH}"
+
+hdiutil verify "${DMG_PATH}"
+mkdir -p "${DMG_VERIFY_MOUNT}"
+hdiutil attach \
+  -readonly \
+  -nobrowse \
+  -mountpoint "${DMG_VERIFY_MOUNT}" \
+  "${DMG_PATH}" >/dev/null
+trap 'hdiutil detach "${DMG_VERIFY_MOUNT}" >/dev/null 2>&1 || true; rm -rf "${DMG_VERIFY_MOUNT}"' EXIT
+codesign --verify --deep --strict --verbose=4 "${DMG_VERIFY_MOUNT}/${APP_NAME}"
+hdiutil detach "${DMG_VERIFY_MOUNT}" >/dev/null
+rm -rf "${DMG_VERIFY_MOUNT}"
+trap - EXIT
 
 echo "Created ${DMG_PATH}"
