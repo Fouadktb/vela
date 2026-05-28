@@ -53,6 +53,15 @@ class ProviderRepository {
     return _providerFromRow(rows.single);
   }
 
+  Stream<IptvProvider?> watchProvider(String id) {
+    return _providerQuery(id).watch().map((rows) {
+      if (rows.isEmpty) {
+        return null;
+      }
+      return _providerFromRow(rows.single);
+    });
+  }
+
   Stream<List<ProviderHealth>> watchProviderHealth() {
     return _providerHealthQuery().watch().map(_mapProviderHealthRows);
   }
@@ -91,31 +100,11 @@ class ProviderRepository {
       autoRefreshIntervalMinutes: Value(
         _validIntervalMinutes(input.refreshIntervalMinutes),
       ),
-      isEnabled: const Value(true),
+      isEnabled: Value(input.isEnabled),
     );
 
     await _db.into(_db.catalogProviders).insertOnConflictUpdate(row);
     return (await getProvider(id))!;
-  }
-
-  Future<void> updateProviderHealthSettings({
-    required String providerId,
-    required String name,
-    required bool refreshEnabled,
-    required int refreshIntervalMinutes,
-  }) async {
-    await (_db.update(
-      _db.catalogProviders,
-    )..where((row) => row.id.equals(providerId))).write(
-      CatalogProvidersCompanion(
-        name: Value(name.trim()),
-        autoRefreshEnabled: Value(refreshEnabled),
-        autoRefreshIntervalMinutes: Value(
-          _validIntervalMinutes(refreshIntervalMinutes),
-        ),
-        updatedAt: Value(DateTime.now().millisecondsSinceEpoch),
-      ),
-    );
   }
 
   Future<void> updateRefreshSettings({
@@ -345,7 +334,7 @@ ProviderHealth _providerHealthFromRow(QueryRow row) {
     ),
     latestRun: _refreshRunFromQueryRow(row),
     nextRefreshAtMs: provider.nextRefreshAt?.millisecondsSinceEpoch,
-    isEnabled: row.read<bool>('is_enabled'),
+    isEnabled: provider.isEnabled,
   );
 }
 
@@ -363,6 +352,7 @@ IptvProvider _providerFromRow(QueryRow row, {bool redactSource = false}) {
     id: row.read<String>('id'),
     name: row.read<String>('name'),
     type: type,
+    isEnabled: row.read<bool>('is_enabled'),
     serverUrl: !redactSource && type == ProviderType.xtream
         ? row.read<String>('source')
         : null,

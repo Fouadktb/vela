@@ -13,6 +13,7 @@ class IptvProvider {
     required this.id,
     required this.name,
     required this.type,
+    required this.isEnabled,
     required this.refreshEnabled,
     required this.refreshIntervalMinutes,
     this.serverUrl,
@@ -29,6 +30,7 @@ class IptvProvider {
   final String id;
   final String name;
   final ProviderType type;
+  final bool isEnabled;
   final String? serverUrl;
   final String? username;
   final String? password;
@@ -50,6 +52,9 @@ class IptvProvider {
   }
 
   bool get canRefresh {
+    if (!isEnabled) {
+      return false;
+    }
     final source = this.source;
     if (source == null || source.trim().isEmpty) {
       return false;
@@ -75,6 +80,7 @@ class IptvProvider {
     String? id,
     String? name,
     ProviderType? type,
+    bool? isEnabled,
     String? serverUrl,
     String? username,
     String? password,
@@ -91,6 +97,7 @@ class IptvProvider {
       id: id ?? this.id,
       name: name ?? this.name,
       type: type ?? this.type,
+      isEnabled: isEnabled ?? this.isEnabled,
       serverUrl: serverUrl ?? this.serverUrl,
       username: username ?? this.username,
       password: password ?? this.password,
@@ -112,6 +119,7 @@ class IptvProvider {
         'id: $id, '
         'name: $name, '
         'type: $type, '
+        'isEnabled: $isEnabled, '
         'serverUrl: ${serverUrl == null ? null : '<redacted>'}, '
         'username: ${username == null ? null : '<redacted>'}, '
         'password: ${password == null ? null : '<redacted>'}, '
@@ -137,6 +145,7 @@ class ProviderInput {
     this.password,
     this.m3uUrl,
     this.localFilePath,
+    this.isEnabled = true,
     this.refreshEnabled = true,
     this.refreshIntervalMinutes = 24 * 60,
   });
@@ -149,6 +158,7 @@ class ProviderInput {
   final String? password;
   final String? m3uUrl;
   final String? localFilePath;
+  final bool isEnabled;
   final bool refreshEnabled;
   final int refreshIntervalMinutes;
 
@@ -163,6 +173,7 @@ class ProviderInput {
         'password: ${password == null ? null : '<redacted>'}, '
         'm3uUrl: ${m3uUrl == null ? null : '<redacted>'}, '
         'localFilePath: ${localFilePath == null ? null : '<redacted>'}, '
+        'isEnabled: $isEnabled, '
         'refreshEnabled: $refreshEnabled, '
         'refreshIntervalMinutes: $refreshIntervalMinutes'
         ')';
