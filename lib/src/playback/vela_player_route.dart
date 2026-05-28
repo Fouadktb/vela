@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../app/navigation_controller.dart';
 import '../catalog/catalog_models.dart';
@@ -25,7 +26,8 @@ class VelaPlayerRoute extends ConsumerStatefulWidget {
   ConsumerState<VelaPlayerRoute> createState() => _VelaPlayerRouteState();
 }
 
-class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
+class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
+    with WindowListener {
   late final PlaybackController _controller;
   late final PlaybackPreferencesRepository _preferencesRepository;
   final FocusNode _focusNode = FocusNode(debugLabel: 'VelaPlayerRoute');
@@ -54,6 +56,7 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
   bool _subtitlePreferenceApplied = false;
   bool _videoPreferenceApplied = false;
   String? _autoAdvancedCompletedKey;
+  bool _windowCloseInterceptEnabled = false;
 
   @override
   void initState() {
@@ -63,6 +66,8 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
       ref.read(appSettingsRepositoryProvider),
     );
     _controller.addListener(_handlePlaybackUpdate);
+    windowManager.addListener(this);
+    unawaited(_enableWindowCloseIntercept());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _focusNode.requestFocus();
@@ -76,9 +81,18 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
     _hideTimer?.cancel();
     _seekFeedbackTimer?.cancel();
     _controller.removeListener(_handlePlaybackUpdate);
+    windowManager.removeListener(this);
+    if (_windowCloseInterceptEnabled) {
+      unawaited(windowManager.setPreventClose(false));
+    }
     _focusNode.dispose();
     _controller.dispose();
     super.dispose();
+  }
+
+  @override
+  void onWindowClose() {
+    unawaited(_close());
   }
 
   @override
@@ -324,6 +338,16 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
     }
   }
 
+  Future<void> _enableWindowCloseIntercept() async {
+    try {
+      await windowManager.setPreventClose(true);
+      _windowCloseInterceptEnabled = true;
+    } catch (error, stackTrace) {
+      debugPrint('Failed to intercept player window close: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
   Future<void> _cleanupPlayback() async {
     try {
       _preferencesOpenSequence += 1;
@@ -332,6 +356,18 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
       await _stopPlaybackIfNeeded();
     } finally {
       await _exitFullscreenIfNeeded();
+      await _restoreWindowCloseBehavior();
+    }
+  }
+
+  Future<void> _restoreWindowCloseBehavior() async {
+    if (!_windowCloseInterceptEnabled) return;
+    try {
+      await windowManager.setPreventClose(false);
+      _windowCloseInterceptEnabled = false;
+    } catch (error, stackTrace) {
+      debugPrint('Failed to restore player window close behavior: $error');
+      debugPrintStack(stackTrace: stackTrace);
     }
   }
 
