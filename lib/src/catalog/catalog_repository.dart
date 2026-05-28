@@ -84,6 +84,26 @@ class CatalogRepository {
     )..where((provider) => provider.id.equals(id))).go();
   }
 
+  Future<void> clearCatalogCache() async {
+    await _db.transaction(() async {
+      await _db.delete(_db.providerRefreshRuns).go();
+      await _db.delete(_db.epgPrograms).go();
+      await _db.delete(_db.episodes).go();
+      await _db.delete(_db.seasons).go();
+      await _db.delete(_db.series).go();
+      await _db.delete(_db.catalogItems).go();
+      await _db.delete(_db.categories).go();
+      await _db
+          .update(_db.catalogProviders)
+          .write(
+            CatalogProvidersCompanion(
+              lastRefreshAt: const Value(null),
+              updatedAt: Value(_nowMs()),
+            ),
+          );
+    });
+  }
+
   Future<void> clearProviderCatalog(String providerId) async {
     await _db.transaction(() async {
       await (_db.delete(
@@ -119,6 +139,25 @@ class CatalogRepository {
       await (_db.delete(
         _db.categories,
       )..where((row) => row.providerId.equals(providerId))).go();
+    });
+  }
+
+  Future<void> clearAllAppData() async {
+    await _db.transaction(() async {
+      await _db.delete(_db.appSettings).go();
+      await _db.delete(_db.providerRefreshRuns).go();
+      await _db.delete(_db.favoriteItems).go();
+      await _db.delete(_db.favoriteCategories).go();
+      await _db.delete(_db.categoryOrder).go();
+      await _db.delete(_db.watchHistory).go();
+      await _db.delete(_db.playbackPositions).go();
+      await _db.delete(_db.epgPrograms).go();
+      await _db.delete(_db.episodes).go();
+      await _db.delete(_db.seasons).go();
+      await _db.delete(_db.series).go();
+      await _db.delete(_db.catalogItems).go();
+      await _db.delete(_db.categories).go();
+      await _db.delete(_db.catalogProviders).go();
     });
   }
 
@@ -323,6 +362,90 @@ class CatalogRepository {
   Future<ProviderCatalogStats> providerCatalogStats(String providerId) async {
     final row = await _providerCatalogStatsQuery(providerId).getSingle();
     return _catalogStatsFromRow(row);
+  }
+
+  Future<ProviderCatalogStats> catalogStats() async {
+    final row = await _db
+        .customSelect(
+          '''
+          SELECT
+            (SELECT COUNT(*)
+             FROM catalog_items
+             WHERE content_type = ?
+               AND is_stale = 0) AS live_count,
+            (SELECT COUNT(*)
+             FROM catalog_items
+             WHERE content_type = ?
+               AND is_stale = 0) AS movie_count,
+            (SELECT COUNT(*)
+             FROM catalog_items
+             WHERE content_type = ?
+               AND is_stale = 0) AS series_count,
+            (SELECT COUNT(*)
+             FROM episodes
+             WHERE is_stale = 0) AS episode_count,
+            (SELECT COUNT(*)
+             FROM epg_programs) AS epg_program_count
+          ''',
+          variables: [
+            Variable<String>(CatalogContentType.live.name),
+            Variable<String>(CatalogContentType.movie.name),
+            Variable<String>(CatalogContentType.series.name),
+          ],
+          readsFrom: {_db.catalogItems, _db.episodes, _db.epgPrograms},
+        )
+        .getSingle();
+    return _catalogStatsFromRow(row);
+  }
+
+  Future<List<ProviderRefreshRun>> listLatestRefreshRuns({
+    int limit = 20,
+  }) async {
+    final query = _db.select(_db.providerRefreshRuns)
+      ..orderBy([(run) => OrderingTerm.desc(run.startedAt)])
+      ..limit(limit);
+    final rows = await query.get();
+    return rows.map(_toRefreshRun).toList();
+  }
+
+  Future<List<Map<String, Object?>>> exportProviderMetadata() async {
+    final query = _db.select(_db.catalogProviders)
+      ..orderBy([(provider) => OrderingTerm.asc(provider.name)]);
+    final rows = await query.get();
+    return rows.map(_providerMetadataToJson).toList();
+  }
+
+  Future<List<Map<String, Object?>>> exportFavoriteItems() async {
+    final query = _db.select(_db.favoriteItems)
+      ..orderBy([
+        (favorite) => OrderingTerm.asc(favorite.providerId),
+        (favorite) => OrderingTerm.asc(favorite.itemType),
+        (favorite) => OrderingTerm.asc(favorite.catalogKey),
+      ]);
+    final rows = await query.get();
+    return rows.map(_favoriteItemToJson).toList();
+  }
+
+  Future<List<Map<String, Object?>>> exportFavoriteCategories() async {
+    final query = _db.select(_db.favoriteCategories)
+      ..orderBy([
+        (favorite) => OrderingTerm.asc(favorite.providerId),
+        (favorite) => OrderingTerm.asc(favorite.contentType),
+        (favorite) => OrderingTerm.asc(favorite.categoryId),
+      ]);
+    final rows = await query.get();
+    return rows.map(_favoriteCategoryToJson).toList();
+  }
+
+  Future<List<Map<String, Object?>>> exportCategoryOrder() async {
+    final query = _db.select(_db.categoryOrder)
+      ..orderBy([
+        (order) => OrderingTerm.asc(order.providerId),
+        (order) => OrderingTerm.asc(order.contentType),
+        (order) => OrderingTerm.asc(order.sortOrder),
+      ]);
+    final rows = await query.get();
+    return rows.map(_categoryOrderToJson).toList();
   }
 
   Stream<List<CatalogItem>> watchItems({
@@ -1280,6 +1403,55 @@ ProviderRefreshRun _toRefreshRun(ProviderRefreshRunRow row) {
     itemCount: row.itemCount,
     errorMessage: row.errorMessage,
   );
+}
+
+Map<String, Object?> _providerMetadataToJson(CatalogProviderRow row) {
+  return {
+    'id': row.id,
+    'name': row.name,
+    'type': row.type,
+    'source_kind': row.sourceKind,
+    'source_configured': row.source.trim().isNotEmpty,
+    'username_configured': row.username?.value.trim().isNotEmpty == true,
+    'password_configured': row.password?.value.trim().isNotEmpty == true,
+    'auto_refresh_enabled': row.autoRefreshEnabled,
+    'auto_refresh_interval_minutes': row.autoRefreshIntervalMinutes,
+    'is_enabled': row.isEnabled,
+    'created_at_ms': row.createdAt,
+    'updated_at_ms': row.updatedAt,
+    'last_refresh_at_ms': row.lastRefreshAt,
+  };
+}
+
+Map<String, Object?> _favoriteItemToJson(FavoriteItemRow row) {
+  return {
+    'provider_id': row.providerId,
+    'catalog_key': row.catalogKey,
+    'item_id': row.itemId,
+    'item_type': row.itemType,
+    'series_id': row.seriesId,
+    'season_id': row.seasonId,
+    'created_at_ms': row.createdAt,
+  };
+}
+
+Map<String, Object?> _favoriteCategoryToJson(FavoriteCategoryRow row) {
+  return {
+    'provider_id': row.providerId,
+    'content_type': row.contentType,
+    'category_id': row.categoryId,
+    'created_at_ms': row.createdAt,
+  };
+}
+
+Map<String, Object?> _categoryOrderToJson(CategoryOrderRow row) {
+  return {
+    'provider_id': row.providerId,
+    'content_type': row.contentType,
+    'category_id': row.categoryId,
+    'sort_order': row.sortOrder,
+    'updated_at_ms': row.updatedAt,
+  };
 }
 
 ProviderCatalogStats _catalogStatsFromRow(QueryRow row) {

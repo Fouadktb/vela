@@ -5,7 +5,9 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../app/app_version.dart';
 import '../../app/navigation_controller.dart';
+import '../../backup/backup_service.dart';
 import '../../catalog/catalog_models.dart';
+import '../../diagnostics/diagnostics_exporter.dart';
 import '../../providers/provider_models.dart';
 import '../../providers/provider_repository.dart';
 import '../../providers/refresh_interval.dart';
@@ -67,9 +69,15 @@ class SettingsScreen extends ConsumerWidget {
                                 ),
                         ),
                         const SizedBox(width: 18),
-                        const SizedBox(
+                        SizedBox(
                           width: 430,
-                          child: ProviderSetupScreen(),
+                          child: Column(
+                            children: [
+                              _DataDiagnosticsCard(settings: settings),
+                              const SizedBox(height: 12),
+                              const Expanded(child: ProviderSetupScreen()),
+                            ],
+                          ),
                         ),
                       ],
                     );
@@ -81,6 +89,207 @@ class SettingsScreen extends ConsumerWidget {
         ),
       ),
     );
+  }
+}
+
+class _DataDiagnosticsCard extends ConsumerStatefulWidget {
+  const _DataDiagnosticsCard({required this.settings});
+
+  final AsyncValue<Map<String, String>> settings;
+
+  @override
+  ConsumerState<_DataDiagnosticsCard> createState() =>
+      _DataDiagnosticsCardState();
+}
+
+class _DataDiagnosticsCardState extends ConsumerState<_DataDiagnosticsCard> {
+  bool _busy = false;
+  String? _message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF151719),
+        border: Border.all(color: const Color(0xFF292D31)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(LucideIcons.database, color: theme.colorScheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Data & diagnostics',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _exportDiagnostics,
+                  icon: const Icon(LucideIcons.fileText, size: 17),
+                  label: const Text('Export diagnostics'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _exportBackup,
+                  icon: const Icon(LucideIcons.archive, size: 17),
+                  label: const Text('Export backup'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _clearHistory,
+                  icon: const Icon(LucideIcons.history, size: 17),
+                  label: const Text('Clear history'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _clearCatalogCache,
+                  icon: const Icon(LucideIcons.databaseZap, size: 17),
+                  label: const Text('Clear catalog cache'),
+                ),
+                FilledButton.icon(
+                  onPressed: _busy ? null : _resetAppData,
+                  icon: const Icon(LucideIcons.trash2, size: 17),
+                  label: const Text('Reset app data'),
+                ),
+              ],
+            ),
+            if (_message != null) ...[
+              const SizedBox(height: 10),
+              Text(_message!, style: theme.textTheme.bodySmall),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _exportDiagnostics() async {
+    await _run((setMessage) async {
+      final updateValue = ref.read(updateStatusProvider);
+      UpdateStatus? status;
+      Object? updateError;
+      var updateLoading = false;
+      updateValue.when(
+        data: (value) => status = value,
+        error: (error, _) => updateError = error,
+        loading: () => updateLoading = true,
+      );
+      final path =
+          await DiagnosticsExporter(
+            catalogRepository: ref.read(catalogRepositoryProvider),
+            watchHistoryRepository: ref.read(watchHistoryRepositoryProvider),
+          ).export(
+            appSettings: widget.settings.value,
+            updateStatus: status,
+            updateError: updateError,
+            updateLoading: updateLoading,
+          );
+      setMessage(path == null ? 'Diagnostics export canceled' : 'Saved $path');
+    });
+  }
+
+  Future<void> _exportBackup() async {
+    await _run((setMessage) async {
+      final path = await BackupService(
+        catalogRepository: ref.read(catalogRepositoryProvider),
+        watchHistoryRepository: ref.read(watchHistoryRepositoryProvider),
+      ).export(appSettings: widget.settings.value);
+      setMessage(path == null ? 'Backup export canceled' : 'Saved $path');
+    });
+  }
+
+  Future<void> _clearHistory() async {
+    final confirmed = await _confirmAction(
+      context: context,
+      title: 'Clear recently watched and progress?',
+      message:
+          'This deletes recently watched history and playback progress for all '
+          'providers. Providers, catalog data, favorites, category order, and '
+          'app settings are kept.',
+      confirmLabel: 'Clear history',
+    );
+    if (!mounted || !confirmed) return;
+
+    await _run((setMessage) async {
+      await ref.read(watchHistoryRepositoryProvider).clearRecentlyWatched();
+      setMessage('Recently watched and playback progress cleared');
+    });
+  }
+
+  Future<void> _clearCatalogCache() async {
+    final confirmed = await _confirmAction(
+      context: context,
+      title: 'Clear provider catalog cache?',
+      message:
+          'This deletes imported live, movie, series, episode, EPG catalog '
+          'cache, and refresh run records for all providers. Providers, '
+          'favorites, category order, recently watched history, playback '
+          'progress, and app settings are kept.',
+      confirmLabel: 'Clear catalog cache',
+    );
+    if (!mounted || !confirmed) return;
+
+    await _run((setMessage) async {
+      await ref.read(catalogRepositoryProvider).clearCatalogCache();
+      setMessage('Provider catalog cache cleared');
+    });
+  }
+
+  Future<void> _resetAppData() async {
+    final confirmed = await _confirmAction(
+      context: context,
+      title: 'Reset all app data?',
+      message:
+          'This deletes provider configurations and credentials, imported '
+          'catalog data, EPG data, favorites, category order, recently watched '
+          'history, playback progress, refresh records, and app settings.',
+      confirmLabel: 'Reset app data',
+    );
+    if (!mounted || !confirmed) return;
+
+    await _run((setMessage) async {
+      await ref.read(catalogRepositoryProvider).clearAllAppData();
+      setMessage('All app data reset');
+    });
+  }
+
+  Future<void> _run(
+    Future<void> Function(void Function(String message) setMessage) action,
+  ) async {
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      await action((message) {
+        if (mounted) {
+          setState(() => _message = message);
+        }
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() => _message = error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
   }
 }
 
@@ -577,6 +786,9 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
   }
 
   Future<void> _clearRecent() async {
+    final confirmed = await _confirmClearRecent();
+    if (!mounted || !confirmed) return;
+
     await _run('Provider recently watched cleared', () {
       return ref
           .read(watchHistoryRepositoryProvider)
@@ -585,6 +797,9 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
   }
 
   Future<void> _delete() async {
+    final confirmed = await _confirmDeleteProvider();
+    if (!mounted || !confirmed) return;
+
     await _run('Provider deleted', () {
       return ref
           .read(providerRepositoryProvider)
@@ -637,6 +852,32 @@ class _ProviderSettingsRowState extends ConsumerState<_ProviderSettingsRow> {
       },
     );
     return confirmed ?? false;
+  }
+
+  Future<bool> _confirmClearRecent() async {
+    final providerName = widget.health.provider.name;
+    return _confirmAction(
+      context: context,
+      title: 'Clear provider recently watched?',
+      message:
+          'This deletes recently watched history and playback progress for '
+          '"$providerName". Provider configuration, catalog data, favorites, '
+          'category order, and app settings are kept.',
+      confirmLabel: 'Clear recent',
+    );
+  }
+
+  Future<bool> _confirmDeleteProvider() async {
+    final providerName = widget.health.provider.name;
+    return _confirmAction(
+      context: context,
+      title: 'Delete provider?',
+      message:
+          'This deletes "$providerName", its credentials, imported catalog, '
+          'EPG data, favorites, category order, recently watched history, '
+          'playback progress, and refresh records.',
+      confirmLabel: 'Delete provider',
+    );
   }
 }
 
@@ -884,6 +1125,34 @@ String _providerTypeLabel(ProviderType type) {
     ProviderType.m3uUrl => 'M3U URL',
     ProviderType.m3uFile => 'M3U file',
   };
+}
+
+Future<bool> _confirmAction({
+  required BuildContext context,
+  required String title,
+  required String message,
+  required String confirmLabel,
+}) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(confirmLabel),
+          ),
+        ],
+      );
+    },
+  );
+  return confirmed ?? false;
 }
 
 String _formatMs(int? value) {

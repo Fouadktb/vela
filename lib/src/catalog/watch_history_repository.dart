@@ -25,6 +25,30 @@ class WatchHistoryRepository {
     return rows.map(_toWatchHistoryEntry).toList();
   }
 
+  Future<int> recentlyWatchedCount() async {
+    final row = await _db
+        .customSelect(
+          'SELECT COUNT(*) AS count FROM watch_history',
+          readsFrom: {_db.watchHistory},
+        )
+        .getSingle();
+    return row.read<int>('count');
+  }
+
+  Future<List<Map<String, Object?>>> exportWatchHistory() async {
+    final query = _db.select(_db.watchHistory)
+      ..orderBy([(history) => OrderingTerm.desc(history.lastWatchedAt)]);
+    final rows = await query.get();
+    return rows.map(_watchHistoryToJson).toList();
+  }
+
+  Future<List<Map<String, Object?>>> exportPlaybackPositions() async {
+    final query = _db.select(_db.playbackPositions)
+      ..orderBy([(position) => OrderingTerm.desc(position.updatedAt)]);
+    final rows = await query.get();
+    return rows.map(_playbackPositionToJson).toList();
+  }
+
   Future<void> clearRecentlyWatched({String? providerId}) async {
     await _db.transaction(() async {
       if (providerId == null) {
@@ -396,6 +420,41 @@ WatchHistoryEntry _toWatchHistoryEntry(WatchHistoryRow row) {
     lastWatchedAtMs: row.lastWatchedAt,
     watchCount: row.watchCount,
   );
+}
+
+Map<String, Object?> _watchHistoryToJson(WatchHistoryRow row) {
+  return {
+    'provider_id': row.providerId,
+    'catalog_key': row.catalogKey,
+    'item_id': row.itemId,
+    'item_type': row.itemType,
+    'title': row.title,
+    'subtitle': row.subtitle,
+    'series_id': row.seriesId,
+    'season_id': row.seasonId,
+    'position_seconds': row.positionSeconds,
+    'duration_seconds': row.durationSeconds,
+    'completion_percentage': row.completionPercentage,
+    'completed': row.completed,
+    'last_watched_at_ms': row.lastWatchedAt,
+    'watch_count': row.watchCount,
+  };
+}
+
+Map<String, Object?> _playbackPositionToJson(PlaybackPositionRow row) {
+  return {
+    'provider_id': row.providerId,
+    'catalog_key': row.catalogKey,
+    'item_id': row.itemId,
+    'item_type': row.itemType,
+    'series_id': row.seriesId,
+    'season_id': row.seasonId,
+    'position_seconds': row.positionSeconds,
+    'duration_seconds': row.durationSeconds,
+    'completion_percentage': row.completionPercentage,
+    'completed': row.completed,
+    'updated_at_ms': row.updatedAt,
+  };
 }
 
 double _normalizedCompletionPercentage(double value) {
