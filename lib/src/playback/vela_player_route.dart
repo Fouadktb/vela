@@ -53,6 +53,7 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
   bool _audioPreferenceApplied = false;
   bool _subtitlePreferenceApplied = false;
   bool _videoPreferenceApplied = false;
+  String? _autoAdvancedCompletedKey;
 
   @override
   void initState() {
@@ -266,6 +267,7 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
     final itemKey = _historyKey(itemWithContinuity);
     _isOpeningMedia = true;
     _currentOpenItemKey = itemKey;
+    _autoAdvancedCompletedKey = null;
     if (mounted) setState(() {});
 
     _resetTrackPreferences(
@@ -356,8 +358,29 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
   }
 
   void _handlePlaybackUpdate() {
+    final state = _controller.state;
     unawaited(_persistProgress());
     unawaited(_applyTrackPreferencesIfReady());
+    _autoAdvanceCompletedEpisode(state);
+  }
+
+  void _autoAdvanceCompletedEpisode(VelaPlayerState state) {
+    final item = state.item;
+    final nextEpisode = item?.nextEpisode;
+    if (!mounted ||
+        _isOpeningMedia ||
+        item == null ||
+        item.kind != PlayableKind.episode ||
+        nextEpisode == null ||
+        state.status != VelaPlaybackStatus.completed ||
+        !state.completed) {
+      return;
+    }
+
+    final completedKey = _historyKey(item);
+    if (_autoAdvancedCompletedKey == completedKey) return;
+    _autoAdvancedCompletedKey = completedKey;
+    unawaited(_openNextEpisode(nextEpisode));
   }
 
   void _resetTrackPreferences(
