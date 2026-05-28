@@ -341,6 +341,58 @@ class WatchHistoryRepository {
     return positions;
   }
 
+  Future<List<PlaybackPosition>> listEpisodePositionsForSeries({
+    required String providerId,
+    required String seriesId,
+  }) async {
+    final grouped = await listEpisodePositionsBySeries(
+      seriesKeys: [(providerId: providerId, seriesId: seriesId)],
+    );
+    return grouped[(providerId: providerId, seriesId: seriesId)] ??
+        const <PlaybackPosition>[];
+  }
+
+  Future<Map<({String providerId, String seriesId}), List<PlaybackPosition>>>
+  listEpisodePositionsBySeries({
+    required Iterable<({String providerId, String seriesId})> seriesKeys,
+  }) async {
+    final keys = {
+      for (final key in seriesKeys)
+        if (key.providerId.trim().isNotEmpty && key.seriesId.trim().isNotEmpty)
+          (providerId: key.providerId, seriesId: key.seriesId),
+    };
+    if (keys.isEmpty) {
+      return <({String providerId, String seriesId}), List<PlaybackPosition>>{};
+    }
+
+    final providerIds = keys.map((key) => key.providerId).toSet();
+    final query = _db.select(_db.playbackPositions)
+      ..where((position) {
+        return position.itemType.equals(PlayableContentType.episode.name) &
+            position.providerId.isIn(providerIds) &
+            (position.completed.equals(true) |
+                position.positionSeconds.isBiggerThanValue(0));
+      })
+      ..orderBy([(position) => OrderingTerm.desc(position.updatedAt)]);
+    final rows = await query.get();
+    final grouped =
+        <({String providerId, String seriesId}), List<PlaybackPosition>>{};
+
+    for (final row in rows) {
+      final seriesId = row.seriesId;
+      if (seriesId == null || seriesId.trim().isEmpty) {
+        continue;
+      }
+      final key = (providerId: row.providerId, seriesId: seriesId);
+      if (!keys.contains(key)) {
+        continue;
+      }
+      grouped.putIfAbsent(key, () => []).add(_toPlaybackPosition(row));
+    }
+
+    return grouped;
+  }
+
   Stream<List<PlaybackPosition>> watchEpisodePositionsForSeries({
     required String providerId,
     required String seriesId,

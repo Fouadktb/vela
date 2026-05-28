@@ -485,6 +485,8 @@ class CatalogRepository {
     String? categoryId,
     required String query,
     bool favoritesOnly = false,
+    bool includeSubtitle = false,
+    int? limit,
   }) async {
     final rows = await _selectItems(
       providerId: providerId,
@@ -492,6 +494,8 @@ class CatalogRepository {
       categoryId: categoryId,
       searchQuery: query,
       favoritesOnly: favoritesOnly,
+      includeSubtitleInSearch: includeSubtitle,
+      limit: limit,
       watch: false,
     ).get();
     return _mapItemRows(rows);
@@ -819,6 +823,8 @@ class CatalogRepository {
     String? categoryId,
     String? searchQuery,
     bool favoritesOnly = false,
+    bool includeSubtitleInSearch = false,
+    int? limit,
   }) {
     final where = <String>['i.content_type = ?', 'i.is_stale = 0'];
     final variables = <Variable>[Variable<String>(section.name)];
@@ -834,14 +840,26 @@ class CatalogRepository {
 
     final normalizedQuery = normalizeCatalogText(searchQuery ?? '');
     if (normalizedQuery.isNotEmpty) {
-      where.add('(i.normalized_title LIKE ? OR i.title LIKE ?)');
+      where.add(
+        includeSubtitleInSearch
+            ? '(i.normalized_title LIKE ? OR i.title LIKE ? OR i.subtitle LIKE ?)'
+            : '(i.normalized_title LIKE ? OR i.title LIKE ?)',
+      );
       variables
         ..add(Variable<String>('%$normalizedQuery%'))
         ..add(Variable<String>('%${searchQuery!.trim()}%'));
+      if (includeSubtitleInSearch) {
+        variables.add(Variable<String>('%${searchQuery.trim()}%'));
+      }
     }
 
     if (favoritesOnly) {
       where.add('fi.item_id IS NOT NULL');
+    }
+
+    final safeLimit = limit?.clamp(1, 100).toInt();
+    if (safeLimit != null) {
+      variables.add(Variable<int>(safeLimit));
     }
 
     return _db.customSelect(
@@ -854,6 +872,7 @@ class CatalogRepository {
         AND fi.item_type = i.content_type
       WHERE ${where.join(' AND ')}
       ORDER BY i.normalized_title ASC
+      ${safeLimit == null ? '' : 'LIMIT ?'}
       ''',
       variables: variables,
       readsFrom: {_db.catalogItems, _db.favoriteItems},

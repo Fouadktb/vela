@@ -204,6 +204,11 @@ class _SelectedDetails extends StatelessWidget {
                       if (item.durationSeconds != null)
                         _MetaChip(label: _duration(item.durationSeconds!)),
                       if (item.isFavorite) const _MetaChip(label: 'Favorite'),
+                      if (item.hasPlaybackProgress)
+                        _MetaChip(
+                          label:
+                              item.seriesPlaybackSummary ?? 'Resume available',
+                        ),
                     ],
                   ),
                   if (item.epgSummary?.trim().isNotEmpty == true) ...[
@@ -553,6 +558,12 @@ class _SeriesEpisodeBlockState extends State<_SeriesEpisodeBlock> {
                       activeEpisode != null &&
                       episode.id == activeEpisode.id &&
                       episode.seasonId == activeEpisode.seasonId,
+                  actionKind:
+                      activeEpisode != null &&
+                          episode.id == activeEpisode.id &&
+                          episode.seasonId == activeEpisode.seasonId
+                      ? seriesAction?.kind
+                      : null,
                   onOpen: () => widget.onOpenEpisode(episode),
                 );
               },
@@ -660,12 +671,14 @@ class _EpisodeRow extends StatelessWidget {
     required this.episode,
     required this.position,
     required this.isCurrentResume,
+    required this.actionKind,
     required this.onOpen,
   });
 
   final CatalogEpisode episode;
   final PlaybackPosition? position;
   final bool isCurrentResume;
+  final SeriesPlaybackActionKind? actionKind;
   final VoidCallback onOpen;
 
   @override
@@ -721,6 +734,10 @@ class _EpisodeRow extends StatelessWidget {
                           color: const Color(0xFFA9A39A),
                         ),
                       ),
+                      if (actionKind != null) ...[
+                        const SizedBox(height: 7),
+                        _EpisodeActionLabel(kind: actionKind!),
+                      ],
                       if (position != null) ...[
                         const SizedBox(height: 7),
                         _EpisodeProgress(position: position!),
@@ -732,6 +749,25 @@ class _EpisodeRow extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _EpisodeActionLabel extends StatelessWidget {
+  const _EpisodeActionLabel({required this.kind});
+
+  final SeriesPlaybackActionKind kind;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Text(
+      _seriesActionLabel(kind),
+      style: theme.textTheme.labelSmall?.copyWith(
+        color: theme.colorScheme.primary,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 0,
       ),
     );
   }
@@ -1037,6 +1073,14 @@ String _typeLabel(CatalogCardItem item) {
     CatalogContentType.live => 'Live channel',
     CatalogContentType.movie => 'Movie',
     CatalogContentType.series => 'Series',
+  };
+}
+
+String _seriesActionLabel(SeriesPlaybackActionKind kind) {
+  return switch (kind) {
+    SeriesPlaybackActionKind.resume => 'Current episode',
+    SeriesPlaybackActionKind.continueNext => 'Next up',
+    SeriesPlaybackActionKind.replay => 'Replay episode',
   };
 }
 
