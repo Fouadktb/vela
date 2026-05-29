@@ -64,7 +64,7 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
   bool _spaceHoldActive = false;
   double? _spaceSpeedBeforeHold;
   String? _currentLiveChannelKey;
-  bool _recentLiveChannelsExpanded = false;
+  bool _recentLiveChannelsExpanded = true;
 
   @override
   void initState() {
@@ -339,9 +339,6 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
 
   void _openLiveChannel(PlayableItem item) {
     _showControls();
-    if (_recentLiveChannelsExpanded) {
-      setState(() => _recentLiveChannelsExpanded = false);
-    }
     unawaited(_switchLiveChannel(item));
   }
 
