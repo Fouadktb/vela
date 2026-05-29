@@ -13,6 +13,7 @@ import 'playable_item.dart';
 import 'playback_controller.dart';
 import 'playback_preferences.dart';
 import 'player_state.dart';
+import 'recent_live_channels.dart';
 import 'seek_zones.dart';
 import 'vela_player_controls.dart';
 
@@ -57,6 +58,12 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
   bool _videoPreferenceApplied = false;
   String? _autoAdvancedCompletedKey;
   bool _windowCloseInterceptEnabled = false;
+  Timer? _spaceHoldTimer;
+  bool _spacePressed = false;
+  bool _spaceHoldActive = false;
+  double? _spaceSpeedBeforeHold;
+  String? _currentLiveChannelKey;
+  bool _recentLiveChannelsExpanded = true;
 
   @override
   void initState() {
@@ -80,6 +87,8 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
   void dispose() {
     _hideTimer?.cancel();
     _seekFeedbackTimer?.cancel();
+    _spaceHoldTimer?.cancel();
+    _restoreSpaceHoldSpeedIfNeeded();
     _controller.removeListener(_handlePlaybackUpdate);
     windowManager.removeListener(this);
     if (_windowCloseInterceptEnabled) {
@@ -97,6 +106,10 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
 
   @override
   Widget build(BuildContext context) {
+    final recentLiveChannels = ref.watch(
+      recentLiveChannelsProvider(_currentLiveChannelKey),
+    );
+
     return PopScope(
       canPop: _allowPop,
       onPopInvokedWithResult: (didPop, _) {
@@ -135,6 +148,11 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
                           onShowControls: _showControls,
                           onSeekZone: _handleSeekZone,
                           onCenterDoubleTap: _handleCenterDoubleTap,
+                          recentLiveChannels: recentLiveChannels,
+                          recentLiveChannelsExpanded:
+                              _recentLiveChannelsExpanded,
+                          onToggleRecentLiveChannels: _toggleRecentLiveChannels,
+                          onOpenLiveChannel: _openLiveChannel,
                         ),
                       ),
                       if (!state.isFullscreen &&
@@ -157,13 +175,18 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
   }
 
   void _handleKey(KeyEvent event) {
-    if (event is! KeyDownEvent) return;
     _showControls();
+
+    if (event.logicalKey == LogicalKeyboardKey.space) {
+      _handleSpaceKey(event);
+      return;
+    }
+
+    if (event is! KeyDownEvent) return;
 
     switch (event.logicalKey) {
       case LogicalKeyboardKey.escape:
         unawaited(_close());
-      case LogicalKeyboardKey.space:
       case LogicalKeyboardKey.mediaPlayPause:
         _controller.togglePlayPause();
       case LogicalKeyboardKey.arrowLeft:
@@ -182,6 +205,69 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
         final next = _controller.state.item?.nextEpisode;
         if (next != null) unawaited(_openNextEpisode(next));
     }
+  }
+
+  void _handleSpaceKey(KeyEvent event) {
+    if (event is KeyDownEvent) {
+      if (_spacePressed) return;
+      _spacePressed = true;
+      _spaceHoldActive = false;
+      _spaceSpeedBeforeHold = null;
+      _spaceHoldTimer?.cancel();
+      _spaceHoldTimer = Timer(
+        const Duration(milliseconds: 300),
+        _activateSpaceHoldSpeed,
+      );
+      return;
+    }
+
+    if (event is KeyUpEvent) {
+      _finishSpacePress();
+    }
+  }
+
+  void _activateSpaceHoldSpeed() {
+    if (!_spacePressed || !mounted) return;
+    final state = _controller.state;
+    final item = state.item;
+    if (!state.isSeekable || item?.kind == PlayableKind.live) {
+      return;
+    }
+
+    _spaceHoldActive = true;
+    _spaceSpeedBeforeHold = state.playbackSpeed;
+    unawaited(_controller.setPlaybackSpeed(2));
+  }
+
+  void _finishSpacePress() {
+    _spaceHoldTimer?.cancel();
+    _spaceHoldTimer = null;
+    if (!_spacePressed) return;
+
+    _spacePressed = false;
+    if (_spaceHoldActive) {
+      _spaceHoldActive = false;
+      final previousSpeed = _spaceSpeedBeforeHold ?? 1;
+      _spaceSpeedBeforeHold = null;
+      if ((_controller.state.playbackSpeed - previousSpeed).abs() > 0.01) {
+        unawaited(_controller.setPlaybackSpeed(previousSpeed));
+      }
+      return;
+    }
+
+    _spaceSpeedBeforeHold = null;
+    _controller.togglePlayPause();
+  }
+
+  void _restoreSpaceHoldSpeedIfNeeded() {
+    _spaceHoldTimer?.cancel();
+    _spaceHoldTimer = null;
+    if (!_spaceHoldActive) return;
+    final previousSpeed = _spaceSpeedBeforeHold ?? 1;
+    _spaceHoldActive = false;
+    _spacePressed = false;
+    _spaceSpeedBeforeHold = null;
+    unawaited(_controller.setPlaybackSpeed(previousSpeed));
   }
 
   void _showControls() {
@@ -207,6 +293,23 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
   void _handleCenterDoubleTap() {
     _showControls();
     unawaited(_controller.toggleFullscreen());
+  }
+
+  void _toggleRecentLiveChannels() {
+    setState(() {
+      _recentLiveChannelsExpanded = !_recentLiveChannelsExpanded;
+    });
+    _showControls();
+  }
+
+  void _openLiveChannel(PlayableItem item) {
+    _showControls();
+    unawaited(_switchLiveChannel(item));
+  }
+
+  Future<void> _switchLiveChannel(PlayableItem item) async {
+    await _persistProgress(force: true);
+    await _openItem(item);
   }
 
   void _seek(SeekZoneDirection direction) {
@@ -395,6 +498,10 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
 
   void _handlePlaybackUpdate() {
     final state = _controller.state;
+    final nextLiveChannelKey = liveChannelKeyForItem(state.item);
+    if (nextLiveChannelKey != _currentLiveChannelKey && mounted) {
+      setState(() => _currentLiveChannelKey = nextLiveChannelKey);
+    }
     unawaited(_persistProgress());
     unawaited(_applyTrackPreferencesIfReady());
     _autoAdvanceCompletedEpisode(state);
@@ -857,6 +964,10 @@ class _PlayerSurface extends StatelessWidget {
     required this.onShowControls,
     required this.onSeekZone,
     required this.onCenterDoubleTap,
+    required this.recentLiveChannels,
+    required this.recentLiveChannelsExpanded,
+    required this.onToggleRecentLiveChannels,
+    required this.onOpenLiveChannel,
   });
 
   final PlaybackController controller;
@@ -873,6 +984,10 @@ class _PlayerSurface extends StatelessWidget {
   final VoidCallback onShowControls;
   final ValueChanged<SeekZoneDirection> onSeekZone;
   final VoidCallback onCenterDoubleTap;
+  final AsyncValue<List<PlayableItem>> recentLiveChannels;
+  final bool recentLiveChannelsExpanded;
+  final VoidCallback onToggleRecentLiveChannels;
+  final ValueChanged<PlayableItem> onOpenLiveChannel;
 
   @override
   Widget build(BuildContext context) {
@@ -915,6 +1030,10 @@ class _PlayerSurface extends StatelessWidget {
               onAudioTrackSelected: onAudioTrackSelected,
               onSubtitleTrackSelected: onSubtitleTrackSelected,
               onVideoTrackSelected: onVideoTrackSelected,
+              recentLiveChannels: recentLiveChannels,
+              recentLiveChannelsExpanded: recentLiveChannelsExpanded,
+              onToggleRecentLiveChannels: onToggleRecentLiveChannels,
+              onOpenLiveChannel: onOpenLiveChannel,
             ),
           ),
         ),

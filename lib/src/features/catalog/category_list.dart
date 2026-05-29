@@ -208,21 +208,27 @@ class _CategoryRow extends StatelessWidget {
       child: InkWell(
         onTap: onSelect,
         borderRadius: BorderRadius.circular(8),
-        child: SizedBox(
-          height: 46,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 46),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.only(left: 10),
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      color: foreground,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
+                  padding: const EdgeInsets.fromLTRB(10, 7, 8, 7),
+                  child: Tooltip(
+                    message: label,
+                    waitDuration: const Duration(milliseconds: 450),
+                    child: Text(
+                      label,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        color: foreground,
+                        fontWeight: FontWeight.w800,
+                        height: 1.12,
+                        letterSpacing: 0,
+                      ),
                     ),
                   ),
                 ),

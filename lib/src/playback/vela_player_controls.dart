@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'playback_controller.dart';
@@ -15,6 +16,10 @@ class VelaPlayerControls extends StatelessWidget {
     required this.onAudioTrackSelected,
     required this.onSubtitleTrackSelected,
     required this.onVideoTrackSelected,
+    required this.recentLiveChannels,
+    required this.recentLiveChannelsExpanded,
+    required this.onToggleRecentLiveChannels,
+    required this.onOpenLiveChannel,
     super.key,
   });
 
@@ -25,10 +30,15 @@ class VelaPlayerControls extends StatelessWidget {
   final ValueChanged<String> onAudioTrackSelected;
   final ValueChanged<String> onSubtitleTrackSelected;
   final ValueChanged<String> onVideoTrackSelected;
+  final AsyncValue<List<PlayableItem>> recentLiveChannels;
+  final bool recentLiveChannelsExpanded;
+  final VoidCallback onToggleRecentLiveChannels;
+  final ValueChanged<PlayableItem> onOpenLiveChannel;
 
   @override
   Widget build(BuildContext context) {
     final item = state.item;
+    final isLive = item?.kind == PlayableKind.live;
 
     return Stack(
       children: [
@@ -62,6 +72,13 @@ class VelaPlayerControls extends StatelessWidget {
             ),
           ),
         ),
+        if (isLive)
+          _RecentLiveChannelRail(
+            channels: recentLiveChannels,
+            expanded: recentLiveChannelsExpanded,
+            onToggle: onToggleRecentLiveChannels,
+            onSelect: onOpenLiveChannel,
+          ),
         Positioned(
           left: 0,
           right: 0,
@@ -143,6 +160,303 @@ class _TopBar extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _RecentLiveChannelRail extends StatelessWidget {
+  const _RecentLiveChannelRail({
+    required this.channels,
+    required this.expanded,
+    required this.onToggle,
+    required this.onSelect,
+  });
+
+  final AsyncValue<List<PlayableItem>> channels;
+  final bool expanded;
+  final VoidCallback onToggle;
+  final ValueChanged<PlayableItem> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final padding = MediaQuery.paddingOf(context);
+
+    return Positioned(
+      left: 24,
+      top: padding.top + 86,
+      bottom: padding.bottom + 116,
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 170),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        child: expanded
+            ? _ExpandedRecentLiveRail(
+                key: const ValueKey('recent-live-expanded'),
+                channels: channels,
+                onToggle: onToggle,
+                onSelect: onSelect,
+              )
+            : _CollapsedRecentLiveRail(
+                key: const ValueKey('recent-live-collapsed'),
+                onToggle: onToggle,
+              ),
+      ),
+    );
+  }
+}
+
+class _ExpandedRecentLiveRail extends StatelessWidget {
+  const _ExpandedRecentLiveRail({
+    required this.channels,
+    required this.onToggle,
+    required this.onSelect,
+    super.key,
+  });
+
+  final AsyncValue<List<PlayableItem>> channels;
+  final VoidCallback onToggle;
+  final ValueChanged<PlayableItem> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 300,
+      decoration: BoxDecoration(
+        color: const Color(0xD914171A),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0x2EFFFFFF)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x66000000),
+            blurRadius: 28,
+            offset: Offset(0, 18),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 8, 8),
+            child: Row(
+              children: [
+                const Icon(
+                  LucideIcons.history,
+                  color: Color(0xFFECC15D),
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Recent channels',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Collapse recent channels',
+                  onPressed: onToggle,
+                  icon: const Icon(LucideIcons.chevronLeft, size: 18),
+                  color: Colors.white,
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size(34, 34),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: Color(0x22FFFFFF)),
+          Expanded(
+            child: channels.when(
+              data: (items) {
+                if (items.isEmpty) {
+                  return const _RecentRailMessage(
+                    icon: LucideIcons.tv,
+                    message: 'No recent live channels yet',
+                  );
+                }
+                return ListView.separated(
+                  padding: const EdgeInsets.all(8),
+                  itemBuilder: (context, index) {
+                    final item = items[index];
+                    return _RecentLiveChannelRow(
+                      item: item,
+                      onSelect: () => onSelect(item),
+                    );
+                  },
+                  separatorBuilder: (_, _) => const SizedBox(height: 5),
+                  itemCount: items.length,
+                );
+              },
+              loading: () => const _RecentRailMessage(
+                icon: LucideIcons.loaderCircle,
+                message: 'Loading recent channels',
+              ),
+              error: (_, _) => const _RecentRailMessage(
+                icon: LucideIcons.circleAlert,
+                message: 'Recent channels unavailable',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CollapsedRecentLiveRail extends StatelessWidget {
+  const _CollapsedRecentLiveRail({required this.onToggle, super.key});
+
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Show recent channels',
+      child: Material(
+        color: const Color(0xD914171A),
+        borderRadius: BorderRadius.circular(26),
+        child: InkWell(
+          onTap: onToggle,
+          borderRadius: BorderRadius.circular(26),
+          child: Container(
+            width: 52,
+            height: 52,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(26),
+              border: Border.all(color: const Color(0x2EFFFFFF)),
+            ),
+            child: const Icon(
+              LucideIcons.history,
+              color: Colors.white,
+              size: 21,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecentLiveChannelRow extends StatelessWidget {
+  const _RecentLiveChannelRow({required this.item, required this.onSelect});
+
+  final PlayableItem item;
+  final VoidCallback onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final logoUrl = item.channelLogoUrl?.trim();
+    final hasLogo = logoUrl?.isNotEmpty == true;
+
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onSelect,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: Container(
+                  width: 42,
+                  height: 42,
+                  color: const Color(0xFF0E1012),
+                  alignment: Alignment.center,
+                  child: hasLogo
+                      ? Image.network(
+                          logoUrl!,
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, _, _) => const Icon(
+                            LucideIcons.tv,
+                            color: Color(0xFF8E8980),
+                            size: 21,
+                          ),
+                        )
+                      : const Icon(
+                          LucideIcons.tv,
+                          color: Color(0xFF8E8980),
+                          size: 21,
+                        ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      item.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    if (item.subtitle?.trim().isNotEmpty == true) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        item.subtitle!.trim(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: const Color(0xFFA9A39A),
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecentRailMessage extends StatelessWidget {
+  const _RecentRailMessage({required this.icon, required this.message});
+
+  final IconData icon;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: const Color(0xFFA9A39A), size: 24),
+            const SizedBox(height: 10),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: const Color(0xFFC8C2B8),
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
