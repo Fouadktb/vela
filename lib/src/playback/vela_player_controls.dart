@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'playback_controller.dart';
@@ -15,6 +16,10 @@ class VelaPlayerControls extends StatelessWidget {
     required this.onAudioTrackSelected,
     required this.onSubtitleTrackSelected,
     required this.onVideoTrackSelected,
+    required this.recentLiveChannels,
+    required this.recentLiveChannelsExpanded,
+    required this.onToggleRecentLiveChannels,
+    required this.onOpenLiveChannel,
     super.key,
   });
 
@@ -25,10 +30,15 @@ class VelaPlayerControls extends StatelessWidget {
   final ValueChanged<String> onAudioTrackSelected;
   final ValueChanged<String> onSubtitleTrackSelected;
   final ValueChanged<String> onVideoTrackSelected;
+  final AsyncValue<List<PlayableItem>> recentLiveChannels;
+  final bool recentLiveChannelsExpanded;
+  final VoidCallback onToggleRecentLiveChannels;
+  final ValueChanged<PlayableItem> onOpenLiveChannel;
 
   @override
   Widget build(BuildContext context) {
     final item = state.item;
+    final isLive = item?.kind == PlayableKind.live;
 
     return Stack(
       children: [
@@ -58,10 +68,22 @@ class VelaPlayerControls extends StatelessWidget {
             bottom: false,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(24, 18, 24, 0),
-              child: _TopBar(item: item, onClose: onClose),
+              child: _TopBar(
+                item: item,
+                onClose: onClose,
+                showRecentChannels: isLive,
+                recentChannelsExpanded: recentLiveChannelsExpanded,
+                onToggleRecentChannels: onToggleRecentLiveChannels,
+              ),
             ),
           ),
         ),
+        if (isLive && recentLiveChannelsExpanded)
+          _RecentLiveChannelsPopover(
+            channels: recentLiveChannels,
+            onClose: onToggleRecentLiveChannels,
+            onSelect: onOpenLiveChannel,
+          ),
         Positioned(
           left: 0,
           right: 0,
@@ -96,10 +118,19 @@ class VelaPlayerControls extends StatelessWidget {
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.item, required this.onClose});
+  const _TopBar({
+    required this.item,
+    required this.onClose,
+    required this.showRecentChannels,
+    required this.recentChannelsExpanded,
+    required this.onToggleRecentChannels,
+  });
 
   final PlayableItem? item;
   final VoidCallback onClose;
+  final bool showRecentChannels;
+  final bool recentChannelsExpanded;
+  final VoidCallback onToggleRecentChannels;
 
   @override
   Widget build(BuildContext context) {
@@ -112,6 +143,17 @@ class _TopBar extends StatelessWidget {
           icon: LucideIcons.arrowLeft,
           onPressed: onClose,
         ),
+        if (showRecentChannels) ...[
+          const SizedBox(width: 8),
+          _RoundIconButton(
+            tooltip: recentChannelsExpanded
+                ? 'Hide recent channels'
+                : 'Show recent channels',
+            icon: LucideIcons.history,
+            isPrimary: recentChannelsExpanded,
+            onPressed: onToggleRecentChannels,
+          ),
+        ],
         const SizedBox(width: 16),
         Expanded(
           child: Column(
@@ -143,6 +185,237 @@ class _TopBar extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _RecentLiveChannelsPopover extends StatelessWidget {
+  const _RecentLiveChannelsPopover({
+    required this.channels,
+    required this.onClose,
+    required this.onSelect,
+  });
+
+  final AsyncValue<List<PlayableItem>> channels;
+  final VoidCallback onClose;
+  final ValueChanged<PlayableItem> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final top = MediaQuery.paddingOf(context).top + 78;
+
+    return Positioned(
+      left: 24,
+      top: top,
+      right: 24,
+      child: Container(
+        height: 142,
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+        decoration: BoxDecoration(
+          color: const Color(0xE614171A),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0x2EFFFFFF)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x66000000),
+              blurRadius: 28,
+              offset: Offset(0, 18),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  LucideIcons.history,
+                  color: Color(0xFFECC15D),
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Recent channels',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Hide recent channels',
+                  onPressed: onClose,
+                  icon: const Icon(LucideIcons.chevronUp, size: 18),
+                  color: Colors.white,
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size(34, 34),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: channels.when(
+                data: (items) {
+                  final visibleItems = items.take(10).toList(growable: false);
+                  if (visibleItems.isEmpty) {
+                    return const _RecentMenuMessage(
+                      icon: LucideIcons.tv,
+                      message: 'No recent live channels yet',
+                    );
+                  }
+                  return ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemBuilder: (context, index) {
+                      final item = visibleItems[index];
+                      return _RecentLiveChannelTile(
+                        item: item,
+                        onSelect: () => onSelect(item),
+                      );
+                    },
+                    separatorBuilder: (_, _) => const SizedBox(width: 8),
+                    itemCount: visibleItems.length,
+                  );
+                },
+                loading: () => const _RecentMenuMessage(
+                  icon: LucideIcons.loaderCircle,
+                  message: 'Loading recent channels',
+                ),
+                error: (_, _) => const _RecentMenuMessage(
+                  icon: LucideIcons.circleAlert,
+                  message: 'Recent channels unavailable',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RecentLiveChannelTile extends StatelessWidget {
+  const _RecentLiveChannelTile({required this.item, required this.onSelect});
+
+  final PlayableItem item;
+  final VoidCallback onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final logoUrl = item.channelLogoUrl?.trim();
+    final hasLogo = logoUrl?.isNotEmpty == true;
+
+    return SizedBox(
+      width: 220,
+      child: Material(
+        color: const Color(0x1AFFFFFF),
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: onSelect,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0x18FFFFFF)),
+            ),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    width: 46,
+                    height: 46,
+                    color: const Color(0xFF0E1012),
+                    alignment: Alignment.center,
+                    child: hasLogo
+                        ? Image.network(
+                            logoUrl!,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, _, _) => const Icon(
+                              LucideIcons.tv,
+                              color: Color(0xFF8E8980),
+                              size: 21,
+                            ),
+                          )
+                        : const Icon(
+                            LucideIcons.tv,
+                            color: Color(0xFF8E8980),
+                            size: 21,
+                          ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        item.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          height: 1.1,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      if (item.subtitle?.trim().isNotEmpty == true) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          item.subtitle!.trim(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                color: const Color(0xFFA9A39A),
+                                letterSpacing: 0,
+                              ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecentMenuMessage extends StatelessWidget {
+  const _RecentMenuMessage({required this.icon, required this.message});
+
+  final IconData icon;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: const Color(0xFFA9A39A), size: 20),
+          const SizedBox(width: 10),
+          Text(
+            message,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: const Color(0xFFC8C2B8),
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

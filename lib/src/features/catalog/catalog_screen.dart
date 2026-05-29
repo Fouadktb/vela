@@ -235,8 +235,11 @@ class _CatalogContent extends ConsumerWidget {
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             if (section.contentType != null)
-                              SizedBox(
-                                width: 292,
+                              _ResizableCategoryPane(
+                                width: navigation.categorySidebarWidth,
+                                onResize: ref
+                                    .read(navigationControllerProvider)
+                                    .setCategorySidebarWidth,
                                 child: AsyncValueView(
                                   value: categoriesValue,
                                   data: (categories) => CategoryList(
@@ -496,6 +499,50 @@ class _CatalogContent extends ConsumerWidget {
       return;
     }
     await _openDetails(context, ref, item);
+  }
+}
+
+class _ResizableCategoryPane extends StatelessWidget {
+  const _ResizableCategoryPane({
+    required this.width,
+    required this.onResize,
+    required this.child,
+  });
+
+  final double width;
+  final ValueChanged<double> onResize;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(width: width, child: child),
+        MouseRegion(
+          cursor: SystemMouseCursors.resizeColumn,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onHorizontalDragUpdate: (details) {
+              onResize(width + details.delta.dx);
+            },
+            child: SizedBox(
+              width: 10,
+              child: Center(
+                child: Container(
+                  width: 2,
+                  margin: const EdgeInsets.symmetric(vertical: 18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF34383D),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 

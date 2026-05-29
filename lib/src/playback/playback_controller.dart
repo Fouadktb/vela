@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -47,6 +48,7 @@ class PlaybackController extends ChangeNotifier {
   Duration _stallStartBuffer = Duration.zero;
   double _lastAudibleVolume = 100;
   bool _disposed = false;
+  bool _restoreMaximizedAfterFullscreen = false;
 
   VelaPlayerState get state => _state;
 
@@ -160,16 +162,47 @@ class PlaybackController extends ChangeNotifier {
   }
 
   Future<void> toggleFullscreen() async {
-    final next = !await windowManager.isFullScreen();
-    await windowManager.setFullScreen(next);
-    _emit(_state.copyWith(isFullscreen: next));
+    final isFullscreen = await windowManager.isFullScreen();
+    await _setFullscreen(!isFullscreen);
   }
 
   Future<void> exitFullscreenIfNeeded() async {
     if (await windowManager.isFullScreen()) {
-      await windowManager.setFullScreen(false);
+      await _setFullscreen(false);
+      return;
     }
     _emit(_state.copyWith(isFullscreen: false));
+  }
+
+  Future<void> _setFullscreen(bool enabled) async {
+    if (enabled) {
+      await _prepareWindowForFullscreen();
+      await windowManager.setFullScreen(true);
+      _emit(_state.copyWith(isFullscreen: true));
+      return;
+    }
+
+    await windowManager.setFullScreen(false);
+    await _restoreWindowAfterFullscreen();
+    _emit(_state.copyWith(isFullscreen: false));
+  }
+
+  Future<void> _prepareWindowForFullscreen() async {
+    _restoreMaximizedAfterFullscreen = false;
+    if (!Platform.isWindows) return;
+
+    final wasMaximized = await windowManager.isMaximized();
+    if (!wasMaximized) return;
+
+    _restoreMaximizedAfterFullscreen = true;
+    await windowManager.unmaximize();
+  }
+
+  Future<void> _restoreWindowAfterFullscreen() async {
+    if (!Platform.isWindows || !_restoreMaximizedAfterFullscreen) return;
+
+    _restoreMaximizedAfterFullscreen = false;
+    await windowManager.maximize();
   }
 
   Future<void> stop() async {

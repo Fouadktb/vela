@@ -16,6 +16,9 @@ import '../providers/provider_repository.dart';
 import 'section_state.dart';
 
 const _providerCacheDuration = Duration(minutes: 10);
+const defaultCategorySidebarWidth = 320.0;
+const minCategorySidebarWidth = 240.0;
+const maxCategorySidebarWidth = 520.0;
 
 final navigationControllerProvider =
     ChangeNotifierProvider<NavigationController>((ref) {
@@ -138,6 +141,7 @@ class NavigationController extends ChangeNotifier {
   VelaSection _selectedSection = VelaSection.live;
   LiveCatalogViewMode _liveViewMode = LiveCatalogViewMode.list;
   int _liveGuideDayStartMs = _startOfTodayMs();
+  double _categorySidebarWidth = defaultCategorySidebarWidth;
   final Map<VelaSection, SectionState> _states = {
     for (final section in VelaSection.values) section: const SectionState(),
   };
@@ -147,6 +151,8 @@ class NavigationController extends ChangeNotifier {
   LiveCatalogViewMode get liveViewMode => _liveViewMode;
 
   int get liveGuideDayStartMs => _liveGuideDayStartMs;
+
+  double get categorySidebarWidth => _categorySidebarWidth;
 
   SectionState get activeState => stateFor(_selectedSection);
 
@@ -202,6 +208,17 @@ class NavigationController extends ChangeNotifier {
       return;
     }
     _liveGuideDayStartMs = dayStartMs;
+    notifyListeners();
+  }
+
+  void setCategorySidebarWidth(double width) {
+    final next = width
+        .clamp(minCategorySidebarWidth, maxCategorySidebarWidth)
+        .toDouble();
+    if ((next - _categorySidebarWidth).abs() < 0.5) {
+      return;
+    }
+    _categorySidebarWidth = next;
     notifyListeners();
   }
 
