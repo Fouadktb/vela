@@ -13,6 +13,7 @@ DMG_VERIFY_MOUNT="${RELEASE_ROOT}/vela-macos-verify-mount"
 cd "${ROOT_DIR}"
 
 flutter pub get
+dart run scripts/verify_version_sync.dart
 flutter build macos
 
 if [[ ! -d "${BUILD_APP}" ]]; then

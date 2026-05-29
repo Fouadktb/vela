@@ -1,5 +1,5 @@
-const velaVersion = '0.4.2';
-const velaBuildNumber = '8';
+const velaVersion = '0.4.4';
+const velaBuildNumber = '10';
 const velaReleaseTag = 'v$velaVersion';
 const velaRepositoryOwner = 'Fouadktb';
 const velaRepositoryName = 'vela';

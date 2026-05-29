@@ -43,6 +43,7 @@ function Resolve-InnoSetupCompiler {
 Push-Location $RootDir
 try {
     flutter pub get
+    dart run scripts/verify_version_sync.dart
     flutter build windows
 
     if (-not (Test-Path $BuildRelease -PathType Container)) {

@@ -38,6 +38,9 @@ jobs:
       - name: Check formatting
         run: dart format --set-exit-if-changed .
 
+      - name: Check version metadata
+        run: dart run scripts/verify_version_sync.dart
+
       - name: Analyze
         run: flutter analyze
 
