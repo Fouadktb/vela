@@ -8,7 +8,7 @@ import '../catalog/catalog_models.dart';
 import '../providers/xtream/xtream_client.dart';
 import 'playable_item.dart';
 
-const _recentLiveChannelLimit = 12;
+const _recentLiveChannelLimit = 10;
 
 final recentLiveChannelsProvider = StreamProvider.autoDispose
     .family<List<PlayableItem>, String?>((ref, currentLiveKey) {

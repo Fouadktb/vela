@@ -60,10 +60,11 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
   bool _windowCloseInterceptEnabled = false;
   Timer? _spaceHoldTimer;
   bool _spacePressed = false;
+  bool _spaceHoldElapsed = false;
   bool _spaceHoldActive = false;
   double? _spaceSpeedBeforeHold;
   String? _currentLiveChannelKey;
-  bool _recentLiveChannelsExpanded = true;
+  bool _recentLiveChannelsExpanded = false;
 
   @override
   void initState() {
@@ -117,8 +118,11 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        body: KeyboardListener(
+        body: Focus(
           focusNode: _focusNode,
+          autofocus: true,
+          descendantsAreFocusable: false,
+          descendantsAreTraversable: false,
           onKeyEvent: _handleKey,
           child: MouseRegion(
             onHover: (_) => _showControls(),
@@ -174,15 +178,19 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
     );
   }
 
-  void _handleKey(KeyEvent event) {
+  KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
     _showControls();
 
     if (event.logicalKey == LogicalKeyboardKey.space) {
       _handleSpaceKey(event);
-      return;
+      return KeyEventResult.handled;
     }
 
-    if (event is! KeyDownEvent) return;
+    if (event is! KeyDownEvent) {
+      return _isPlayerShortcutKey(event.logicalKey)
+          ? KeyEventResult.handled
+          : KeyEventResult.ignored;
+    }
 
     switch (event.logicalKey) {
       case LogicalKeyboardKey.escape:
@@ -204,13 +212,31 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
       case LogicalKeyboardKey.keyN:
         final next = _controller.state.item?.nextEpisode;
         if (next != null) unawaited(_openNextEpisode(next));
+      default:
+        return KeyEventResult.ignored;
     }
+
+    return KeyEventResult.handled;
+  }
+
+  bool _isPlayerShortcutKey(LogicalKeyboardKey key) {
+    return key == LogicalKeyboardKey.escape ||
+        key == LogicalKeyboardKey.space ||
+        key == LogicalKeyboardKey.mediaPlayPause ||
+        key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.arrowDown ||
+        key == LogicalKeyboardKey.keyF ||
+        key == LogicalKeyboardKey.keyM ||
+        key == LogicalKeyboardKey.keyN;
   }
 
   void _handleSpaceKey(KeyEvent event) {
     if (event is KeyDownEvent) {
       if (_spacePressed) return;
       _spacePressed = true;
+      _spaceHoldElapsed = false;
       _spaceHoldActive = false;
       _spaceSpeedBeforeHold = null;
       _spaceHoldTimer?.cancel();
@@ -228,6 +254,7 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
 
   void _activateSpaceHoldSpeed() {
     if (!_spacePressed || !mounted) return;
+    _spaceHoldElapsed = true;
     final state = _controller.state;
     final item = state.item;
     if (!state.isSeekable || item?.kind == PlayableKind.live) {
@@ -248,10 +275,17 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
     if (_spaceHoldActive) {
       _spaceHoldActive = false;
       final previousSpeed = _spaceSpeedBeforeHold ?? 1;
+      _spaceHoldElapsed = false;
       _spaceSpeedBeforeHold = null;
       if ((_controller.state.playbackSpeed - previousSpeed).abs() > 0.01) {
         unawaited(_controller.setPlaybackSpeed(previousSpeed));
       }
+      return;
+    }
+
+    if (_spaceHoldElapsed) {
+      _spaceHoldElapsed = false;
+      _spaceSpeedBeforeHold = null;
       return;
     }
 
@@ -266,6 +300,7 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
     final previousSpeed = _spaceSpeedBeforeHold ?? 1;
     _spaceHoldActive = false;
     _spacePressed = false;
+    _spaceHoldElapsed = false;
     _spaceSpeedBeforeHold = null;
     unawaited(_controller.setPlaybackSpeed(previousSpeed));
   }
@@ -304,6 +339,9 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
 
   void _openLiveChannel(PlayableItem item) {
     _showControls();
+    if (_recentLiveChannelsExpanded) {
+      setState(() => _recentLiveChannelsExpanded = false);
+    }
     unawaited(_switchLiveChannel(item));
   }
 
