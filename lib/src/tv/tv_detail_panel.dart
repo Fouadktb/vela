@@ -11,6 +11,11 @@ import '../features/catalog/item_grid.dart';
 import '../playback/playable_item.dart';
 import 'tv_focus.dart';
 
+final _tvSeriesEpisodesProvider = FutureProvider.autoDispose
+    .family<List<CatalogEpisode>, _TvSeriesEpisodesQuery>((ref, query) {
+      return episodesForSeries(ref.read, query.toCatalogCardItem());
+    });
+
 class TvDetailPanel extends ConsumerWidget {
   const TvDetailPanel({
     required this.item,
@@ -30,8 +35,10 @@ class TvDetailPanel extends ConsumerWidget {
 
     final theme = Theme.of(context);
     final metadata = _metadataFor(item);
-    final episodesFuture = item.contentType == CatalogContentType.series
-        ? episodesForSeries(ref, item)
+    final episodesValue = item.contentType == CatalogContentType.series
+        ? ref.watch(
+            _tvSeriesEpisodesProvider(_TvSeriesEpisodesQuery.from(item)),
+          )
         : null;
 
     return DecoratedBox(
@@ -120,21 +127,15 @@ class TvDetailPanel extends ConsumerWidget {
               ),
               const SizedBox(height: 12),
               Expanded(
-                child: FutureBuilder<List<CatalogEpisode>>(
-                  future: episodesFuture,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState != ConnectionState.done) {
-                      return const Center(
-                        child: CircularProgressIndicator(strokeWidth: 3),
-                      );
-                    }
-                    if (snapshot.hasError) {
-                      return _TvDetailMessage(
-                        title: 'Episodes unavailable',
-                        body: snapshot.error.toString(),
-                      );
-                    }
-                    final episodes = snapshot.data ?? const <CatalogEpisode>[];
+                child: episodesValue!.when(
+                  loading: () => const Center(
+                    child: CircularProgressIndicator(strokeWidth: 3),
+                  ),
+                  error: (error, _) => _TvDetailMessage(
+                    title: 'Episodes unavailable',
+                    body: error.toString(),
+                  ),
+                  data: (episodes) {
                     if (episodes.isEmpty) {
                       return const _TvDetailMessage(
                         title: 'No episodes',
@@ -223,6 +224,48 @@ class TvDetailPanel extends ConsumerWidget {
       debugPrintStack(stackTrace: stackTrace);
     }
   }
+}
+
+class _TvSeriesEpisodesQuery {
+  const _TvSeriesEpisodesQuery({
+    required this.providerId,
+    required this.seriesId,
+    this.externalId,
+  });
+
+  factory _TvSeriesEpisodesQuery.from(CatalogCardItem item) {
+    return _TvSeriesEpisodesQuery(
+      providerId: item.providerId,
+      seriesId: item.seriesId ?? item.id,
+      externalId: item.externalId,
+    );
+  }
+
+  final String providerId;
+  final String seriesId;
+  final String? externalId;
+
+  CatalogCardItem toCatalogCardItem() {
+    return CatalogCardItem(
+      id: seriesId,
+      providerId: providerId,
+      contentType: CatalogContentType.series,
+      title: '',
+      externalId: externalId,
+      canPlay: true,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _TvSeriesEpisodesQuery &&
+        other.providerId == providerId &&
+        other.seriesId == seriesId &&
+        other.externalId == externalId;
+  }
+
+  @override
+  int get hashCode => Object.hash(providerId, seriesId, externalId);
 }
 
 class _TvDetailArtwork extends StatelessWidget {

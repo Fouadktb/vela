@@ -277,7 +277,6 @@ class TvCatalogScreen extends ConsumerWidget {
   Future<void> _openItem(WidgetRef ref, CatalogCardItem item) async {
     if (item.contentType == CatalogContentType.series) {
       _selectItem(ref, item);
-      return;
     }
 
     try {

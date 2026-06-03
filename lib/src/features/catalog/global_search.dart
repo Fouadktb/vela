@@ -582,6 +582,9 @@ Future<GlobalSearchGroup> _searchRecentGroup({
       historyRepository,
       entry,
     );
+    if (!card.canPlay) {
+      continue;
+    }
     results.add(
       GlobalSearchResult(groupType: GlobalSearchGroupType.recent, item: card),
     );

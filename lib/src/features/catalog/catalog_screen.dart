@@ -439,7 +439,7 @@ class _CatalogContent extends ConsumerWidget {
     CatalogEpisode episode,
   ) async {
     try {
-      final episodes = await episodesForSeries(ref, item);
+      final episodes = await episodesForSeries(ref.read, item);
       final resume = await ref
           .read(watchHistoryRepositoryProvider)
           .lookupResumePosition(

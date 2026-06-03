@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart';
 
 import '../../app/navigation_controller.dart';
 import '../../catalog/catalog_models.dart';
@@ -10,6 +11,9 @@ import '../../providers/xtream/xtream_client.dart';
 import 'catalog_card_mapper.dart';
 import 'item_grid.dart';
 import 'series_playback_progress.dart';
+
+typedef CatalogProviderReader =
+    StateT Function<StateT>(ProviderListenable<StateT> provider);
 
 class CatalogPlaybackTarget {
   const CatalogPlaybackTarget({required this.playable, this.history});
@@ -28,7 +32,7 @@ Future<CatalogPlaybackTarget?> playbackTargetForCatalogCard(
   }
 
   if (item.contentType == CatalogContentType.series) {
-    final episodes = await episodesForSeries(ref, item);
+    final episodes = await episodesForSeries(ref.read, item);
     final positions = restart
         ? null
         : await ref
@@ -111,10 +115,10 @@ Future<CatalogPlaybackTarget?> playbackTargetForCatalogCard(
 }
 
 Future<List<CatalogEpisode>> episodesForSeries(
-  WidgetRef ref,
+  CatalogProviderReader read,
   CatalogCardItem item,
 ) async {
-  final catalogRepository = ref.read(catalogRepositoryProvider);
+  final catalogRepository = read(catalogRepositoryProvider);
   var episodes = await catalogRepository.listEpisodesForSeries(
     providerId: item.providerId,
     seriesId: item.id,
@@ -131,13 +135,11 @@ Future<List<CatalogEpisode>> episodesForSeries(
   }
 
   try {
-    await ref
-        .read(providerRefreshServiceProvider)
-        .refreshSeriesEpisodeDetails(
-          providerId: item.providerId,
-          seriesId: item.id,
-          externalSeriesId: externalSeriesId,
-        );
+    await read(providerRefreshServiceProvider).refreshSeriesEpisodeDetails(
+      providerId: item.providerId,
+      seriesId: item.id,
+      externalSeriesId: externalSeriesId,
+    );
   } catch (error, stackTrace) {
     debugPrint('Failed to lazy-load series episodes: $error');
     debugPrintStack(stackTrace: stackTrace);
