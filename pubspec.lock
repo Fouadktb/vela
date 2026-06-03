@@ -149,10 +149,10 @@ packages:
     dependency: transitive
     description:
       name: code_assets
-      sha256: dad6bf6b9f4f378b0a69edbf42584d336efd1a9ce15deb1ba591cbb1b5ff440f
+      sha256: bf394f466ba9205f1812a0433b392d6af280f155f56651eda7c18cc32ed493b8
       url: "https://pub.dev"
     source: hosted
-    version: "1.1.0"
+    version: "1.2.1"
   collection:
     dependency: transitive
     description:
@@ -277,10 +277,10 @@ packages:
     dependency: transitive
     description:
       name: file_selector_android
-      sha256: "89243030ea4b3463fb402b44d5eeacc4ccb1c46a88870cb2a5080d693200c1ed"
+      sha256: "6a26687fa65cbc28a5345c7ae6f227e89f0b47740978a4c475b1a625da7a331b"
       url: "https://pub.dev"
     source: hosted
-    version: "0.5.2+6"
+    version: "0.5.2+8"
   file_selector_ios:
     dependency: transitive
     description:
@@ -317,10 +317,10 @@ packages:
     dependency: transitive
     description:
       name: file_selector_web
-      sha256: c4c0ea4224d97a60a7067eca0c8fd419e708ff830e0c83b11a48faf566cec3e7
+      sha256: "73181fbc5257776d8ecaa6a94ab3c8e920ad143b9132a6d984a9271dfc6928d3"
       url: "https://pub.dev"
     source: hosted
-    version: "0.9.4+2"
+    version: "0.9.5"
   file_selector_windows:
     dependency: transitive
     description:
@@ -396,10 +396,10 @@ packages:
     dependency: transitive
     description:
       name: hooks
-      sha256: a41af4e8fc687cd6d33de9751eb936c8c0204ebe2bcb6c15ecf707504bf47f31
+      sha256: "9a62a50b50b769a737bc0a8ff381f333529df3ab746b2f6b02e83760231455ba"
       url: "https://pub.dev"
     source: hosted
-    version: "2.0.0"
+    version: "2.0.2"
   http:
     dependency: "direct main"
     description:
@@ -545,7 +545,7 @@ packages:
     source: hosted
     version: "1.2.6"
   media_kit_libs_android_video:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: media_kit_libs_android_video
       sha256: "3f6274e5ab2de512c286a25c327288601ee445ed8ac319e0ef0b66148bd8f76c"
@@ -620,10 +620,10 @@ packages:
     dependency: transitive
     description:
       name: native_toolchain_c
-      sha256: "49c147aa4a5905ec12028e2b7bfe360eace6cb91fe4cf08a3fe76e309592acae"
+      sha256: f59351d28f49520cd3a74eb1f41c5f19ae15e53c65a3231d14af672e46510a96
       url: "https://pub.dev"
     source: hosted
-    version: "0.19.0"
+    version: "0.19.1"
   node_preamble:
     dependency: transitive
     description:
@@ -860,10 +860,10 @@ packages:
     dependency: transitive
     description:
       name: shared_preferences_android
-      sha256: e8d4762b1e2e8578fc4d0fd548cebf24afd24f49719c08974df92834565e2c53
+      sha256: a2c49fc1fed7140cadd892d765bd47edbe4ac0b9c7e7e3c493dcb58126f99cf0
       url: "https://pub.dev"
     source: hosted
-    version: "2.4.23"
+    version: "2.4.25"
   shared_preferences_foundation:
     dependency: transitive
     description:
@@ -1049,10 +1049,10 @@ packages:
     dependency: transitive
     description:
       name: synchronized
-      sha256: "63896c27e81b28f8cb4e69ead0d3e8f03f1d1e5fc531a3e579cabed6a2c7c9e5"
+      sha256: "93b153dcb6a26dcddee6ca087dd634b53e38c10b5aa163e8e49501a776456153"
       url: "https://pub.dev"
     source: hosted
-    version: "3.4.0+1"
+    version: "3.4.1"
   term_glyph:
     dependency: transitive
     description:
@@ -1230,5 +1230,5 @@ packages:
     source: hosted
     version: "3.1.3"
 sdks:
-  dart: ">=3.11.0 <4.0.0"
-  flutter: ">=3.38.4"
+  dart: ">=3.12.0 <4.0.0"
+  flutter: ">=3.44.0"
