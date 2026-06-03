@@ -81,13 +81,26 @@ class TvCatalogScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final navigation = ref.watch(navigationControllerProvider);
     final state = navigation.stateFor(section);
+    final categoriesValue = _categoriesForSection(ref, section);
+    final selectedCategoryLabel = _selectedCategoryLabel(
+      categoriesValue.value,
+      state.selectedCategoryId,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _TvSectionRail(
+        _TvBrowseBar(
           selected: section,
           onSelect: ref.read(navigationControllerProvider).selectSection,
+          selectedCategoryLabel: selectedCategoryLabel,
+          categoryEnabled: section.contentType != null,
+          onOpenCategories: () => _openCategorySheet(
+            context,
+            ref,
+            section: section,
+            selectedCategoryId: state.selectedCategoryId,
+          ),
         ),
         const SizedBox(height: 18),
         if (section == VelaSection.settings)
@@ -102,12 +115,6 @@ class TvCatalogScreen extends ConsumerWidget {
             ),
           )
         else ...[
-          _TvCategoryRail(
-            value: _categoriesForSection(ref, section),
-            selectedCategoryId: state.selectedCategoryId,
-            onSelect: ref.read(navigationControllerProvider).selectCategory,
-          ),
-          const SizedBox(height: 20),
           Expanded(
             child: _itemsForSection(ref, section, state.selectedCategoryId)
                 .when(
@@ -144,6 +151,8 @@ class TvCatalogScreen extends ConsumerWidget {
                             onFocusItem: (item) => _selectItem(ref, item),
                             onOpenItem: (item) =>
                                 unawaited(_openItem(ref, item)),
+                            onToggleFavorite: (item) =>
+                                unawaited(_toggleItemFavorite(ref, item)),
                           );
                         }
                         final detailWidth = constraints.maxWidth >= 1320
@@ -159,6 +168,8 @@ class TvCatalogScreen extends ConsumerWidget {
                                 onFocusItem: (item) => _selectItem(ref, item),
                                 onOpenItem: (item) =>
                                     unawaited(_openItem(ref, item)),
+                                onToggleFavorite: (item) =>
+                                    unawaited(_toggleItemFavorite(ref, item)),
                               ),
                             ),
                             const SizedBox(width: 22),
@@ -167,6 +178,11 @@ class TvCatalogScreen extends ConsumerWidget {
                               child: TvDetailPanel(
                                 item: selected,
                                 onOpenPlayer: onOpenPlayer,
+                                onToggleFavorite: selected == null
+                                    ? null
+                                    : () => unawaited(
+                                        _toggleItemFavorite(ref, selected),
+                                      ),
                               ),
                             ),
                           ],
@@ -299,165 +315,496 @@ class TvCatalogScreen extends ConsumerWidget {
   }
 }
 
-class _TvSectionRail extends StatelessWidget {
-  const _TvSectionRail({required this.selected, required this.onSelect});
+class _TvBrowseBar extends StatelessWidget {
+  const _TvBrowseBar({
+    required this.selected,
+    required this.onSelect,
+    required this.selectedCategoryLabel,
+    required this.categoryEnabled,
+    required this.onOpenCategories,
+  });
 
   final VelaSection selected;
   final ValueChanged<VelaSection> onSelect;
+  final String selectedCategoryLabel;
+  final bool categoryEnabled;
+  final VoidCallback onOpenCategories;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return SizedBox(
-      height: 78,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: VelaSection.values.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 12),
-        itemBuilder: (context, index) {
-          final section = VelaSection.values[index];
-          final isSelected = section == selected;
-          return SizedBox(
-            width: 188,
-            child: TvFocusCard(
-              autofocus: index == selected.index,
-              onPressed: () => onSelect(section),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              child: Row(
-                children: [
-                  Icon(
-                    section.icon,
-                    size: 28,
-                    color: isSelected
-                        ? theme.colorScheme.primary
-                        : const Color(0xFFE7B85B),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      section.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0,
-                        color: isSelected ? theme.colorScheme.primary : null,
-                      ),
+      height: 70,
+      child: Row(
+        children: [
+          Expanded(
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: VelaSection.values.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final section = VelaSection.values[index];
+                final isSelected = section == selected;
+                return SizedBox(
+                  width: 162,
+                  child: TvFocusCard(
+                    autofocus: index == selected.index,
+                    onPressed: () => onSelect(section),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          section.icon,
+                          size: 24,
+                          color: isSelected
+                              ? theme.colorScheme.primary
+                              : const Color(0xFFE7B85B),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            section.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0,
+                              color: isSelected
+                                  ? theme.colorScheme.primary
+                                  : null,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _TvCategoryRail extends StatelessWidget {
-  const _TvCategoryRail({
-    required this.value,
-    required this.selectedCategoryId,
-    required this.onSelect,
-  });
-
-  final AsyncValue<List<CatalogCategory>> value;
-  final String? selectedCategoryId;
-  final ValueChanged<String?> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 72,
-      child: value.when(
-        loading: () => const Align(
-          alignment: Alignment.centerLeft,
-          child: SizedBox(
-            width: 220,
-            child: LinearProgressIndicator(minHeight: 3),
-          ),
-        ),
-        error: (error, _) => Text(
-          error.toString(),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.bodyLarge,
-        ),
-        data: (categories) {
-          return ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: categories.length + 1,
-            separatorBuilder: (_, _) => const SizedBox(width: 10),
-            itemBuilder: (context, index) {
-              if (index == 0) {
-                return _TvCategoryButton(
-                  label: 'All',
-                  selected: selectedCategoryId == null,
-                  onPressed: () => onSelect(null),
                 );
-              }
-              final category = categories[index - 1];
-              return _TvCategoryButton(
-                label: category.name,
-                selected: selectedCategoryId == category.id,
-                onPressed: () => onSelect(category.id),
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _TvCategoryButton extends StatelessWidget {
-  const _TvCategoryButton({
-    required this.label,
-    required this.selected,
-    required this.onPressed,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return SizedBox(
-      width: label == 'All' ? 128 : 220,
-      child: TvFocusCard(
-        onPressed: onPressed,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          children: [
-            if (selected) ...[
-              Icon(
-                LucideIcons.check,
-                size: 18,
-                color: theme.colorScheme.primary,
-              ),
-              const SizedBox(width: 8),
-            ],
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0,
-                  height: 1.05,
-                  color: selected ? theme.colorScheme.primary : null,
+              },
+            ),
+          ),
+          if (categoryEnabled) ...[
+            const SizedBox(width: 12),
+            SizedBox(
+              width: 286,
+              child: TvFocusCard(
+                onPressed: onOpenCategories,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      LucideIcons.listFilter,
+                      size: 24,
+                      color: theme.colorScheme.primary,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        selectedCategoryLabel,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w900,
+                          height: 1.05,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Icon(LucideIcons.chevronDown, size: 20),
+                  ],
                 ),
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TvCategorySheet extends ConsumerStatefulWidget {
+  const _TvCategorySheet({
+    required this.section,
+    required this.selectedCategoryId,
+  });
+
+  final VelaSection section;
+  final String? selectedCategoryId;
+
+  @override
+  ConsumerState<_TvCategorySheet> createState() => _TvCategorySheetState();
+}
+
+class _TvCategorySheetState extends ConsumerState<_TvCategorySheet> {
+  late final TextEditingController _searchController;
+  String _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final contentType = widget.section.contentType;
+    final theme = Theme.of(context);
+    final categoriesValue = contentType == null
+        ? const AsyncValue<List<CatalogCategory>>.data([])
+        : ref.watch(
+            categoriesProvider(CategoryQuery(contentType: contentType)),
+          );
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        child: categoriesValue.when(
+          loading: () => const SizedBox(
+            height: 240,
+            child: Center(child: CircularProgressIndicator(strokeWidth: 3)),
+          ),
+          error: (error, _) => _TvCatalogMessage(
+            icon: LucideIcons.circleAlert,
+            title: 'Categories unavailable',
+            body: error.toString(),
+          ),
+          data: (categories) {
+            final orderedCategories = _favoritePinnedCategories(categories);
+            final query = _query.trim().toLowerCase();
+            final visibleCategories = query.isEmpty
+                ? orderedCategories
+                : orderedCategories
+                      .where(
+                        (category) =>
+                            category.name.toLowerCase().contains(query),
+                      )
+                      .toList();
+            final totalCount = categories.fold<int>(
+              0,
+              (count, category) => count + category.itemCount,
+            );
+            final reorderDisabled = query.isNotEmpty;
+
+            return ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 760),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        LucideIcons.listFilter,
+                        size: 30,
+                        color: theme.colorScheme.primary,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          '${widget.section.label} categories',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Close',
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(LucideIcons.x),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _searchController,
+                    autofocus: false,
+                    onChanged: (value) => setState(() => _query = value),
+                    decoration: const InputDecoration(
+                      hintText: 'Search categories',
+                      prefixIcon: Icon(LucideIcons.search),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _TvCategorySheetRow(
+                    label: 'All',
+                    count: totalCount,
+                    selected: widget.selectedCategoryId == null,
+                    pinned: false,
+                    onSelect: () {
+                      ref
+                          .read(navigationControllerProvider)
+                          .selectCategory(null);
+                      Navigator.of(context).pop();
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: visibleCategories.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 8),
+                      itemBuilder: (context, index) {
+                        final category = visibleCategories[index];
+                        final canMoveUp =
+                            !reorderDisabled &&
+                            index > 0 &&
+                            visibleCategories[index - 1].isFavorite ==
+                                category.isFavorite;
+                        final canMoveDown =
+                            !reorderDisabled &&
+                            index < visibleCategories.length - 1 &&
+                            visibleCategories[index + 1].isFavorite ==
+                                category.isFavorite;
+                        return _TvCategorySheetRow(
+                          label: category.name,
+                          count: category.itemCount,
+                          selected: widget.selectedCategoryId == category.id,
+                          pinned: category.isFavorite,
+                          onSelect: () {
+                            ref
+                                .read(navigationControllerProvider)
+                                .selectCategory(category.id);
+                            Navigator.of(context).pop();
+                          },
+                          onTogglePinned: () =>
+                              unawaited(_toggleCategoryFavorite(ref, category)),
+                          onMoveUp: canMoveUp
+                              ? () => unawaited(
+                                  _moveCategory(ref, categories, category, -1),
+                                )
+                              : null,
+                          onMoveDown: canMoveDown
+                              ? () => unawaited(
+                                  _moveCategory(ref, categories, category, 1),
+                                )
+                              : null,
+                          reorderDisabled: reorderDisabled,
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
         ),
       ),
     );
   }
+}
+
+class _TvCategorySheetRow extends StatelessWidget {
+  const _TvCategorySheetRow({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.pinned,
+    required this.onSelect,
+    this.onTogglePinned,
+    this.onMoveUp,
+    this.onMoveDown,
+    this.reorderDisabled = false,
+  });
+
+  final String label;
+  final int count;
+  final bool selected;
+  final bool pinned;
+  final VoidCallback onSelect;
+  final VoidCallback? onTogglePinned;
+  final VoidCallback? onMoveUp;
+  final VoidCallback? onMoveDown;
+  final bool reorderDisabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: selected ? const Color(0xFF25211A) : const Color(0xFF151719),
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onSelect,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+          child: Row(
+            children: [
+              if (selected) ...[
+                Icon(
+                  LucideIcons.check,
+                  size: 20,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 10),
+              ],
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    color: selected ? theme.colorScheme.primary : null,
+                    fontWeight: FontWeight.w900,
+                    height: 1.08,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                count.toString(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: const Color(0xFFA9A39A),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              if (onTogglePinned != null) ...[
+                const SizedBox(width: 6),
+                IconButton(
+                  tooltip: pinned ? 'Unpin category' : 'Pin category',
+                  onPressed: onTogglePinned,
+                  icon: Icon(
+                    LucideIcons.star,
+                    color: pinned
+                        ? theme.colorScheme.primary
+                        : const Color(0xFF716D66),
+                  ),
+                ),
+                IconButton(
+                  tooltip: reorderDisabled
+                      ? 'Clear search to move category'
+                      : 'Move up',
+                  onPressed: onMoveUp,
+                  icon: const Icon(LucideIcons.chevronUp),
+                ),
+                IconButton(
+                  tooltip: reorderDisabled
+                      ? 'Clear search to move category'
+                      : 'Move down',
+                  onPressed: onMoveDown,
+                  icon: const Icon(LucideIcons.chevronDown),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _openCategorySheet(
+  BuildContext context,
+  WidgetRef ref, {
+  required VelaSection section,
+  required String? selectedCategoryId,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    useSafeArea: true,
+    isScrollControlled: true,
+    backgroundColor: const Color(0xFF111315),
+    barrierColor: const Color(0xCC000000),
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+    ),
+    builder: (_) {
+      return _TvCategorySheet(
+        section: section,
+        selectedCategoryId: selectedCategoryId,
+      );
+    },
+  );
+}
+
+String _selectedCategoryLabel(
+  List<CatalogCategory>? categories,
+  String? selectedCategoryId,
+) {
+  if (selectedCategoryId == null) {
+    return 'All categories';
+  }
+  for (final category in categories ?? const <CatalogCategory>[]) {
+    if (category.id == selectedCategoryId) {
+      return category.name;
+    }
+  }
+  return 'Selected category';
+}
+
+Future<void> _toggleCategoryFavorite(WidgetRef ref, CatalogCategory category) {
+  return ref
+      .read(categoryRepositoryProvider)
+      .toggleCategoryFavorite(
+        providerId: category.providerId,
+        contentType: category.contentType,
+        categoryId: category.id,
+      );
+}
+
+Future<void> _moveCategory(
+  WidgetRef ref,
+  List<CatalogCategory> categories,
+  CatalogCategory category,
+  int delta,
+) async {
+  final scoped = _favoritePinnedCategories(
+    categories
+        .where(
+          (candidate) =>
+              candidate.providerId == category.providerId &&
+              candidate.contentType == category.contentType,
+        )
+        .toList(),
+  );
+  final index = scoped.indexWhere((candidate) => candidate.id == category.id);
+  final nextIndex = index + delta;
+  if (index < 0 || nextIndex < 0 || nextIndex >= scoped.length) return;
+  if (scoped[nextIndex].isFavorite != category.isFavorite) return;
+  final ids = scoped.map((candidate) => candidate.id).toList();
+  final moved = ids.removeAt(index);
+  ids.insert(nextIndex, moved);
+  await ref
+      .read(categoryRepositoryProvider)
+      .reorderCategories(
+        providerId: category.providerId,
+        contentType: category.contentType,
+        categoryIds: ids,
+      );
+}
+
+List<CatalogCategory> _favoritePinnedCategories(
+  List<CatalogCategory> categories,
+) {
+  return [
+    ...categories.where((category) => category.isFavorite),
+    ...categories.where((category) => !category.isFavorite),
+  ];
+}
+
+Future<void> _toggleItemFavorite(WidgetRef ref, CatalogCardItem item) {
+  return ref
+      .read(catalogRepositoryProvider)
+      .toggleItemFavorite(
+        providerId: item.providerId,
+        itemId: item.id,
+        itemType: FavoriteItemType.fromCatalog(item.contentType),
+      );
 }
 
 class _TvCatalogGrid extends StatelessWidget {
@@ -466,12 +813,14 @@ class _TvCatalogGrid extends StatelessWidget {
     required this.selected,
     required this.onFocusItem,
     required this.onOpenItem,
+    required this.onToggleFavorite,
   });
 
   final List<CatalogCardItem> items;
   final CatalogCardItem? selected;
   final ValueChanged<CatalogCardItem> onFocusItem;
   final ValueChanged<CatalogCardItem> onOpenItem;
+  final ValueChanged<CatalogCardItem> onToggleFavorite;
 
   @override
   Widget build(BuildContext context) {
@@ -491,6 +840,7 @@ class _TvCatalogGrid extends StatelessWidget {
           autofocus: index == 0,
           onFocus: () => onFocusItem(item),
           onPressed: () => onOpenItem(item),
+          onToggleFavorite: () => onToggleFavorite(item),
         );
       },
     );
@@ -503,6 +853,7 @@ class _TvContentCard extends StatelessWidget {
     required this.selected,
     required this.onFocus,
     required this.onPressed,
+    required this.onToggleFavorite,
     this.autofocus = false,
   });
 
@@ -510,6 +861,7 @@ class _TvContentCard extends StatelessWidget {
   final bool selected;
   final VoidCallback onFocus;
   final VoidCallback onPressed;
+  final VoidCallback onToggleFavorite;
   final bool autofocus;
 
   @override
@@ -544,52 +896,82 @@ class _TvContentCard extends StatelessWidget {
                 ? const Color(0xFF1F211E)
                 : const Color(0xFF151719),
             borderRadius: BorderRadius.circular(8),
-            child: InkWell(
-              onTap: onPressed,
-              borderRadius: BorderRadius.circular(8),
-              canRequestFocus: false,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: focused
-                        ? theme.colorScheme.primary
-                        : selected
-                        ? const Color(0xFFE7B85B)
-                        : const Color(0xFF292D31),
-                    width: focused ? 2 : 1,
-                  ),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: focused
+                      ? theme.colorScheme.primary
+                      : selected
+                      ? const Color(0xFFE7B85B)
+                      : const Color(0xFF292D31),
+                  width: focused ? 2 : 1,
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: _TvCatalogArtwork(item: item)),
-                      const SizedBox(height: 10),
-                      Text(
-                        item.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0,
-                          height: 1.05,
+              ),
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: InkWell(
+                      onTap: onPressed,
+                      onLongPress: onToggleFavorite,
+                      borderRadius: BorderRadius.circular(8),
+                      canRequestFocus: false,
+                      child: Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: _TvCatalogArtwork(item: item)),
+                            const SizedBox(height: 10),
+                            Text(
+                              item.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0,
+                                height: 1.05,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              _secondaryLabel(item),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: const Color(0xFFA9A39A),
+                                letterSpacing: 0,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        _secondaryLabel(item),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: const Color(0xFFA9A39A),
-                          letterSpacing: 0,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: IconButton.filledTonal(
+                      tooltip: item.isFavorite
+                          ? 'Remove from favorites'
+                          : 'Add to favorites',
+                      onPressed: onToggleFavorite,
+                      icon: Icon(
+                        LucideIcons.star,
+                        size: 18,
+                        fill: item.isFavorite ? 1 : 0,
+                      ),
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size(38, 38),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        foregroundColor: item.isFavorite
+                            ? theme.colorScheme.primary
+                            : const Color(0xFFEDE8DF),
+                        backgroundColor: const Color(0xCC111315),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           );
@@ -628,17 +1010,6 @@ class _TvCatalogArtwork extends StatelessWidget {
               )
             else
               Icon(icon, color: const Color(0xFF716D66), size: 36),
-            Positioned(
-              right: 8,
-              top: 8,
-              child: Icon(
-                item.isFavorite ? LucideIcons.star : icon,
-                size: 18,
-                color: item.isFavorite
-                    ? Theme.of(context).colorScheme.primary
-                    : const Color(0x99FFFFFF),
-              ),
-            ),
             if (item.canPlay)
               Positioned(
                 right: 8,

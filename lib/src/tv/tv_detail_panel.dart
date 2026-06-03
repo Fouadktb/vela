@@ -20,11 +20,13 @@ class TvDetailPanel extends ConsumerWidget {
   const TvDetailPanel({
     required this.item,
     required this.onOpenPlayer,
+    this.onToggleFavorite,
     super.key,
   });
 
   final CatalogCardItem? item;
   final ValueChanged<PlayableItem> onOpenPlayer;
+  final VoidCallback? onToggleFavorite;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -91,29 +93,52 @@ class TvDetailPanel extends ConsumerWidget {
             const SizedBox(height: 18),
             SizedBox(
               height: 64,
-              child: TvFocusCard(
-                onPressed: () => unawaited(_openCard(ref, item)),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 14,
-                ),
-                child: Row(
-                  children: [
-                    const Icon(LucideIcons.play, size: 24),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        _primaryActionLabel(item),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TvFocusCard(
+                      onPressed: () => unawaited(_openCard(ref, item)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 14,
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(LucideIcons.play, size: 24),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              _primaryActionLabel(item),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 76,
+                    child: TvFocusCard(
+                      onPressed: onToggleFavorite,
+                      padding: EdgeInsets.zero,
+                      child: Center(
+                        child: Icon(
+                          LucideIcons.star,
+                          size: 28,
+                          color: item.isFavorite
+                              ? theme.colorScheme.primary
+                              : null,
                         ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
             if (item.contentType == CatalogContentType.series) ...[

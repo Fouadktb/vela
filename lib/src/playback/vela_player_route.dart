@@ -171,8 +171,6 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
   }
 
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
-    _showControls();
-
     if (event.logicalKey == LogicalKeyboardKey.space) {
       _handleSpaceKey(event);
       return KeyEventResult.handled;
@@ -188,26 +186,34 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
       case LogicalKeyboardKey.escape:
       case LogicalKeyboardKey.goBack:
       case LogicalKeyboardKey.browserBack:
-        unawaited(_close());
+        if (_controlsVisible) {
+          setState(() => _controlsVisible = false);
+        } else {
+          unawaited(_close());
+        }
       case LogicalKeyboardKey.mediaPlayPause:
+        _showControls();
         _controller.togglePlayPause();
       case LogicalKeyboardKey.select:
       case LogicalKeyboardKey.enter:
         if (!_routeHasPrimaryFocus) {
           return KeyEventResult.ignored;
         }
-        _controller.togglePlayPause();
+        _toggleControlsVisible();
       case LogicalKeyboardKey.arrowLeft:
+        _showControls();
         if (!_routeHasPrimaryFocus) {
           return KeyEventResult.ignored;
         }
         _seek(SeekZoneDirection.backward);
       case LogicalKeyboardKey.arrowRight:
+        _showControls();
         if (!_routeHasPrimaryFocus) {
           return KeyEventResult.ignored;
         }
         _seek(SeekZoneDirection.forward);
       case LogicalKeyboardKey.arrowUp:
+        _showControls();
         if (_moveFocus(TraversalDirection.up)) {
           return KeyEventResult.handled;
         }
@@ -216,6 +222,7 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
         }
         unawaited(_controller.setVolume(_controller.state.volume + 5));
       case LogicalKeyboardKey.arrowDown:
+        _showControls();
         if (_moveFocus(TraversalDirection.down)) {
           return KeyEventResult.handled;
         }
@@ -224,10 +231,13 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
         }
         unawaited(_controller.setVolume(_controller.state.volume - 5));
       case LogicalKeyboardKey.keyF:
+        _showControls();
         unawaited(_controller.toggleFullscreen());
       case LogicalKeyboardKey.keyM:
+        _showControls();
         unawaited(_controller.toggleMute());
       case LogicalKeyboardKey.keyN:
+        _showControls();
         final next = _controller.state.item?.nextEpisode;
         if (next != null) unawaited(_openNextEpisode(next));
       default:
@@ -235,6 +245,17 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
     }
 
     return KeyEventResult.handled;
+  }
+
+  void _toggleControlsVisible() {
+    setState(() {
+      _controlsVisible = !_controlsVisible;
+    });
+    if (_controlsVisible) {
+      _scheduleHide();
+    } else {
+      _hideTimer?.cancel();
+    }
   }
 
   bool _isPlayerShortcutKey(LogicalKeyboardKey key) {

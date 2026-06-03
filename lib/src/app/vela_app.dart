@@ -14,7 +14,7 @@ class VelaApp extends StatelessWidget {
       title: 'Vela',
       debugShowCheckedModeBanner: false,
       theme: buildVelaTheme(),
-      home: VelaPlatform.surface == VelaSurface.androidTv
+      home: VelaPlatform.surface == VelaSurface.android
           ? const VelaTvShell()
           : const VelaShell(),
     );

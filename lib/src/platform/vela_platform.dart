@@ -3,10 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 /// High-level app surfaces supported by the current build.
-///
-/// The first Android target is Android TV only. Generic Android phone/tablet
-/// support is intentionally not modeled until that surface is added.
-enum VelaSurface { desktop, androidTv }
+enum VelaSurface { desktop, android }
 
 /// Platform capability switches used to select startup, shell, and import UX.
 class VelaPlatform {
@@ -22,14 +19,13 @@ class VelaPlatform {
     return Platform.isAndroid;
   }
 
-  /// Treat Android as Android TV for now because this Android scaffold targets
-  /// TV only. Add a separate mobile surface before supporting phone/tablet UX.
-  static bool get isAndroidTv {
+  /// Android uses one adaptive shell for TV remotes and phone touch input.
+  static bool get isAndroidSurface {
     return isAndroid;
   }
 
   static VelaSurface get surface {
-    return isAndroidTv ? VelaSurface.androidTv : VelaSurface.desktop;
+    return isAndroidSurface ? VelaSurface.android : VelaSurface.desktop;
   }
 
   static bool get supportsLocalFilePicker {
