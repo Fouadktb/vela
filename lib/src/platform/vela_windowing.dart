@@ -122,16 +122,27 @@ class VelaWindowCloseGuard with WindowListener {
 
   Future<void> enable() async {
     if (!VelaPlatform.isDesktopWindowPlatform || _enabled) return;
-    await windowManager.setPreventClose(true);
-    windowManager.addListener(this);
-    _enabled = true;
+    try {
+      await windowManager.setPreventClose(true);
+      windowManager.addListener(this);
+      _enabled = true;
+    } catch (error, stackTrace) {
+      debugPrint('Failed to intercept player window close: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
   }
 
   Future<void> disable() async {
     if (!VelaPlatform.isDesktopWindowPlatform || !_enabled) return;
-    windowManager.removeListener(this);
-    await windowManager.setPreventClose(false);
-    _enabled = false;
+    try {
+      windowManager.removeListener(this);
+      await windowManager.setPreventClose(false);
+    } catch (error, stackTrace) {
+      debugPrint('Failed to restore player window close behavior: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    } finally {
+      _enabled = false;
+    }
   }
 
   @override

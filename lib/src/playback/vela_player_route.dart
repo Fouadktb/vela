@@ -4,11 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:window_manager/window_manager.dart';
 
 import '../app/navigation_controller.dart';
 import '../catalog/catalog_models.dart';
 import '../features/series/episode_rail.dart';
+import '../platform/vela_windowing.dart';
 import 'playable_item.dart';
 import 'playback_controller.dart';
 import 'playback_preferences.dart';
@@ -27,10 +27,10 @@ class VelaPlayerRoute extends ConsumerStatefulWidget {
   ConsumerState<VelaPlayerRoute> createState() => _VelaPlayerRouteState();
 }
 
-class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
-    with WindowListener {
+class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
   late final PlaybackController _controller;
   late final PlaybackPreferencesRepository _preferencesRepository;
+  late final VelaWindowCloseGuard _windowCloseGuard;
   final FocusNode _focusNode = FocusNode(debugLabel: 'VelaPlayerRoute');
   Timer? _hideTimer;
   Timer? _seekFeedbackTimer;
@@ -57,7 +57,6 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
   bool _subtitlePreferenceApplied = false;
   bool _videoPreferenceApplied = false;
   String? _autoAdvancedCompletedKey;
-  bool _windowCloseInterceptEnabled = false;
   Timer? _spaceHoldTimer;
   bool _spacePressed = false;
   bool _spaceHoldElapsed = false;
@@ -74,9 +73,9 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
     _preferencesRepository = PlaybackPreferencesRepository(
       ref.read(appSettingsRepositoryProvider),
     );
+    _windowCloseGuard = VelaWindowCloseGuard(onClose: _close);
     _controller.addListener(_handlePlaybackUpdate);
-    windowManager.addListener(this);
-    unawaited(_enableWindowCloseIntercept());
+    unawaited(_windowCloseGuard.enable());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _focusNode.requestFocus();
@@ -92,18 +91,10 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
     _spaceHoldTimer?.cancel();
     _restoreSpaceHoldSpeedIfNeeded();
     _controller.removeListener(_handlePlaybackUpdate);
-    windowManager.removeListener(this);
-    if (_windowCloseInterceptEnabled) {
-      unawaited(windowManager.setPreventClose(false));
-    }
+    unawaited(_windowCloseGuard.disable());
     _focusNode.dispose();
     _controller.dispose();
     super.dispose();
-  }
-
-  @override
-  void onWindowClose() {
-    unawaited(_close());
   }
 
   @override
@@ -197,8 +188,12 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
 
     switch (event.logicalKey) {
       case LogicalKeyboardKey.escape:
+      case LogicalKeyboardKey.goBack:
+      case LogicalKeyboardKey.browserBack:
         unawaited(_close());
       case LogicalKeyboardKey.mediaPlayPause:
+      case LogicalKeyboardKey.select:
+      case LogicalKeyboardKey.enter:
         _controller.togglePlayPause();
       case LogicalKeyboardKey.arrowLeft:
         _seek(SeekZoneDirection.backward);
@@ -224,8 +219,12 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
 
   bool _isPlayerShortcutKey(LogicalKeyboardKey key) {
     return key == LogicalKeyboardKey.escape ||
+        key == LogicalKeyboardKey.goBack ||
+        key == LogicalKeyboardKey.browserBack ||
         key == LogicalKeyboardKey.space ||
         key == LogicalKeyboardKey.mediaPlayPause ||
+        key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.arrowLeft ||
         key == LogicalKeyboardKey.arrowRight ||
         key == LogicalKeyboardKey.arrowUp ||
@@ -479,16 +478,6 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
     }
   }
 
-  Future<void> _enableWindowCloseIntercept() async {
-    try {
-      await windowManager.setPreventClose(true);
-      _windowCloseInterceptEnabled = true;
-    } catch (error, stackTrace) {
-      debugPrint('Failed to intercept player window close: $error');
-      debugPrintStack(stackTrace: stackTrace);
-    }
-  }
-
   Future<void> _cleanupPlayback() async {
     try {
       _preferencesOpenSequence += 1;
@@ -497,18 +486,7 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
       await _stopPlaybackIfNeeded();
     } finally {
       await _exitFullscreenIfNeeded();
-      await _restoreWindowCloseBehavior();
-    }
-  }
-
-  Future<void> _restoreWindowCloseBehavior() async {
-    if (!_windowCloseInterceptEnabled) return;
-    try {
-      await windowManager.setPreventClose(false);
-      _windowCloseInterceptEnabled = false;
-    } catch (error, stackTrace) {
-      debugPrint('Failed to restore player window close behavior: $error');
-      debugPrintStack(stackTrace: stackTrace);
+      await _windowCloseGuard.disable();
     }
   }
 
