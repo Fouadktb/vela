@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class TvFocusCard extends StatelessWidget {
   const TvFocusCard({
@@ -18,8 +19,21 @@ class TvFocusCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return FocusableActionDetector(
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (_) {
+            onPressed?.call();
+            return null;
+          },
+        ),
+      },
       autofocus: autofocus,
+      enabled: onPressed != null,
       mouseCursor: SystemMouseCursors.click,
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
+      },
       child: Builder(
         builder: (context) {
           final focused = Focus.of(context).hasFocus;
@@ -37,6 +51,7 @@ class TvFocusCard extends StatelessWidget {
             child: InkWell(
               onTap: onPressed,
               borderRadius: BorderRadius.circular(8),
+              canRequestFocus: false,
               child: Padding(padding: padding, child: child),
             ),
           );
