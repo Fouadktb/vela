@@ -53,48 +53,55 @@ class _VelaTvShellState extends ConsumerState<VelaTvShell> {
         return Scaffold(
           backgroundColor: const Color(0xFF0C0D0E),
           body: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(40),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compactSurface =
+                    constraints.maxWidth < 1100 || constraints.maxHeight < 680;
+                final edgePadding = compactSurface ? 18.0 : 40.0;
+                return Padding(
+                  padding: EdgeInsets.all(edgePadding),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const VelaLogoMark(size: 34),
-                      const SizedBox(width: 14),
-                      Text(
-                        'Vela',
-                        style: Theme.of(context).textTheme.headlineMedium
-                            ?.copyWith(
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 0,
+                      Row(
+                        children: [
+                          VelaLogoMark(size: compactSurface ? 28 : 34),
+                          SizedBox(width: compactSurface ? 10 : 14),
+                          Text(
+                            'Vela',
+                            style: Theme.of(context).textTheme.headlineMedium
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0,
+                                ),
+                          ),
+                          const Spacer(),
+                          if (availableUpdate != null)
+                            FilledButton.icon(
+                              onPressed: () async {
+                                await _openUpdate(availableUpdate);
+                              },
+                              icon: const Icon(LucideIcons.download),
+                              label: Text(
+                                'Update ${availableUpdate.latestVersion}',
+                              ),
                             ),
+                        ],
                       ),
-                      const Spacer(),
-                      if (availableUpdate != null)
-                        FilledButton.icon(
-                          onPressed: () async {
-                            await _openUpdate(availableUpdate);
-                          },
-                          icon: const Icon(LucideIcons.download),
-                          label: Text(
-                            'Update ${availableUpdate.latestVersion}',
+                      SizedBox(height: compactSurface ? 16 : 28),
+                      if (!hasProviders)
+                        const Expanded(child: TvProviderSetupScreen())
+                      else
+                        Expanded(
+                          child: TvCatalogScreen(
+                            section: navigation.selectedSection,
+                            onOpenPlayer: (item) => _openPlayer(context, item),
                           ),
                         ),
                     ],
                   ),
-                  const SizedBox(height: 28),
-                  if (!hasProviders)
-                    const Expanded(child: TvProviderSetupScreen())
-                  else
-                    Expanded(
-                      child: TvCatalogScreen(
-                        section: navigation.selectedSection,
-                        onOpenPlayer: (item) => _openPlayer(context, item),
-                      ),
-                    ),
-                ],
-              ),
+                );
+              },
             ),
           ),
         );

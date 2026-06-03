@@ -138,26 +138,12 @@ class TvCatalogScreen extends ConsumerWidget {
                       builder: (context, constraints) {
                         final showDetailPanel = constraints.maxWidth >= 980;
                         if (!showDetailPanel) {
-                          return Column(
-                            children: [
-                              Expanded(
-                                child: _TvCatalogGrid(
-                                  items: items,
-                                  selected: selected,
-                                  onFocusItem: (item) => _selectItem(ref, item),
-                                  onOpenItem: (item) =>
-                                      unawaited(_openItem(ref, item)),
-                                ),
-                              ),
-                              const SizedBox(height: 18),
-                              SizedBox(
-                                height: 360,
-                                child: TvDetailPanel(
-                                  item: selected,
-                                  onOpenPlayer: onOpenPlayer,
-                                ),
-                              ),
-                            ],
+                          return _TvCatalogGrid(
+                            items: items,
+                            selected: selected,
+                            onFocusItem: (item) => _selectItem(ref, item),
+                            onOpenItem: (item) =>
+                                unawaited(_openItem(ref, item)),
                           );
                         }
                         final detailWidth = constraints.maxWidth >= 1320
