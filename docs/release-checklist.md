@@ -64,6 +64,7 @@ Use this checklist for every local Vela release candidate before creating a GitH
 - Confirm the Windows installer targets `Program Files` and prompts for admin access.
 - For Android TV, confirm the Android SDK is installed and available with `flutter doctor -v`.
 - For Android TV, run `scripts/package-android-tv.sh`.
+- Back up the Android TV release keystore at `~/.config/vela/android/vela-android-tv-release.jks` or the `VELA_ANDROID_KEYSTORE` path; future sideload updates must use the same key.
 - Install the APK on an Android TV device or emulator with `adb install -r release/vela-android-tv-v<version>.apk`.
 - Confirm Vela appears in the Android TV launcher.
 - Confirm D-pad focus reaches provider setup fields, catalog rows, and player controls.

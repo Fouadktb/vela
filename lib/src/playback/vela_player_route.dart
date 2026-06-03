@@ -113,8 +113,6 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
         body: Focus(
           focusNode: _focusNode,
           autofocus: true,
-          descendantsAreFocusable: false,
-          descendantsAreTraversable: false,
           onKeyEvent: _handleKey,
           child: MouseRegion(
             onHover: (_) => _showControls(),
@@ -192,16 +190,38 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
       case LogicalKeyboardKey.browserBack:
         unawaited(_close());
       case LogicalKeyboardKey.mediaPlayPause:
+        _controller.togglePlayPause();
       case LogicalKeyboardKey.select:
       case LogicalKeyboardKey.enter:
+        if (!_routeHasPrimaryFocus) {
+          return KeyEventResult.ignored;
+        }
         _controller.togglePlayPause();
       case LogicalKeyboardKey.arrowLeft:
+        if (!_routeHasPrimaryFocus) {
+          return KeyEventResult.ignored;
+        }
         _seek(SeekZoneDirection.backward);
       case LogicalKeyboardKey.arrowRight:
+        if (!_routeHasPrimaryFocus) {
+          return KeyEventResult.ignored;
+        }
         _seek(SeekZoneDirection.forward);
       case LogicalKeyboardKey.arrowUp:
+        if (_moveFocus(TraversalDirection.up)) {
+          return KeyEventResult.handled;
+        }
+        if (!_routeHasPrimaryFocus) {
+          return KeyEventResult.ignored;
+        }
         unawaited(_controller.setVolume(_controller.state.volume + 5));
       case LogicalKeyboardKey.arrowDown:
+        if (_moveFocus(TraversalDirection.down)) {
+          return KeyEventResult.handled;
+        }
+        if (!_routeHasPrimaryFocus) {
+          return KeyEventResult.ignored;
+        }
         unawaited(_controller.setVolume(_controller.state.volume - 5));
       case LogicalKeyboardKey.keyF:
         unawaited(_controller.toggleFullscreen());
@@ -232,6 +252,18 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
         key == LogicalKeyboardKey.keyF ||
         key == LogicalKeyboardKey.keyM ||
         key == LogicalKeyboardKey.keyN;
+  }
+
+  bool get _routeHasPrimaryFocus {
+    final primaryFocus = FocusManager.instance.primaryFocus;
+    return primaryFocus == null || primaryFocus == _focusNode;
+  }
+
+  bool _moveFocus(TraversalDirection direction) {
+    if (!_controlsVisible) return false;
+    final primaryFocus = FocusManager.instance.primaryFocus ?? _focusNode;
+    if (primaryFocus.context == null) return false;
+    return primaryFocus.focusInDirection(direction);
   }
 
   void _handleSpaceKey(KeyEvent event) {
