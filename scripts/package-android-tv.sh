@@ -11,6 +11,27 @@ KEY_ALIAS="${VELA_ANDROID_KEY_ALIAS:-vela-android-tv}"
 STORE_PASSWORD="${VELA_ANDROID_STORE_PASSWORD:-vela-android-tv-release}"
 KEY_PASSWORD="${VELA_ANDROID_KEY_PASSWORD:-${STORE_PASSWORD}}"
 KEY_PROPERTIES_PATH="${ROOT_DIR}/android/key.properties"
+DEFAULT_ANDROID_SDK="${HOME}/Library/Android/sdk"
+ANDROID_STUDIO_JBR="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+
+if [[ -z "${JAVA_HOME:-}" ]] && ! java -version >/dev/null 2>&1; then
+  if [[ -x "${ANDROID_STUDIO_JBR}/bin/java" ]]; then
+    export JAVA_HOME="${ANDROID_STUDIO_JBR}"
+    export PATH="${JAVA_HOME}/bin:${PATH}"
+  fi
+fi
+
+if [[ -z "${ANDROID_HOME:-}" && -d "${DEFAULT_ANDROID_SDK}" ]]; then
+  export ANDROID_HOME="${DEFAULT_ANDROID_SDK}"
+fi
+
+if [[ -z "${ANDROID_SDK_ROOT:-}" && -n "${ANDROID_HOME:-}" ]]; then
+  export ANDROID_SDK_ROOT="${ANDROID_HOME}"
+fi
+
+if [[ -n "${ANDROID_SDK_ROOT:-}" && -d "${ANDROID_SDK_ROOT}/platform-tools" ]]; then
+  export PATH="${ANDROID_SDK_ROOT}/platform-tools:${PATH}"
+fi
 
 cd "${ROOT_DIR}"
 
