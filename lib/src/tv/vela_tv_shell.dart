@@ -73,12 +73,9 @@ class _VelaTvShellState extends ConsumerState<VelaTvShell> {
                       const Spacer(),
                       if (availableUpdate != null)
                         FilledButton.icon(
-                          onPressed: () => unawaited(
-                            openExternalUrl(
-                              availableUpdate.androidApkUrl ??
-                                  availableUpdate.releaseUrl,
-                            ),
-                          ),
+                          onPressed: () async {
+                            await _openUpdate(availableUpdate);
+                          },
                           icon: const Icon(LucideIcons.download),
                           label: Text(
                             'Update ${availableUpdate.latestVersion}',
@@ -116,5 +113,35 @@ class _VelaTvShellState extends ConsumerState<VelaTvShell> {
         },
       ),
     );
+  }
+
+  Future<void> _openUpdate(UpdateStatus status) async {
+    try {
+      await openExternalUrl(status.androidApkUrl ?? status.releaseUrl);
+    } on UpdateCheckException catch (error, stackTrace) {
+      debugPrint('Failed to open update URL: $error\n$stackTrace');
+      _showUpdateError();
+    } catch (error, stackTrace) {
+      debugPrint('Unexpected update launch error: $error\n$stackTrace');
+      _showUpdateError();
+    }
+  }
+
+  void _showUpdateError() {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not open the update download. Try again later.',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          ),
+          duration: Duration(seconds: 5),
+        ),
+      );
   }
 }

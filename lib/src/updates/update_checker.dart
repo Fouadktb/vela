@@ -10,6 +10,13 @@ final updateStatusProvider = FutureProvider<UpdateStatus>((ref) {
   return const GitHubUpdateChecker().check();
 });
 
+final _androidTvApkNamePattern = RegExp(
+  r'^vela-android-tv-v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)'
+  r'(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?'
+  r'(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\.apk$',
+  caseSensitive: false,
+);
+
 class UpdateStatus {
   const UpdateStatus({
     required this.currentVersion,
@@ -126,17 +133,17 @@ String? _androidTvApkUrl(Object? assets) {
       continue;
     }
 
-    final normalizedName = name.toLowerCase();
-    if (!normalizedName.endsWith('.apk') ||
-        !normalizedName.contains('android-tv')) {
+    final trimmedName = name.trim();
+    if (!_androidTvApkNamePattern.hasMatch(trimmedName)) {
       continue;
     }
 
-    final trimmedDownloadUrl = downloadUrl.trim();
-    if (trimmedDownloadUrl.isEmpty) {
+    final downloadUri = Uri.tryParse(downloadUrl.trim());
+    if (downloadUri == null ||
+        !_isVelaGitHubReleaseDownload(downloadUri, trimmedName)) {
       continue;
     }
-    return trimmedDownloadUrl;
+    return downloadUri.toString();
   }
 
   return null;
@@ -161,13 +168,28 @@ Future<void> openExternalUrl(String url) async {
 }
 
 bool _isValidExternalUrl(Uri uri) {
-  if (!uri.hasScheme) {
+  final scheme = uri.scheme.toLowerCase();
+  return (scheme == 'http' || scheme == 'https') && uri.host.isNotEmpty;
+}
+
+bool _isVelaGitHubReleaseDownload(Uri uri, String assetName) {
+  if (uri.scheme.toLowerCase() != 'https' ||
+      uri.host.toLowerCase() != 'github.com' ||
+      uri.userInfo.isNotEmpty ||
+      uri.hasQuery ||
+      uri.hasFragment) {
     return false;
   }
 
-  final scheme = uri.scheme.toLowerCase();
-  if ((scheme == 'http' || scheme == 'https') && uri.host.isEmpty) {
+  final segments = uri.pathSegments;
+  if (segments.length != 6 ||
+      segments[0].toLowerCase() != velaRepositoryOwner.toLowerCase() ||
+      segments[1].toLowerCase() != velaRepositoryName.toLowerCase() ||
+      segments[2] != 'releases' ||
+      segments[3] != 'download' ||
+      segments.last.toLowerCase() != assetName.toLowerCase()) {
     return false;
   }
+
   return true;
 }
