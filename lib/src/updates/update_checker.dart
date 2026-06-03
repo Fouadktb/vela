@@ -1,8 +1,8 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../app/app_version.dart';
 
@@ -17,6 +17,7 @@ class UpdateStatus {
     required this.releaseUrl,
     required this.hasUpdate,
     required this.checkedAt,
+    this.androidApkUrl,
   });
 
   final String currentVersion;
@@ -24,6 +25,7 @@ class UpdateStatus {
   final String releaseUrl;
   final bool hasUpdate;
   final DateTime checkedAt;
+  final String? androidApkUrl;
 }
 
 class GitHubUpdateChecker {
@@ -54,6 +56,7 @@ class GitHubUpdateChecker {
 
     final tag = body['tag_name'] as String?;
     final releaseUrl = body['html_url'] as String? ?? velaReleasesUrl;
+    final androidApkUrl = _androidTvApkUrl(body['assets']);
     if (tag == null || tag.trim().isEmpty) {
       throw const UpdateCheckException('Latest release has no version tag');
     }
@@ -64,6 +67,7 @@ class GitHubUpdateChecker {
       releaseUrl: releaseUrl,
       hasUpdate: compareReleaseVersions(tag, velaReleaseTag) > 0,
       checkedAt: DateTime.now(),
+      androidApkUrl: androidApkUrl,
     );
   }
 }
@@ -106,14 +110,64 @@ List<int> _releaseVersionParts(String value) {
       .toList(growable: false);
 }
 
+String? _androidTvApkUrl(Object? assets) {
+  if (assets is! List<Object?>) {
+    return null;
+  }
+
+  for (final asset in assets) {
+    if (asset is! Map<Object?, Object?>) {
+      continue;
+    }
+
+    final name = asset['name'];
+    final downloadUrl = asset['browser_download_url'];
+    if (name is! String || downloadUrl is! String) {
+      continue;
+    }
+
+    final normalizedName = name.toLowerCase();
+    if (!normalizedName.endsWith('.apk') ||
+        !normalizedName.contains('android-tv')) {
+      continue;
+    }
+
+    final trimmedDownloadUrl = downloadUrl.trim();
+    if (trimmedDownloadUrl.isEmpty) {
+      continue;
+    }
+    return trimmedDownloadUrl;
+  }
+
+  return null;
+}
+
 Future<void> openExternalUrl(String url) async {
-  if (Platform.isMacOS) {
-    await Process.run('open', [url]);
-    return;
+  final uri = Uri.tryParse(url.trim());
+  if (uri == null || !_isValidExternalUrl(uri)) {
+    throw const UpdateCheckException('Invalid update URL');
   }
-  if (Platform.isWindows) {
-    await Process.run('rundll32', ['url.dll,FileProtocolHandler', url]);
-    return;
+
+  try {
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched) {
+      throw UpdateCheckException('Failed to open update URL: $url');
+    }
+  } on UpdateCheckException {
+    rethrow;
+  } catch (error) {
+    throw UpdateCheckException('Failed to open update URL: $error');
   }
-  await Process.run('xdg-open', [url]);
+}
+
+bool _isValidExternalUrl(Uri uri) {
+  if (!uri.hasScheme) {
+    return false;
+  }
+
+  final scheme = uri.scheme.toLowerCase();
+  if ((scheme == 'http' || scheme == 'https') && uri.host.isEmpty) {
+    return false;
+  }
+  return true;
 }

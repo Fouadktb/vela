@@ -226,8 +226,11 @@ class DiagnosticsExporter {
       ..writeln('- latest version: ${updateStatus.latestVersion}')
       ..writeln('- has update: ${updateStatus.hasUpdate}')
       ..writeln('- checked at: ${updateStatus.checkedAt.toIso8601String()}')
-      ..writeln('- release URL: ${_redact(updateStatus.releaseUrl)}')
-      ..writeln();
+      ..writeln('- release URL: ${_redact(updateStatus.releaseUrl)}');
+    if (updateStatus.androidApkUrl case final androidApkUrl?) {
+      buffer.writeln('- Android APK URL: ${_redact(androidApkUrl)}');
+    }
+    buffer.writeln();
   }
 }
 

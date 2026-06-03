@@ -74,7 +74,10 @@ class _VelaTvShellState extends ConsumerState<VelaTvShell> {
                       if (availableUpdate != null)
                         FilledButton.icon(
                           onPressed: () => unawaited(
-                            openExternalUrl(availableUpdate.releaseUrl),
+                            openExternalUrl(
+                              availableUpdate.androidApkUrl ??
+                                  availableUpdate.releaseUrl,
+                            ),
                           ),
                           icon: const Icon(LucideIcons.download),
                           label: Text(
