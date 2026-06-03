@@ -6,6 +6,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../app/navigation_controller.dart';
 import '../../catalog/catalog_models.dart';
+import '../../platform/vela_platform.dart';
 import '../../providers/provider_models.dart';
 import '../../providers/provider_repository.dart';
 import '../../providers/refresh_interval.dart';
@@ -101,6 +102,35 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
   var _refreshIntervalMinutes = defaultRefreshIntervalMinutes;
   ProviderType _type = ProviderType.xtream;
 
+  ProviderType get _effectiveProviderType {
+    if (_type == ProviderType.m3uFile &&
+        !VelaPlatform.supportsLocalFilePicker) {
+      return ProviderType.xtream;
+    }
+    return _type;
+  }
+
+  List<ButtonSegment<ProviderType>> _providerTypeSegments() {
+    return [
+      const ButtonSegment(
+        value: ProviderType.xtream,
+        icon: Icon(LucideIcons.server, size: 17),
+        label: Text('Xtream Codes'),
+      ),
+      const ButtonSegment(
+        value: ProviderType.m3uUrl,
+        icon: Icon(LucideIcons.link, size: 17),
+        label: Text('M3U URL'),
+      ),
+      if (VelaPlatform.supportsLocalFilePicker)
+        const ButtonSegment(
+          value: ProviderType.m3uFile,
+          icon: Icon(LucideIcons.fileVideo, size: 17),
+          label: Text('Local File'),
+        ),
+    ];
+  }
+
   @override
   void dispose() {
     _nameController.dispose();
@@ -117,6 +147,7 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
     final theme = Theme.of(context);
     final importState = ref.watch(providerSetupImportControllerProvider);
     final isImporting = importState.isImporting;
+    final activeType = _effectiveProviderType;
 
     final content = SingleChildScrollView(
       padding: EdgeInsets.all(widget.embedded ? 0 : 36),
@@ -155,24 +186,8 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
                   ),
                   const SizedBox(height: 22),
                   SegmentedButton<ProviderType>(
-                    segments: const [
-                      ButtonSegment(
-                        value: ProviderType.xtream,
-                        icon: Icon(LucideIcons.server, size: 17),
-                        label: Text('Xtream Codes'),
-                      ),
-                      ButtonSegment(
-                        value: ProviderType.m3uUrl,
-                        icon: Icon(LucideIcons.link, size: 17),
-                        label: Text('M3U URL'),
-                      ),
-                      ButtonSegment(
-                        value: ProviderType.m3uFile,
-                        icon: Icon(LucideIcons.fileVideo, size: 17),
-                        label: Text('Local File'),
-                      ),
-                    ],
-                    selected: {_type},
+                    segments: _providerTypeSegments(),
+                    selected: {activeType},
                     onSelectionChanged: (values) {
                       setState(() => _type = values.single);
                     },
@@ -187,7 +202,7 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
                     validator: _required,
                   ),
                   const SizedBox(height: 12),
-                  if (_type == ProviderType.xtream) ...[
+                  if (activeType == ProviderType.xtream) ...[
                     TextFormField(
                       controller: _serverController,
                       decoration: const InputDecoration(
@@ -226,7 +241,7 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
                       ],
                     ),
                   ],
-                  if (_type == ProviderType.m3uUrl)
+                  if (activeType == ProviderType.m3uUrl)
                     TextFormField(
                       controller: _m3uUrlController,
                       decoration: const InputDecoration(
@@ -237,7 +252,7 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
                       keyboardType: TextInputType.url,
                       validator: _required,
                     ),
-                  if (_type == ProviderType.m3uFile)
+                  if (activeType == ProviderType.m3uFile)
                     Row(
                       children: [
                         Expanded(
@@ -401,16 +416,15 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
   }
 
   ProviderInput _providerInput() {
+    final type = _effectiveProviderType;
     return ProviderInput(
       name: _nameController.text,
-      type: _type,
-      serverUrl: _type == ProviderType.xtream ? _serverController.text : null,
-      username: _type == ProviderType.xtream ? _usernameController.text : null,
-      password: _type == ProviderType.xtream ? _passwordController.text : null,
-      m3uUrl: _type == ProviderType.m3uUrl ? _m3uUrlController.text : null,
-      localFilePath: _type == ProviderType.m3uFile
-          ? _fileController.text
-          : null,
+      type: type,
+      serverUrl: type == ProviderType.xtream ? _serverController.text : null,
+      username: type == ProviderType.xtream ? _usernameController.text : null,
+      password: type == ProviderType.xtream ? _passwordController.text : null,
+      m3uUrl: type == ProviderType.m3uUrl ? _m3uUrlController.text : null,
+      localFilePath: type == ProviderType.m3uFile ? _fileController.text : null,
       refreshIntervalMinutes: _refreshIntervalMinutes,
     );
   }

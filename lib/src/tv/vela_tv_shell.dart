@@ -6,10 +6,10 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app/navigation_controller.dart';
 import '../app/section_state.dart';
-import '../features/providers/provider_setup_screen.dart';
 import '../shared/vela_logo_mark.dart';
 import '../updates/update_checker.dart';
 import 'tv_focus.dart';
+import 'tv_provider_setup_screen.dart';
 
 class VelaTvShell extends ConsumerStatefulWidget {
   const VelaTvShell({super.key});
@@ -84,7 +84,7 @@ class _VelaTvShellState extends ConsumerState<VelaTvShell> {
                   ),
                   const SizedBox(height: 28),
                   if (!hasProviders)
-                    const Expanded(child: ProviderSetupScreen())
+                    const Expanded(child: TvProviderSetupScreen())
                   else
                     Expanded(
                       child: _TvSectionGrid(
