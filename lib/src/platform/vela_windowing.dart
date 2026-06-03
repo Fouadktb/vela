@@ -59,6 +59,12 @@ class VelaFullscreenController {
       return;
     }
 
+    final isCurrentlyFullscreen = await windowManager.isFullScreen();
+    if (isCurrentlyFullscreen == enabled) {
+      _isFullscreen = enabled;
+      return;
+    }
+
     if (enabled) {
       await _prepareDesktopWindowForFullscreen();
       await windowManager.setFullScreen(true);
