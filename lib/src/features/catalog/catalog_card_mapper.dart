@@ -33,7 +33,7 @@ Future<List<CatalogCardItem>> catalogItemsToCards(
   for (final item in items) {
     if (item.contentType != CatalogContentType.series) {
       cards.add(
-        _catalogItemToCard(
+        catalogItemToCard(
           item,
           resume: item.contentType == CatalogContentType.movie
               ? movieResumes[(providerId: item.providerId, itemId: item.id)]
@@ -52,7 +52,7 @@ Future<List<CatalogCardItem>> catalogItemsToCards(
             positions: positions,
           );
     cards.add(
-      _catalogItemToCard(
+      catalogItemToCard(
         item,
         canPlayOverride: true,
         resume: seriesAction?.resume,
@@ -82,7 +82,7 @@ Future<CatalogCardItem> recentToResolvedCard(
 
   final resolved = await _resolveRecentCatalogItem(catalogRepository, entry);
   if (resolved != null) {
-    final card = _catalogItemToCard(resolved);
+    final card = catalogItemToCard(resolved);
     return CatalogCardItem(
       id: card.id,
       providerId: card.providerId,
@@ -150,7 +150,7 @@ Future<SeriesPlaybackAction?> _seriesPlaybackActionForPositions({
   return resolveSeriesPlaybackAction(episodes: episodes, positions: positions);
 }
 
-CatalogCardItem _catalogItemToCard(
+CatalogCardItem catalogItemToCard(
   CatalogItem item, {
   bool? canPlayOverride,
   PlaybackPosition? resume,
@@ -245,7 +245,7 @@ Future<CatalogCardItem?> _recentEpisodeToSeriesCard(
       : resolveSeriesPlaybackAction(episodes: episodes, positions: positions);
   final effectiveResume =
       seriesAction?.resume ?? latestResumablePosition(positions) ?? resume;
-  return _catalogItemToCard(
+  return catalogItemToCard(
     series,
     canPlayOverride: true,
     resume: effectiveResume,

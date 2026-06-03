@@ -7,6 +7,7 @@ import '../../app/navigation_controller.dart';
 import '../../catalog/catalog_models.dart';
 import '../../playback/playable_item.dart';
 import '../../providers/xtream/xtream_client.dart';
+import 'catalog_card_mapper.dart';
 import 'item_grid.dart';
 import 'series_playback_progress.dart';
 
@@ -237,47 +238,10 @@ Future<CatalogPlaybackTarget?> _recentPlaybackTarget(
           updatedAtMs: 0,
         )
       : null;
-  final url = await _streamUrl(
+  return playbackTargetForCatalogCard(
     ref,
-    providerId: catalogItem.providerId,
-    contentType: catalogItem.contentType,
-    streamUrl: catalogItem.streamUrl,
-    streamJson: catalogItem.streamJson,
-  );
-  if (url == null) return null;
-  final subtitle = _subtitleFor(catalogItem);
-  return CatalogPlaybackTarget(
-    playable: PlayableItem(
-      id: catalogItem.id,
-      providerId: catalogItem.providerId,
-      title: catalogItem.title,
-      subtitle: subtitle,
-      streamUrl: url,
-      kind: catalogItem.contentType == CatalogContentType.live
-          ? PlayableKind.live
-          : PlayableKind.movie,
-      posterUrl: catalogItem.contentType == CatalogContentType.movie
-          ? catalogItem.artworkUrl
-          : null,
-      channelLogoUrl: catalogItem.contentType == CatalogContentType.live
-          ? catalogItem.artworkUrl
-          : null,
-      durationSeconds: catalogItem.durationSeconds,
-      resumePosition: resume == null
-          ? Duration.zero
-          : Duration(seconds: resume.positionSeconds),
-    ),
-    history: catalogItem.contentType == CatalogContentType.live
-        ? WatchHistoryUpdate(
-            itemId: catalogItem.id,
-            itemType: PlayableContentType.live,
-            providerId: catalogItem.providerId,
-            title: catalogItem.title,
-            subtitle: subtitle,
-            artworkUrl: catalogItem.artworkUrl,
-            durationSeconds: catalogItem.durationSeconds,
-          )
-        : null,
+    catalogItemToCard(catalogItem, resume: resume),
+    restart: restart,
   );
 }
 
@@ -405,18 +369,6 @@ Future<String?> _streamUrl(
   } finally {
     client.close();
   }
-}
-
-String? _subtitleFor(CatalogItem item) {
-  final parts = <String>[
-    if (item.subtitle?.trim().isNotEmpty == true) item.subtitle!.trim(),
-    if (item.year != null) item.year.toString(),
-    if (item.rating?.trim().isNotEmpty == true) 'Rating ${item.rating}',
-  ];
-  if (parts.isEmpty) {
-    return null;
-  }
-  return parts.join(' / ');
 }
 
 extension _FirstOrNull<T> on Iterable<T> {
