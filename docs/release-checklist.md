@@ -62,15 +62,26 @@ Use this checklist for every local Vela release candidate before creating a GitH
 - Confirm `release/vela-windows-vX.Y.Z-setup.exe` is ready for GitHub upload.
 - If no Windows machine is available, run the manual `Build Windows Installer` GitHub workflow for the release tag and download its installer artifact.
 - Confirm the Windows installer targets `Program Files` and prompts for admin access.
+- For Android TV, confirm the Android SDK is installed and available with `flutter doctor -v`.
+- For Android TV, run `scripts/package-android-tv.sh`.
+- Install the APK on an Android TV device or emulator with `adb install -r release/vela-android-tv-v<version>.apk`.
+- Confirm Vela appears in the Android TV launcher.
+- Confirm D-pad focus reaches provider setup fields, catalog rows, and player controls.
+- Import a known legal provider and confirm its catalog appears.
+- Start playback for a known legal live channel.
+- Start playback for a known legal movie or episode.
+- Press Back from playback and confirm Vela returns to the previous app screen instead of quitting.
+- Confirm `release/vela-android-tv-v<version>.apk` and `release/SHA256SUMS-android-tv-v<version>.txt` are ready for GitHub upload.
 
 ## GitHub Release Upload
 
 - Confirm the repository is public so Vela can check GitHub Releases without authentication.
-- Rename local packages to include the release tag, for example `vela-macos-vX.Y.Z.dmg` and `vela-windows-vX.Y.Z-setup.exe`.
+- Rename local packages to include the release tag, for example `vela-macos-vX.Y.Z.dmg`, `vela-windows-vX.Y.Z-setup.exe`, and `vela-android-tv-vX.Y.Z.apk`.
 - Generate `SHA256SUMS-vX.Y.Z.txt` from the release artifacts.
 - Create or push the release tag after local verification passes.
 - Create the GitHub Release manually.
 - Upload the platform artifacts and checksum file manually with `gh release upload` or the GitHub UI.
+- Upload `release/vela-android-tv-vX.Y.Z.apk` and `release/SHA256SUMS-android-tv-vX.Y.Z.txt` with the GitHub Release assets.
 - Include verification notes, supported platforms, and known limitations in the release body.
 - Download the uploaded artifacts from GitHub and confirm the files match the local release output.
 - Code signing, notarization, and automatic updates are intentionally out of scope. Users update manually from GitHub Releases.
