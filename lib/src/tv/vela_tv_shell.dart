@@ -5,10 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app/navigation_controller.dart';
-import '../app/section_state.dart';
+import '../playback/playable_item.dart';
+import '../playback/vela_player_route.dart';
 import '../shared/vela_logo_mark.dart';
 import '../updates/update_checker.dart';
-import 'tv_focus.dart';
+import 'tv_catalog_screen.dart';
 import 'tv_provider_setup_screen.dart';
 
 class VelaTvShell extends ConsumerStatefulWidget {
@@ -87,11 +88,9 @@ class _VelaTvShellState extends ConsumerState<VelaTvShell> {
                     const Expanded(child: TvProviderSetupScreen())
                   else
                     Expanded(
-                      child: _TvSectionGrid(
-                        selected: navigation.selectedSection,
-                        onSelect: ref
-                            .read(navigationControllerProvider)
-                            .selectSection,
+                      child: TvCatalogScreen(
+                        section: navigation.selectedSection,
+                        onOpenPlayer: (item) => _openPlayer(context, item),
                       ),
                     ),
                 ],
@@ -102,47 +101,17 @@ class _VelaTvShellState extends ConsumerState<VelaTvShell> {
       },
     );
   }
-}
 
-class _TvSectionGrid extends StatelessWidget {
-  const _TvSectionGrid({required this.selected, required this.onSelect});
-
-  final VelaSection selected;
-  final ValueChanged<VelaSection> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    final sections = VelaSection.values;
-    final theme = Theme.of(context);
-    return GridView.builder(
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        crossAxisSpacing: 18,
-        mainAxisSpacing: 18,
-        childAspectRatio: 2.2,
+  void _openPlayer(BuildContext context, PlayableItem item) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (routeContext) {
+          return VelaPlayerRoute(
+            item: item,
+            onClose: () => Navigator.of(routeContext).maybePop(),
+          );
+        },
       ),
-      itemCount: sections.length,
-      itemBuilder: (context, index) {
-        final section = sections[index];
-        final isSelected = section == selected;
-        return TvFocusCard(
-          autofocus: index == 0,
-          onPressed: () => onSelect(section),
-          child: Row(
-            children: [
-              Icon(
-                section.icon,
-                size: 34,
-                color: isSelected
-                    ? theme.colorScheme.primary
-                    : const Color(0xFFE7B85B),
-              ),
-              const SizedBox(width: 16),
-              Expanded(child: TvSectionTitle(section.label)),
-            ],
-          ),
-        );
-      },
     );
   }
 }

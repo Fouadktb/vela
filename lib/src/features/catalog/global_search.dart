@@ -6,8 +6,8 @@ import '../../app/navigation_controller.dart';
 import '../../catalog/catalog_models.dart';
 import '../../catalog/catalog_repository.dart';
 import '../../catalog/watch_history_repository.dart';
+import 'catalog_card_mapper.dart';
 import 'item_grid.dart';
-import 'series_playback_progress.dart';
 
 const globalSearchPrefix = '/';
 
@@ -497,7 +497,7 @@ Future<GlobalSearchGroup> _searchCatalogGroup({
     includeSubtitle: true,
     limit: limit,
   );
-  final cards = await _catalogItemsToCards(
+  final cards = await catalogItemsToCards(
     catalogRepository,
     historyRepository,
     items,
@@ -540,10 +540,10 @@ Future<GlobalSearchGroup> _searchFavoritesGroup({
       limit: limit,
     ),
   ]);
-  final cards = await _catalogItemsToCards(
+  final cards = await catalogItemsToCards(
     catalogRepository,
     historyRepository,
-    itemGroups.expand((items) => items.take(limit)).take(limit),
+    itemGroups.expand((items) => items.take(limit)).take(limit).toList(),
   );
   return GlobalSearchGroup(
     type: GlobalSearchGroupType.favorites,
@@ -577,14 +577,11 @@ Future<GlobalSearchGroup> _searchRecentGroup({
         continue;
       }
     }
-    final card = await _recentEntryToCard(
+    final card = await recentToResolvedCard(
       catalogRepository,
       historyRepository,
       entry,
     );
-    if (card == null) {
-      continue;
-    }
     results.add(
       GlobalSearchResult(groupType: GlobalSearchGroupType.recent, item: card),
     );
@@ -595,193 +592,6 @@ Future<GlobalSearchGroup> _searchRecentGroup({
   return GlobalSearchGroup(
     type: GlobalSearchGroupType.recent,
     results: results,
-  );
-}
-
-Future<List<CatalogCardItem>> _catalogItemsToCards(
-  CatalogRepository catalogRepository,
-  WatchHistoryRepository historyRepository,
-  Iterable<CatalogItem> items,
-) async {
-  final materialized = items.toList();
-  final providerIds = materialized.map((item) => item.providerId).toSet();
-  final hasMovies = materialized.any(
-    (item) => item.contentType == CatalogContentType.movie,
-  );
-  final movieResumes = hasMovies
-      ? await historyRepository.listActiveResumePositions(
-          itemType: PlayableContentType.movie,
-          providerIds: providerIds,
-        )
-      : <({String providerId, String itemId}), PlaybackPosition>{};
-  final seriesPositionGroups = await historyRepository
-      .listEpisodePositionsBySeries(
-        seriesKeys: materialized
-            .where((item) => item.contentType == CatalogContentType.series)
-            .map((item) => (providerId: item.providerId, seriesId: item.id)),
-      );
-  final cards = <CatalogCardItem>[];
-  for (final item in materialized) {
-    cards.add(
-      await _catalogItemToCard(
-        catalogRepository,
-        item,
-        resume: item.contentType == CatalogContentType.movie
-            ? movieResumes[(providerId: item.providerId, itemId: item.id)]
-            : null,
-        seriesPositions:
-            seriesPositionGroups[(
-              providerId: item.providerId,
-              seriesId: item.id,
-            )] ??
-            const <PlaybackPosition>[],
-      ),
-    );
-  }
-  return cards;
-}
-
-Future<CatalogCardItem> _catalogItemToCard(
-  CatalogRepository catalogRepository,
-  CatalogItem item, {
-  PlaybackPosition? resume,
-  List<PlaybackPosition> seriesPositions = const <PlaybackPosition>[],
-}) async {
-  if (item.contentType == CatalogContentType.series) {
-    final seriesAction = seriesPositions.isEmpty
-        ? null
-        : resolveSeriesPlaybackAction(
-            episodes: await catalogRepository.listEpisodesForSeries(
-              providerId: item.providerId,
-              seriesId: item.id,
-            ),
-            positions: seriesPositions,
-          );
-    return _cardFromItem(
-      item,
-      resume: seriesAction?.resume,
-      seriesPlaybackAction: seriesAction,
-      canPlayOverride: true,
-    );
-  }
-  return _cardFromItem(item, resume: resume);
-}
-
-Future<CatalogCardItem?> _recentEntryToCard(
-  CatalogRepository catalogRepository,
-  WatchHistoryRepository historyRepository,
-  WatchHistoryEntry entry,
-) async {
-  if (entry.itemType == PlayableContentType.episode &&
-      entry.seriesId?.trim().isNotEmpty == true) {
-    final series = await catalogRepository.getItem(
-      providerId: entry.providerId,
-      contentType: CatalogContentType.series,
-      id: entry.seriesId!,
-    );
-    if (series != null) {
-      final positions = await historyRepository.listEpisodePositionsForSeries(
-        providerId: entry.providerId,
-        seriesId: entry.seriesId!,
-      );
-      final card = await _catalogItemToCard(
-        catalogRepository,
-        series,
-        seriesPositions: positions,
-      );
-      return card.copyWith(isRecent: true);
-    }
-    return null;
-  }
-
-  final contentType = switch (entry.itemType) {
-    PlayableContentType.live => CatalogContentType.live,
-    PlayableContentType.movie => CatalogContentType.movie,
-    PlayableContentType.episode => CatalogContentType.series,
-  };
-  final item = await catalogRepository.getItem(
-    providerId: entry.providerId,
-    contentType: contentType,
-    id: entry.itemType == PlayableContentType.episode
-        ? entry.seriesId ?? entry.itemId
-        : entry.itemId,
-  );
-  if (item == null) {
-    return null;
-  }
-  final positions = item.contentType == CatalogContentType.series
-      ? await historyRepository.listEpisodePositionsForSeries(
-          providerId: item.providerId,
-          seriesId: item.id,
-        )
-      : const <PlaybackPosition>[];
-  final resume = item.contentType == CatalogContentType.movie
-      ? await historyRepository.lookupResumePosition(
-          providerId: item.providerId,
-          itemId: item.id,
-          itemType: PlayableContentType.movie,
-        )
-      : null;
-  final card = await _catalogItemToCard(
-    catalogRepository,
-    item,
-    resume: resume,
-    seriesPositions: positions,
-  );
-  return card.copyWith(
-    subtitle: entry.subtitle ?? card.subtitle,
-    durationSeconds: entry.durationSeconds ?? card.durationSeconds,
-    resumePositionSeconds: entry.completed ? 0 : entry.positionSeconds,
-    resumeDurationSeconds: entry.durationSeconds ?? card.resumeDurationSeconds,
-    recentItemType: entry.itemType == PlayableContentType.episode
-        ? null
-        : entry.itemType,
-    seriesId: entry.seriesId ?? card.seriesId,
-    seasonId: entry.seasonId ?? card.seasonId,
-    isRecent: true,
-  );
-}
-
-CatalogCardItem _cardFromItem(
-  CatalogItem item, {
-  PlaybackPosition? resume,
-  SeriesPlaybackAction? seriesPlaybackAction,
-  bool? canPlayOverride,
-}) {
-  return CatalogCardItem(
-    id: item.id,
-    providerId: item.providerId,
-    contentType: item.contentType,
-    title: item.title,
-    externalId: item.externalId,
-    subtitle: seriesPlaybackAction?.subtitle ?? _subtitleFor(item),
-    description: item.description,
-    artworkUrl: item.artworkUrl,
-    streamUrl: item.streamUrl,
-    streamJson: item.streamJson,
-    year: item.year,
-    rating: item.rating,
-    durationSeconds: item.durationSeconds,
-    epgChannelId: item.epgChannelId,
-    epgSummary: item.contentType == CatalogContentType.live
-        ? item.subtitle ?? item.description ?? item.epgChannelId
-        : null,
-    resumePositionSeconds:
-        seriesPlaybackAction?.resume?.positionSeconds ??
-        resume?.positionSeconds ??
-        0,
-    resumeDurationSeconds:
-        seriesPlaybackAction?.resume?.durationSeconds ??
-        resume?.durationSeconds,
-    seriesPlaybackLabel: seriesPlaybackAction?.primaryLabel,
-    seriesPlaybackSummary: seriesPlaybackAction?.summaryLabel,
-    isFavorite: item.isFavorite,
-    canPlay:
-        canPlayOverride ??
-        _hasPlayableStream(
-          streamUrl: item.streamUrl,
-          streamJson: item.streamJson,
-        ),
   );
 }
 
@@ -802,20 +612,6 @@ bool _entryMatches(WatchHistoryEntry entry, String query) {
   }
   return entry.title.toLowerCase().contains(normalized) ||
       (entry.subtitle?.toLowerCase().contains(normalized) ?? false);
-}
-
-bool _hasPlayableStream({String? streamUrl, String? streamJson}) {
-  return streamUrl?.trim().isNotEmpty == true ||
-      streamJson?.trim().isNotEmpty == true;
-}
-
-String? _subtitleFor(CatalogItem item) {
-  final parts = <String>[
-    if (item.subtitle?.trim().isNotEmpty == true) item.subtitle!.trim(),
-    if (item.year != null) item.year.toString(),
-    if (item.rating?.trim().isNotEmpty == true) 'Rating ${item.rating}',
-  ];
-  return parts.isEmpty ? null : parts.join(' / ');
 }
 
 String _resultSubtitle(CatalogCardItem item) {
