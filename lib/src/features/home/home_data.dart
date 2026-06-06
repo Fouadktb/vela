@@ -218,7 +218,6 @@ final homeHeroProvider = Provider.autoDispose<AsyncValue<CatalogCardItem?>>((
     ref.watch(homeContinueWatchingProvider),
     ref.watch(homeLatestMoviesProvider),
     ref.watch(homeLatestSeriesProvider),
-    ref.watch(homeRecentLiveProvider),
     ref.watch(homeFavoritesProvider),
   ];
 

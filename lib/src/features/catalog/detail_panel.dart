@@ -46,7 +46,7 @@ class DetailPanel extends StatelessWidget {
       child: SafeArea(
         left: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 22, 22, 22),
+          padding: const EdgeInsets.fromLTRB(16, 18, 18, 18),
           child: selected == null
               ? const _NoSelection()
               : _SelectedDetails(
@@ -130,8 +130,8 @@ class _SelectedDetails extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final posterHeight = item.contentType == CatalogContentType.live
-        ? 112.0
-        : 230.0;
+        ? 96.0
+        : 190.0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -164,7 +164,7 @@ class _SelectedDetails extends StatelessWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 14),
                   Text(
                     _typeLabel(item),
                     style: theme.textTheme.labelSmall?.copyWith(
@@ -173,7 +173,7 @@ class _SelectedDetails extends StatelessWidget {
                       letterSpacing: 0,
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   Text(
                     item.title,
                     maxLines: 3,

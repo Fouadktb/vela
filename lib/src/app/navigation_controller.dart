@@ -16,9 +16,9 @@ import '../providers/provider_repository.dart';
 import 'section_state.dart';
 
 const _providerCacheDuration = Duration(minutes: 10);
-const defaultCategorySidebarWidth = 320.0;
-const minCategorySidebarWidth = 240.0;
-const maxCategorySidebarWidth = 520.0;
+const defaultCategorySidebarWidth = 280.0;
+const minCategorySidebarWidth = 220.0;
+const maxCategorySidebarWidth = 420.0;
 
 final navigationControllerProvider =
     ChangeNotifierProvider<NavigationController>((ref) {

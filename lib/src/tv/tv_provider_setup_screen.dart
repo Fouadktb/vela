@@ -25,6 +25,8 @@ class TvProviderSetupScreen extends ConsumerStatefulWidget {
 
 class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
   final PairingSessionService _pairingService = PairingSessionService();
+  final _scrollController = ScrollController();
+  final _statusKey = GlobalKey();
   StreamSubscription<PairingSessionSnapshot>? _pairingSubscription;
   var _type = ProviderType.xtream;
   var _name = 'Primary IPTV';
@@ -32,7 +34,6 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
   var _username = '';
   var _password = '';
   var _m3uUrl = '';
-  var _refreshIntervalMinutes = defaultRefreshIntervalMinutes;
   String? _validationMessage;
   PairingSessionSnapshot _pairingSnapshot = const PairingSessionSnapshot(
     status: PairingSessionStatus.idle,
@@ -51,6 +52,7 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
 
   @override
   void dispose() {
+    _scrollController.dispose();
     _pairingSubscription?.cancel();
     unawaited(_pairingService.dispose());
     super.dispose();
@@ -90,6 +92,24 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(
+      providerSetupImportControllerProvider.select(
+        (state) => (
+          state.isImporting,
+          state.statusMessage,
+          state.errorMessage,
+          state.stage,
+          state.current,
+          state.total,
+        ),
+      ),
+      (_, next) {
+        if (next.$1 || next.$2 != null || next.$3 != null) {
+          _scrollStatusIntoView();
+        }
+      },
+    );
+
     final importState = ref.watch(providerSetupImportControllerProvider);
     final isImporting = importState.isImporting;
 
@@ -111,15 +131,16 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
 
         return Center(
           child: SingleChildScrollView(
+            controller: _scrollController,
             padding: EdgeInsets.only(bottom: compact ? 12 : 24),
             child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: horizontal ? 1180 : 720),
+              constraints: BoxConstraints(maxWidth: horizontal ? 1080 : 680),
               child: horizontal
                   ? Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(flex: 7, child: formPanel),
-                        const SizedBox(width: 18),
+                        SizedBox(width: compact ? 12 : 16),
                         Expanded(flex: 4, child: qrPanel),
                       ],
                     )
@@ -156,7 +177,7 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
     bool compact,
   ) {
     final theme = Theme.of(context);
-    final padding = compact ? 18.0 : 22.0;
+    final padding = compact ? 14.0 : 18.0;
 
     return Padding(
       padding: EdgeInsets.all(padding),
@@ -169,7 +190,7 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
                 Icon(
                   LucideIcons.radioTower,
                   color: theme.colorScheme.primary,
-                  size: compact ? 27 : 31,
+                  size: compact ? 23 : 27,
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -177,8 +198,8 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
                     'Add Provider',
                     style:
                         (compact
-                                ? theme.textTheme.headlineSmall
-                                : theme.textTheme.headlineMedium)
+                                ? theme.textTheme.titleLarge
+                                : theme.textTheme.headlineSmall)
                             ?.copyWith(
                               fontWeight: FontWeight.w900,
                               letterSpacing: 0,
@@ -187,7 +208,7 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: compact ? 12 : 14),
             _ProviderTypePicker(
               selectedType: _type,
               isImporting: isImporting,
@@ -199,7 +220,7 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
                 });
               },
             ),
-            const SizedBox(height: 14),
+            SizedBox(height: compact ? 10 : 12),
             _TvValueField(
               label: 'Provider name',
               value: _name,
@@ -283,49 +304,47 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
                   onChanged: (value) => setState(() => _m3uUrl = value),
                 ),
               ),
-            const SizedBox(height: 10),
-            _TvValueField(
-              label: 'Auto-refresh interval',
-              value: refreshIntervalLabel(_refreshIntervalMinutes),
-              icon: LucideIcons.clock,
-              compact: compact,
-              enabled: !isImporting,
-              trailingIcon: LucideIcons.chevronDown,
-              onPressed: _pickRefreshInterval,
+            SizedBox(height: compact ? 12 : 14),
+            KeyedSubtree(
+              key: _statusKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_validationMessage != null)
+                    _TvStatusBanner(
+                      icon: LucideIcons.circleAlert,
+                      message: _validationMessage!,
+                      color: const Color(0xFFE26D5A),
+                    ),
+                  if (importState.errorMessage != null)
+                    _TvStatusBanner(
+                      icon: LucideIcons.circleAlert,
+                      message: importState.errorMessage!,
+                      color: const Color(0xFFE26D5A),
+                    ),
+                  if (importState.statusMessage != null)
+                    _TvStatusBanner(
+                      icon: importState.isImporting
+                          ? LucideIcons.loaderCircle
+                          : LucideIcons.circleCheck,
+                      message: _progressMessage(importState),
+                      color: theme.colorScheme.primary,
+                      loading: importState.isImporting,
+                    ),
+                  if (importState.isImporting ||
+                      importState.stage == ProviderImportStage.done ||
+                      importState.stage == ProviderImportStage.failed) ...[
+                    const SizedBox(height: 10),
+                    _TvImportStepper(
+                      currentStage: importState.stage,
+                      failedStage: importState.failedStage,
+                      isImporting: importState.isImporting,
+                    ),
+                  ],
+                ],
+              ),
             ),
-            const SizedBox(height: 14),
-            if (_validationMessage != null)
-              _TvStatusBanner(
-                icon: LucideIcons.circleAlert,
-                message: _validationMessage!,
-                color: const Color(0xFFE26D5A),
-              ),
-            if (importState.errorMessage != null)
-              _TvStatusBanner(
-                icon: LucideIcons.circleAlert,
-                message: importState.errorMessage!,
-                color: const Color(0xFFE26D5A),
-              ),
-            if (importState.statusMessage != null)
-              _TvStatusBanner(
-                icon: importState.isImporting
-                    ? LucideIcons.loaderCircle
-                    : LucideIcons.circleCheck,
-                message: _progressMessage(importState),
-                color: theme.colorScheme.primary,
-                loading: importState.isImporting,
-              ),
-            if (importState.isImporting ||
-                importState.stage == ProviderImportStage.done ||
-                importState.stage == ProviderImportStage.failed) ...[
-              const SizedBox(height: 10),
-              _TvImportStepper(
-                currentStage: importState.stage,
-                failedStage: importState.failedStage,
-                isImporting: importState.isImporting,
-              ),
-            ],
-            const SizedBox(height: 16),
+            SizedBox(height: compact ? 12 : 14),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(
@@ -339,13 +358,13 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
                           color: Color(0xFF0C0D0E),
                         ),
                       )
-                    : const Icon(LucideIcons.download, size: 20),
+                    : const Icon(LucideIcons.download, size: 18),
                 label: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  padding: EdgeInsets.symmetric(vertical: compact ? 0 : 2),
                   child: Text(
                     isImporting ? 'Importing' : 'Save and Import',
-                    style: const TextStyle(
-                      fontSize: 18,
+                    style: TextStyle(
+                      fontSize: compact ? 15 : 17,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
@@ -386,7 +405,6 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
       _username = input.username ?? '';
       _password = input.password ?? '';
       _m3uUrl = input.m3uUrl ?? '';
-      _refreshIntervalMinutes = input.refreshIntervalMinutes;
       _validationMessage = null;
     });
   }
@@ -416,19 +434,6 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
     setState(() => _validationMessage = null);
   }
 
-  Future<void> _pickRefreshInterval() async {
-    final selected = await showDialog<int>(
-      context: context,
-      builder: (context) {
-        return _TvRefreshIntervalDialog(selected: _refreshIntervalMinutes);
-      },
-    );
-    if (selected == null) {
-      return;
-    }
-    setState(() => _refreshIntervalMinutes = selected);
-  }
-
   Future<void> _saveAndImport() async {
     final validation = validateProviderInput(_providerInput());
     if (!validation.isValid) {
@@ -448,6 +453,7 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
     final providerRepository = ref.read(providerRepositoryProvider);
     final refreshService = ref.read(providerRefreshServiceProvider);
     importController.start();
+    _scrollStatusIntoView();
     setState(() => _validationMessage = null);
     if (fromPairing) {
       _pairingService.markImporting('Importing provider on Vela');
@@ -514,8 +520,22 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
       username: _type == ProviderType.xtream ? _username : null,
       password: _type == ProviderType.xtream ? _password : null,
       m3uUrl: _type == ProviderType.m3uUrl ? _m3uUrl : null,
-      refreshIntervalMinutes: _refreshIntervalMinutes,
+      refreshIntervalMinutes: defaultRefreshIntervalMinutes,
     );
+  }
+
+  void _scrollStatusIntoView() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final context = _statusKey.currentContext;
+      if (context == null) return;
+      Scrollable.ensureVisible(
+        context,
+        alignment: 0.78,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 }
 
@@ -810,7 +830,6 @@ class _TvValueField extends StatelessWidget {
     this.autofocus = false,
     this.enabled = true,
     this.error,
-    this.trailingIcon = LucideIcons.pencil,
     this.keyboardType,
     this.compact = false,
   });
@@ -824,7 +843,6 @@ class _TvValueField extends StatelessWidget {
   final bool autofocus;
   final bool enabled;
   final String? error;
-  final IconData trailingIcon;
   final TextInputType? keyboardType;
   final bool compact;
 
@@ -899,7 +917,7 @@ class _TvValueField extends StatelessWidget {
           ),
           SizedBox(width: compact ? 10 : 12),
           Icon(
-            trailingIcon,
+            LucideIcons.pencil,
             size: compact ? 20 : 23,
             color: theme.colorScheme.primary,
           ),
@@ -1005,63 +1023,6 @@ class _TvTextEntryDialogState extends State<_TvTextEntryDialog> {
 
   void _save(BuildContext context) {
     Navigator.of(context).pop(_controller.text);
-  }
-}
-
-class _TvRefreshIntervalDialog extends StatelessWidget {
-  const _TvRefreshIntervalDialog({required this.selected});
-
-  final int selected;
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: const Color(0xFF151719),
-      title: const Text('Auto-refresh interval'),
-      content: SizedBox(
-        width: 560,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final option in refreshIntervalOptions) ...[
-              TvFocusCard(
-                autofocus: option.minutes == selected,
-                onPressed: () => Navigator.of(context).pop(option.minutes),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 14,
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      option.minutes == selected
-                          ? LucideIcons.check
-                          : LucideIcons.clock,
-                      color: option.minutes == selected
-                          ? Theme.of(context).colorScheme.primary
-                          : const Color(0xFFF4F0E8),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Text(
-                        option.label,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0,
-                            ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (option != refreshIntervalOptions.last)
-                const SizedBox(height: 10),
-            ],
-          ],
-        ),
-      ),
-    );
   }
 }
 

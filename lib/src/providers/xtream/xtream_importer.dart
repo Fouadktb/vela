@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import '../../catalog/catalog_models.dart';
@@ -5,9 +6,13 @@ import '../provider_models.dart';
 import 'xtream_client.dart';
 
 class XtreamImporter {
-  const XtreamImporter(this.client);
+  const XtreamImporter(
+    this.client, {
+    this.stageTimeout = const Duration(seconds: 45),
+  });
 
   final XtreamClient client;
+  final Duration stageTimeout;
 
   Future<XtreamImportResult> importProvider({
     required String providerId,
@@ -18,22 +23,22 @@ class XtreamImporter {
       ProviderImportStage.validating,
       'Validating Xtream account',
     );
-    await client.getPlayerApiInfo();
-
-    final liveCategoriesFuture = client.getLiveCategories();
-    final liveStreamsFuture = client.getLiveStreams();
-    final vodCategoriesFuture = client.getVodCategories();
-    final vodStreamsFuture = client.getVodStreams();
-    final seriesCategoriesFuture = client.getSeriesCategories();
-    final seriesItemsFuture = client.getSeries();
+    await _withStageTimeout(
+      'validating Xtream account',
+      client.getPlayerApiInfo(),
+    );
 
     _emitProgress(
       onProgress,
       ProviderImportStage.live,
       'Loading live TV catalog',
     );
-    final liveCategories = await liveCategoriesFuture;
-    final liveStreams = await liveStreamsFuture;
+    final liveResults = await _loadStage<Object>('live TV catalog', [
+      client.getLiveCategories(),
+      client.getLiveStreams(),
+    ]);
+    final liveCategories = liveResults[0] as List<XtreamCategory>;
+    final liveStreams = liveResults[1] as List<XtreamLiveStream>;
     _emitProgress(
       onProgress,
       ProviderImportStage.live,
@@ -47,8 +52,12 @@ class XtreamImporter {
       ProviderImportStage.movies,
       'Loading movie catalog',
     );
-    final vodCategories = await vodCategoriesFuture;
-    final vodStreams = await vodStreamsFuture;
+    final vodResults = await _loadStage<Object>('movie catalog', [
+      client.getVodCategories(),
+      client.getVodStreams(),
+    ]);
+    final vodCategories = vodResults[0] as List<XtreamCategory>;
+    final vodStreams = vodResults[1] as List<XtreamVodStream>;
     _emitProgress(
       onProgress,
       ProviderImportStage.movies,
@@ -62,8 +71,12 @@ class XtreamImporter {
       ProviderImportStage.series,
       'Loading series catalog',
     );
-    final seriesCategories = await seriesCategoriesFuture;
-    final seriesItems = await seriesItemsFuture;
+    final seriesResults = await _loadStage<Object>('series catalog', [
+      client.getSeriesCategories(),
+      client.getSeries(),
+    ]);
+    final seriesCategories = seriesResults[0] as List<XtreamCategory>;
+    final seriesItems = seriesResults[1] as List<XtreamSeriesItem>;
     _emitProgress(
       onProgress,
       ProviderImportStage.series,
@@ -124,6 +137,19 @@ class XtreamImporter {
         refreshedEpisodeSeriesIds: const {},
       ),
     );
+  }
+
+  Future<T> _withStageTimeout<T>(String label, Future<T> future) {
+    return future.timeout(
+      stageTimeout,
+      onTimeout: () {
+        throw XtreamClientException('Xtream timed out while $label');
+      },
+    );
+  }
+
+  Future<List<T>> _loadStage<T>(String label, List<Future<T>> futures) {
+    return _withStageTimeout('loading $label', Future.wait<T>(futures));
   }
 }
 

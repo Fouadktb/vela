@@ -11,7 +11,6 @@ import '../catalog/catalog_models.dart';
 import '../features/catalog/catalog_playback_target.dart';
 import '../features/catalog/item_grid.dart';
 import '../features/home/home_data.dart';
-import '../features/home/home_models.dart';
 import '../playback/playable_item.dart';
 import 'tv_focus.dart';
 
@@ -24,15 +23,15 @@ class TvHomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final strings = VelaStrings.of(context);
     final heroValue = ref.watch(homeHeroProvider);
+    final backgroundItem = heroValue.when<CatalogCardItem?>(
+      data: _backgroundItemFor,
+      loading: () => null,
+      error: (_, _) => null,
+    );
     final rows = [
       _TvHomeCardRowSpec(
         title: strings.homeContinueWatching,
         value: ref.watch(homeContinueWatchingProvider),
-      ),
-      _TvHomeCardRowSpec(
-        title: strings.homeRecentLive,
-        value: ref.watch(homeRecentLiveProvider),
-        compactArtwork: true,
       ),
       _TvHomeCardRowSpec(
         title: strings.homeLatestMovies,
@@ -47,35 +46,33 @@ class TvHomeScreen extends ConsumerWidget {
         value: ref.watch(homeFavoritesProvider),
       ),
     ];
-    final categoriesValue = ref.watch(homePinnedCategoriesProvider);
 
     return Directionality(
       textDirection: strings.textDirection,
-      child: CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(
-            child: _TvHomeHero(
-              value: heroValue,
-              onPlay: (item) => _openItem(ref, item),
-              onBrowse: (item) => _browseItem(ref, item),
-            ),
-          ),
-          for (final row in rows)
-            SliverToBoxAdapter(
-              child: _TvHomeCardRail(
-                spec: row,
-                onFocusItem: (item) => _browsePreview(ref, item),
-                onOpen: (item) => _openItem(ref, item),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          _TvHomeBackground(item: backgroundItem),
+          CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(
+                child: _TvHomeHero(
+                  value: heroValue,
+                  onPlay: (item) => _openItem(ref, item),
+                  onBrowse: (item) => _browseItem(ref, item),
+                ),
               ),
-            ),
-          SliverToBoxAdapter(
-            child: _TvPinnedCategoryRail(
-              title: strings.homePinnedCategories,
-              value: categoriesValue,
-              onOpen: (category) => _openCategory(ref, category),
-            ),
+              for (final row in rows)
+                SliverToBoxAdapter(
+                  child: _TvHomeCardRail(
+                    spec: row,
+                    onFocusItem: (item) => _browsePreview(ref, item),
+                    onOpen: (item) => _openItem(ref, item),
+                  ),
+                ),
+              const SliverPadding(padding: EdgeInsets.only(bottom: 24)),
+            ],
           ),
-          const SliverPadding(padding: EdgeInsets.only(bottom: 28)),
         ],
       ),
     );
@@ -116,11 +113,48 @@ class TvHomeScreen extends ConsumerWidget {
     navigation.selectCategory(null);
     navigation.selectItem(item.id);
   }
+}
 
-  void _openCategory(WidgetRef ref, HomeCategoryTile category) {
-    final navigation = ref.read(navigationControllerProvider);
-    navigation.selectSection(category.section);
-    navigation.selectCategory(category.id);
+class _TvHomeBackground extends StatelessWidget {
+  const _TvHomeBackground({required this.item});
+
+  final CatalogCardItem? item;
+
+  @override
+  Widget build(BuildContext context) {
+    final backgroundUrl = item?.artworkUrl?.trim();
+    final hasBackground = backgroundUrl != null && backgroundUrl.isNotEmpty;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const DecoratedBox(decoration: BoxDecoration(color: Color(0xFF0C0D0E))),
+        if (hasBackground)
+          Image.network(
+            backgroundUrl,
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => const SizedBox.shrink(),
+          ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xDD0C0D0E), Color(0xCC0C0D0E), Color(0xF20C0D0E)],
+            ),
+          ),
+        ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [Color(0xEE0C0D0E), Color(0xAA0C0D0E)],
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -159,13 +193,12 @@ class _TvHomeHero extends StatelessWidget {
           );
         }
         return _TvHeroShell(
-          backgroundUrl: item.artworkUrl,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(26, 26, 26, 28),
+            padding: const EdgeInsets.fromLTRB(22, 20, 22, 22),
             child: Align(
               alignment: Alignment.bottomLeft,
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 820),
+                constraints: const BoxConstraints(maxWidth: 760),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -206,18 +239,18 @@ class _TvHomeHero extends StatelessWidget {
                     Row(
                       children: [
                         SizedBox(
-                          width: 238,
+                          width: 212,
                           child: TvFocusCard(
                             autofocus: true,
                             onPressed: item.canPlay ? () => onPlay(item) : null,
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 20,
-                              vertical: 16,
+                              horizontal: 16,
+                              vertical: 13,
                             ),
                             child: Row(
                               children: [
-                                const Icon(LucideIcons.play, size: 24),
-                                const SizedBox(width: 12),
+                                const Icon(LucideIcons.play, size: 22),
+                                const SizedBox(width: 10),
                                 Expanded(
                                   child: Text(
                                     _primaryActionLabel(item),
@@ -238,17 +271,17 @@ class _TvHomeHero extends StatelessWidget {
                         ),
                         const SizedBox(width: 12),
                         SizedBox(
-                          width: 190,
+                          width: 170,
                           child: TvFocusCard(
                             onPressed: () => onBrowse(item),
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 20,
-                              vertical: 16,
+                              horizontal: 16,
+                              vertical: 13,
                             ),
                             child: Row(
                               children: [
-                                const Icon(LucideIcons.arrowRight, size: 24),
-                                const SizedBox(width: 12),
+                                const Icon(LucideIcons.arrowRight, size: 22),
+                                const SizedBox(width: 10),
                                 Expanded(
                                   child: Text(
                                     VelaStrings.english.homeBrowse,
@@ -281,14 +314,12 @@ class _TvHomeHero extends StatelessWidget {
 }
 
 class _TvHeroShell extends StatelessWidget {
-  const _TvHeroShell({required this.child, this.backgroundUrl});
+  const _TvHeroShell({required this.child});
 
   final Widget child;
-  final String? backgroundUrl;
 
   @override
   Widget build(BuildContext context) {
-    final hasBackground = backgroundUrl?.trim().isNotEmpty == true;
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact =
@@ -296,18 +327,12 @@ class _TvHeroShell extends StatelessWidget {
         return ClipRRect(
           borderRadius: BorderRadius.circular(8),
           child: SizedBox(
-            height: compact ? 320 : 430,
+            height: compact ? 280 : 360,
             child: DecoratedBox(
-              decoration: const BoxDecoration(color: Color(0xFF111315)),
+              decoration: const BoxDecoration(color: Color(0x66111315)),
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (hasBackground)
-                    Image.network(
-                      backgroundUrl!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                    ),
                   const DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -342,15 +367,10 @@ class _TvHeroShell extends StatelessWidget {
 }
 
 class _TvHomeCardRowSpec {
-  const _TvHomeCardRowSpec({
-    required this.title,
-    required this.value,
-    this.compactArtwork = false,
-  });
+  const _TvHomeCardRowSpec({required this.title, required this.value});
 
   final String title;
   final AsyncValue<List<CatalogCardItem>> value;
-  final bool compactArtwork;
 }
 
 class _TvHomeCardRail extends StatelessWidget {
@@ -368,7 +388,7 @@ class _TvHomeCardRail extends StatelessWidget {
   Widget build(BuildContext context) {
     return spec.value.when(
       loading: () => const SizedBox(
-        height: 156,
+        height: 132,
         child: Center(child: CircularProgressIndicator(strokeWidth: 3)),
       ),
       error: (error, _) => _TvHomeMessage(
@@ -380,25 +400,24 @@ class _TvHomeCardRail extends StatelessWidget {
         if (items.isEmpty) {
           return const SizedBox.shrink();
         }
-        final rowHeight = spec.compactArtwork ? 214.0 : 292.0;
+        const rowHeight = 252.0;
         return Padding(
-          padding: const EdgeInsets.only(top: 28),
+          padding: const EdgeInsets.only(top: 22),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               TvSectionTitle(spec.title),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               SizedBox(
                 height: rowHeight,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: items.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 14),
+                  separatorBuilder: (_, _) => const SizedBox(width: 12),
                   itemBuilder: (context, index) {
                     final item = items[index];
                     return _TvHomeCard(
                       item: item,
-                      compactArtwork: spec.compactArtwork,
                       onFocus: () => onFocusItem(item),
                       onOpen: item.canPlay ? () => onOpen(item) : null,
                     );
@@ -416,20 +435,18 @@ class _TvHomeCardRail extends StatelessWidget {
 class _TvHomeCard extends StatelessWidget {
   const _TvHomeCard({
     required this.item,
-    required this.compactArtwork,
     required this.onFocus,
     required this.onOpen,
   });
 
   final CatalogCardItem item;
-  final bool compactArtwork;
   final VoidCallback onFocus;
   final VoidCallback? onOpen;
 
   @override
   Widget build(BuildContext context) {
-    final width = compactArtwork ? 286.0 : 188.0;
-    final artworkHeight = compactArtwork ? 138.0 : 206.0;
+    const width = 164.0;
+    const artworkHeight = 176.0;
     return SizedBox(
       width: width,
       child: TvFocusCard(
@@ -450,7 +467,7 @@ class _TvHomeCard extends StatelessWidget {
           children: [
             SizedBox(
               height: artworkHeight,
-              child: _TvHomeArtwork(item: item, compact: compactArtwork),
+              child: _TvHomeArtwork(item: item),
             ),
             const SizedBox(height: 10),
             Text(
@@ -477,10 +494,9 @@ class _TvHomeCard extends StatelessWidget {
 }
 
 class _TvHomeArtwork extends StatelessWidget {
-  const _TvHomeArtwork({required this.item, required this.compact});
+  const _TvHomeArtwork({required this.item});
 
   final CatalogCardItem item;
-  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -499,7 +515,7 @@ class _TvHomeArtwork extends StatelessWidget {
             if (item.hasArtwork)
               Image.network(
                 item.artworkUrl!,
-                fit: compact || item.contentType == CatalogContentType.live
+                fit: item.contentType == CatalogContentType.live
                     ? BoxFit.contain
                     : BoxFit.cover,
                 errorBuilder: (_, _, _) =>
@@ -524,111 +540,6 @@ class _TvHomeArtwork extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _TvPinnedCategoryRail extends StatelessWidget {
-  const _TvPinnedCategoryRail({
-    required this.title,
-    required this.value,
-    required this.onOpen,
-  });
-
-  final String title;
-  final AsyncValue<List<HomeCategoryTile>> value;
-  final ValueChanged<HomeCategoryTile> onOpen;
-
-  @override
-  Widget build(BuildContext context) {
-    return value.when(
-      loading: () => const SizedBox.shrink(),
-      error: (_, _) => const SizedBox.shrink(),
-      data: (categories) {
-        if (categories.isEmpty) {
-          return const SizedBox.shrink();
-        }
-        return Padding(
-          padding: const EdgeInsets.only(top: 28),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TvSectionTitle(title),
-              const SizedBox(height: 14),
-              SizedBox(
-                height: 92,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: categories.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 12),
-                  itemBuilder: (context, index) {
-                    final category = categories[index];
-                    return SizedBox(
-                      width: 290,
-                      child: TvFocusCard(
-                        onPressed: () => onOpen(category),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 14,
-                        ),
-                        onFocusChange: (focused) {
-                          if (focused) {
-                            Scrollable.ensureVisible(
-                              context,
-                              duration: const Duration(milliseconds: 160),
-                              alignment: 0.5,
-                            );
-                          }
-                        },
-                        child: Row(
-                          children: [
-                            Icon(
-                              category.section.icon,
-                              color: Theme.of(context).colorScheme.primary,
-                              size: 26,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    category.name,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleSmall
-                                        ?.copyWith(
-                                          fontWeight: FontWeight.w900,
-                                          letterSpacing: 0,
-                                          height: 1.05,
-                                        ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '${category.itemCount} items',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodyMedium,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 }
@@ -680,6 +591,16 @@ VelaSection _sectionFor(CatalogContentType type) {
     CatalogContentType.live => VelaSection.live,
     CatalogContentType.movie => VelaSection.movies,
     CatalogContentType.series => VelaSection.series,
+  };
+}
+
+CatalogCardItem? _backgroundItemFor(CatalogCardItem? item) {
+  if (item == null || !item.hasArtwork) {
+    return null;
+  }
+  return switch (item.contentType) {
+    CatalogContentType.movie || CatalogContentType.series => item,
+    CatalogContentType.live => null,
   };
 }
 

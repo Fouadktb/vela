@@ -198,10 +198,10 @@ class _ItemGridState extends State<ItemGrid> {
                 : SliverGrid.builder(
                     gridDelegate:
                         const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 196,
-                          mainAxisSpacing: 12,
-                          crossAxisSpacing: 12,
-                          childAspectRatio: 0.78,
+                          maxCrossAxisExtent: 174,
+                          mainAxisSpacing: 10,
+                          crossAxisSpacing: 10,
+                          childAspectRatio: 0.8,
                         ),
                     itemBuilder: (context, index) {
                       final item = widget.items[index];
@@ -254,12 +254,12 @@ class _GridCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
           ),
           child: Padding(
-            padding: const EdgeInsets.all(10),
+            padding: const EdgeInsets.all(8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(child: _Artwork(item: item)),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 Text(
                   item.title,
                   maxLines: 2,
@@ -313,8 +313,8 @@ class _ListTileItem extends StatelessWidget {
         onDoubleTap: onOpen,
         borderRadius: BorderRadius.circular(8),
         child: Container(
-          height: 78,
-          padding: const EdgeInsets.all(8),
+          height: 68,
+          padding: const EdgeInsets.all(7),
           decoration: BoxDecoration(
             border: Border.all(
               color: selected
@@ -325,8 +325,8 @@ class _ListTileItem extends StatelessWidget {
           ),
           child: Row(
             children: [
-              SizedBox(width: 64, child: _Artwork(item: item)),
-              const SizedBox(width: 12),
+              SizedBox(width: 56, child: _Artwork(item: item)),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,

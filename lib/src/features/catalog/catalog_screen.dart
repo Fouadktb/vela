@@ -117,7 +117,7 @@ class CatalogScreen extends ConsumerWidget {
         final hasImportedCatalog = items.any(
           (provider) => provider.hasImportedCatalog,
         );
-        if (!hasImportedCatalog || setupState.shouldKeepSetupVisible) {
+        if (!hasImportedCatalog || setupState.shouldBlockImportedCatalog) {
           return const ProviderSetupScreen();
         }
         return _CatalogContent(section: section, onOpenPlayer: onOpenPlayer);
@@ -307,7 +307,7 @@ class _CatalogContent extends ConsumerWidget {
                               ),
                             ),
                             SizedBox(
-                              width: 360,
+                              width: 320,
                               child: DetailPanel(
                                 item: selected,
                                 seriesEpisodes: seriesEpisodesValue,
@@ -598,12 +598,12 @@ class _CatalogToolbarState extends ConsumerState<_CatalogToolbar> {
     );
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(30, 24, 30, 22),
+      padding: const EdgeInsets.fromLTRB(24, 18, 24, 18),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           SizedBox(
-            width: 260,
+            width: 230,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [

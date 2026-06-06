@@ -33,6 +33,7 @@ class ProviderSetupImportController extends ChangeNotifier {
   int? get current => _current;
   int? get total => _total;
   bool get shouldKeepSetupVisible => _isImporting || _errorMessage != null;
+  bool get shouldBlockImportedCatalog => _isImporting;
 
   void start() {
     _isImporting = true;
@@ -93,6 +94,17 @@ class ProviderSetupImportController extends ChangeNotifier {
     _total = null;
     notifyListeners();
   }
+
+  void reset() {
+    _isImporting = false;
+    _statusMessage = null;
+    _errorMessage = null;
+    _stage = ProviderImportStage.validating;
+    _failedStage = null;
+    _current = null;
+    _total = null;
+    notifyListeners();
+  }
 }
 
 class ProviderSetupScreen extends ConsumerStatefulWidget {
@@ -107,13 +119,14 @@ class ProviderSetupScreen extends ConsumerStatefulWidget {
 
 class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _scrollController = ScrollController();
+  final _statusKey = GlobalKey();
   final _nameController = TextEditingController(text: 'Primary IPTV');
   final _serverController = TextEditingController();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   final _m3uUrlController = TextEditingController();
   final _fileController = TextEditingController();
-  var _refreshIntervalMinutes = defaultRefreshIntervalMinutes;
   ProviderType _type = ProviderType.xtream;
 
   ProviderType get _effectiveProviderType {
@@ -147,6 +160,7 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
 
   @override
   void dispose() {
+    _scrollController.dispose();
     _nameController.dispose();
     _serverController.dispose();
     _usernameController.dispose();
@@ -158,207 +172,250 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(
+      providerSetupImportControllerProvider.select(
+        (state) => (
+          state.isImporting,
+          state.statusMessage,
+          state.errorMessage,
+          state.stage,
+          state.current,
+          state.total,
+        ),
+      ),
+      (_, next) {
+        if (next.$1 || next.$2 != null || next.$3 != null) {
+          _scrollStatusIntoView();
+        }
+      },
+    );
+
     final theme = Theme.of(context);
     final importState = ref.watch(providerSetupImportControllerProvider);
     final isImporting = importState.isImporting;
     final activeType = _effectiveProviderType;
 
-    final content = SingleChildScrollView(
-      padding: EdgeInsets.all(widget.embedded ? 0 : 36),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: widget.embedded ? 560 : 760),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: const Color(0xFF151719),
-            border: Border.all(color: const Color(0xFF292D31)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        LucideIcons.radioTower,
-                        color: theme.colorScheme.primary,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Add Provider',
-                          style: theme.textTheme.headlineSmall?.copyWith(
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 22),
-                  SegmentedButton<ProviderType>(
-                    segments: _providerTypeSegments(),
-                    selected: {activeType},
-                    onSelectionChanged: (values) {
-                      setState(() => _type = values.single);
-                    },
-                  ),
-                  const SizedBox(height: 18),
-                  TextFormField(
-                    controller: _nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Provider name',
-                      prefixIcon: Icon(LucideIcons.tag),
-                    ),
-                    validator: _required,
-                  ),
-                  const SizedBox(height: 12),
-                  if (activeType == ProviderType.xtream) ...[
-                    TextFormField(
-                      controller: _serverController,
-                      decoration: const InputDecoration(
-                        labelText: 'Server URL',
-                        hintText: 'https://example.com',
-                        prefixIcon: Icon(LucideIcons.server),
-                      ),
-                      keyboardType: TextInputType.url,
-                      validator: _required,
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
+    final content = LayoutBuilder(
+      builder: (context, constraints) {
+        final compact =
+            constraints.maxWidth < 680 || constraints.maxHeight < 760;
+        final outerPadding = widget.embedded ? 0.0 : (compact ? 16.0 : 24.0);
+        final formPadding = compact ? 18.0 : 22.0;
+        final maxWidth = widget.embedded ? 520.0 : 640.0;
+
+        return SingleChildScrollView(
+          controller: _scrollController,
+          padding: EdgeInsets.all(outerPadding),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxWidth),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF151719),
+                  border: Border.all(color: const Color(0xFF292D31)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Padding(
+                  padding: EdgeInsets.all(formPadding),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: _usernameController,
-                            decoration: const InputDecoration(
-                              labelText: 'Username',
-                              prefixIcon: Icon(LucideIcons.user),
+                        Row(
+                          children: [
+                            Icon(
+                              LucideIcons.radioTower,
+                              color: theme.colorScheme.primary,
+                              size: compact ? 22 : 24,
                             ),
-                            validator: _required,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextFormField(
-                            controller: _passwordController,
-                            decoration: const InputDecoration(
-                              labelText: 'Password',
-                              prefixIcon: Icon(LucideIcons.keyRound),
-                            ),
-                            obscureText: true,
-                            validator: _required,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                  if (activeType == ProviderType.m3uUrl)
-                    TextFormField(
-                      controller: _m3uUrlController,
-                      decoration: const InputDecoration(
-                        labelText: 'M3U URL',
-                        hintText: 'https://example.com/playlist.m3u',
-                        prefixIcon: Icon(LucideIcons.link),
-                      ),
-                      keyboardType: TextInputType.url,
-                      validator: _required,
-                    ),
-                  if (activeType == ProviderType.m3uFile)
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: _fileController,
-                            decoration: const InputDecoration(
-                              labelText: 'Local M3U file',
-                              prefixIcon: Icon(LucideIcons.fileVideo),
-                            ),
-                            readOnly: true,
-                            validator: _required,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        FilledButton.icon(
-                          onPressed: isImporting ? null : _pickFile,
-                          icon: const Icon(LucideIcons.folderOpen, size: 18),
-                          label: const Text('Choose'),
-                        ),
-                      ],
-                    ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<int>(
-                    initialValue: _refreshIntervalMinutes,
-                    decoration: const InputDecoration(
-                      labelText: 'Auto-refresh interval',
-                      prefixIcon: Icon(LucideIcons.clock),
-                    ),
-                    items: [
-                      for (final option in refreshIntervalOptions)
-                        DropdownMenuItem(
-                          value: option.minutes,
-                          child: Text(option.label),
-                        ),
-                    ],
-                    onChanged: isImporting
-                        ? null
-                        : (value) {
-                            if (value != null) {
-                              setState(() => _refreshIntervalMinutes = value);
-                            }
-                          },
-                  ),
-                  const SizedBox(height: 18),
-                  if (importState.errorMessage != null)
-                    _StatusBanner(
-                      icon: LucideIcons.circleAlert,
-                      message: importState.errorMessage!,
-                      color: const Color(0xFFE26D5A),
-                    ),
-                  if (importState.statusMessage != null)
-                    _StatusBanner(
-                      icon: LucideIcons.circleCheck,
-                      message: importState.statusMessage!,
-                      color: theme.colorScheme.primary,
-                    ),
-                  if (importState.isImporting ||
-                      importState.stage == ProviderImportStage.done ||
-                      importState.stage == ProviderImportStage.failed) ...[
-                    const SizedBox(height: 12),
-                    _ImportStepper(
-                      currentStage: importState.stage,
-                      failedStage: importState.failedStage,
-                      isImporting: importState.isImporting,
-                    ),
-                  ],
-                  const SizedBox(height: 18),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton.icon(
-                      onPressed: isImporting ? null : _saveAndImport,
-                      icon: isImporting
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Color(0xFF0C0D0E),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Add Provider',
+                                style: theme.textTheme.headlineSmall?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0,
+                                ),
                               ),
-                            )
-                          : const Icon(LucideIcons.download, size: 18),
-                      label: Text(
-                        isImporting ? 'Importing' : 'Save and Import',
-                      ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: compact ? 16 : 20),
+                        SegmentedButton<ProviderType>(
+                          segments: _providerTypeSegments(),
+                          selected: {activeType},
+                          onSelectionChanged: (values) {
+                            setState(() => _type = values.single);
+                          },
+                        ),
+                        SizedBox(height: compact ? 14 : 16),
+                        TextFormField(
+                          controller: _nameController,
+                          decoration: const InputDecoration(
+                            labelText: 'Provider name',
+                            prefixIcon: Icon(LucideIcons.tag),
+                          ),
+                          validator: _required,
+                        ),
+                        const SizedBox(height: 12),
+                        if (activeType == ProviderType.xtream) ...[
+                          TextFormField(
+                            controller: _serverController,
+                            decoration: const InputDecoration(
+                              labelText: 'Server URL',
+                              hintText: 'https://example.com',
+                              prefixIcon: Icon(LucideIcons.server),
+                            ),
+                            keyboardType: TextInputType.url,
+                            validator: _required,
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _usernameController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Username',
+                                    prefixIcon: Icon(LucideIcons.user),
+                                  ),
+                                  validator: _required,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _passwordController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Password',
+                                    prefixIcon: Icon(LucideIcons.keyRound),
+                                  ),
+                                  obscureText: true,
+                                  validator: _required,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                        if (activeType == ProviderType.m3uUrl)
+                          TextFormField(
+                            controller: _m3uUrlController,
+                            decoration: const InputDecoration(
+                              labelText: 'M3U URL',
+                              hintText: 'https://example.com/playlist.m3u',
+                              prefixIcon: Icon(LucideIcons.link),
+                            ),
+                            keyboardType: TextInputType.url,
+                            validator: _required,
+                          ),
+                        if (activeType == ProviderType.m3uFile)
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _fileController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Local M3U file',
+                                    prefixIcon: Icon(LucideIcons.fileVideo),
+                                  ),
+                                  readOnly: true,
+                                  validator: _required,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              FilledButton.icon(
+                                onPressed: isImporting ? null : _pickFile,
+                                icon: const Icon(
+                                  LucideIcons.folderOpen,
+                                  size: 18,
+                                ),
+                                label: const Text('Choose'),
+                              ),
+                            ],
+                          ),
+                        SizedBox(height: compact ? 14 : 16),
+                        KeyedSubtree(
+                          key: _statusKey,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (importState.errorMessage != null)
+                                _StatusBanner(
+                                  icon: LucideIcons.circleAlert,
+                                  message: importState.errorMessage!,
+                                  color: const Color(0xFFE26D5A),
+                                  onDismiss: importState.isImporting
+                                      ? null
+                                      : ref
+                                            .read(
+                                              providerSetupImportControllerProvider,
+                                            )
+                                            .reset,
+                                ),
+                              if (importState.statusMessage != null)
+                                _StatusBanner(
+                                  icon: importState.isImporting
+                                      ? LucideIcons.loaderCircle
+                                      : LucideIcons.circleCheck,
+                                  message: _progressMessage(importState),
+                                  color: theme.colorScheme.primary,
+                                  loading: importState.isImporting,
+                                  onDismiss:
+                                      !importState.isImporting &&
+                                          importState.stage ==
+                                              ProviderImportStage.done
+                                      ? ref
+                                            .read(
+                                              providerSetupImportControllerProvider,
+                                            )
+                                            .reset
+                                      : null,
+                                ),
+                              if (importState.isImporting ||
+                                  importState.stage ==
+                                      ProviderImportStage.done ||
+                                  importState.stage ==
+                                      ProviderImportStage.failed) ...[
+                                const SizedBox(height: 10),
+                                _ImportStepper(
+                                  currentStage: importState.stage,
+                                  failedStage: importState.failedStage,
+                                  isImporting: importState.isImporting,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        SizedBox(height: compact ? 14 : 16),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: FilledButton.icon(
+                            onPressed: isImporting ? null : _saveAndImport,
+                            icon: isImporting
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Color(0xFF0C0D0E),
+                                    ),
+                                  )
+                                : const Icon(LucideIcons.download, size: 18),
+                            label: Text(
+                              isImporting ? 'Importing' : 'Save and Import',
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
+                ),
               ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
     if (widget.embedded) {
       return content;
@@ -388,6 +445,7 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
     final providerRepository = ref.read(providerRepositoryProvider);
     final refreshService = ref.read(providerRefreshServiceProvider);
     importController.start();
+    _scrollStatusIntoView();
     IptvProvider? provider;
 
     try {
@@ -439,8 +497,35 @@ class _ProviderSetupScreenState extends ConsumerState<ProviderSetupScreen> {
       password: type == ProviderType.xtream ? _passwordController.text : null,
       m3uUrl: type == ProviderType.m3uUrl ? _m3uUrlController.text : null,
       localFilePath: type == ProviderType.m3uFile ? _fileController.text : null,
-      refreshIntervalMinutes: _refreshIntervalMinutes,
+      refreshIntervalMinutes: defaultRefreshIntervalMinutes,
     );
+  }
+
+  void _scrollStatusIntoView() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final context = _statusKey.currentContext;
+      if (context == null) return;
+      Scrollable.ensureVisible(
+        context,
+        alignment: 0.78,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  String _progressMessage(ProviderSetupImportController importState) {
+    final message = importState.statusMessage ?? 'Importing provider';
+    final current = importState.current;
+    final total = importState.total;
+    if (current == null) {
+      return message;
+    }
+    if (total == null || total <= 0) {
+      return '$message - ${_formatCount(current)}';
+    }
+    return '$message - ${_formatCount(current)} of ${_formatCount(total)}';
   }
 
   String? _required(String? value) {
@@ -659,11 +744,15 @@ class _StatusBanner extends StatelessWidget {
     required this.icon,
     required this.message,
     required this.color,
+    this.loading = false,
+    this.onDismiss,
   });
 
   final IconData icon;
   final String message;
   final Color color;
+  final bool loading;
+  final VoidCallback? onDismiss;
 
   @override
   Widget build(BuildContext context) {
@@ -679,13 +768,42 @@ class _StatusBanner extends StatelessWidget {
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
-              Icon(icon, color: color, size: 18),
+              if (loading)
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: color,
+                  ),
+                )
+              else
+                Icon(icon, color: color, size: 18),
               const SizedBox(width: 10),
               Expanded(child: Text(message)),
+              if (onDismiss != null) ...[
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: 'Dismiss',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onDismiss,
+                  icon: const Icon(LucideIcons.x, size: 16),
+                ),
+              ],
             ],
           ),
         ),
       ),
     );
   }
+}
+
+String _formatCount(int value) {
+  if (value >= 1000000) {
+    return '${(value / 1000000).toStringAsFixed(1)}M';
+  }
+  if (value >= 1000) {
+    return '${(value / 1000).toStringAsFixed(1)}K';
+  }
+  return value.toString();
 }

@@ -19,6 +19,7 @@ class ProviderRefreshService {
     this.playlistTimeout = const Duration(seconds: 20),
     this.playlistFirstByteTimeout = const Duration(seconds: 20),
     this.playlistIdleTimeout = const Duration(seconds: 45),
+    this.xtreamStageTimeout = const Duration(seconds: 45),
     this.maxPlaylistBytes = 256 * 1024 * 1024,
   }) : _providerRepository = providerRepository,
        _httpClient = httpClient ?? http.Client(),
@@ -30,6 +31,7 @@ class ProviderRefreshService {
   final Duration playlistTimeout;
   final Duration playlistFirstByteTimeout;
   final Duration playlistIdleTimeout;
+  final Duration xtreamStageTimeout;
   final int maxPlaylistBytes;
   final Map<String, _InFlightProviderRefresh> _inFlightRefreshes = {};
   final Map<String, Future<void>> _inFlightEpgRefreshes = {};
@@ -545,12 +547,12 @@ class ProviderRefreshService {
     _emitImportProgress(
       onProgress,
       ProviderImportStage.validating,
-      'Validating M3U playlist',
+      'Checking M3U playlist URL',
     );
     _emitImportProgress(
       onProgress,
       ProviderImportStage.live,
-      'Loading M3U playlist',
+      'Connecting to M3U playlist',
     );
     return _loadAndParsePlaylistUrl(
       providerId: provider.id,
@@ -572,12 +574,12 @@ class ProviderRefreshService {
       _emitImportProgress(
         onProgress,
         ProviderImportStage.validating,
-        'Validating local playlist',
+        'Checking local playlist file',
       );
       _emitImportProgress(
         onProgress,
         ProviderImportStage.live,
-        'Reading local playlist',
+        'Reading local playlist size',
       );
       final length = await file.length();
       if (length > maxPlaylistBytes) {
@@ -625,19 +627,20 @@ class ProviderRefreshService {
       httpClient: _httpClient,
       timeout: playlistTimeout,
     );
-    final result = await XtreamImporter(client)
-        .importProvider(providerId: provider.id, onProgress: onProgress)
-        .onError<XtreamClientException>((error, stackTrace) async {
-          if (error.statusCode == null) {
-            throw error;
-          }
-          return _importXtreamGeneratedPlaylist(
-            providerId: provider.id,
-            client: client,
-            originalError: error,
-            onProgress: onProgress,
-          );
-        });
+    final result =
+        await XtreamImporter(client, stageTimeout: xtreamStageTimeout)
+            .importProvider(providerId: provider.id, onProgress: onProgress)
+            .onError<XtreamClientException>((error, stackTrace) async {
+              if (error.statusCode == null) {
+                throw error;
+              }
+              return _importXtreamGeneratedPlaylist(
+                providerId: provider.id,
+                client: client,
+                originalError: error,
+                onProgress: onProgress,
+              );
+            });
     return _ProviderImportResult(
       snapshot: result.snapshot,
       warningMessage: result.warningMessage,
@@ -688,6 +691,8 @@ class ProviderRefreshService {
         (uri.scheme != 'http' && uri.scheme != 'https')) {
       throw const ProviderRefreshFailure('Playlist source is not supported');
     }
+
+    _emitImportProgress(onProgress, ProviderImportStage.live, loadingMessage);
 
     late http.StreamedResponse response;
     try {

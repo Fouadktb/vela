@@ -14,7 +14,6 @@ import '../catalog/content_detail_screen.dart';
 import '../catalog/item_grid.dart';
 import '../providers/provider_setup_screen.dart';
 import 'home_data.dart';
-import 'home_models.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({required this.onOpenPlayer, super.key});
@@ -35,21 +34,21 @@ class HomeScreen extends ConsumerWidget {
         final hasImportedCatalog = items.any(
           (provider) => provider.hasImportedCatalog,
         );
-        if (!hasImportedCatalog || setupState.shouldKeepSetupVisible) {
+        if (!hasImportedCatalog || setupState.shouldBlockImportedCatalog) {
           return const ProviderSetupScreen();
         }
 
         final strings = VelaStrings.of(context);
         final heroValue = ref.watch(homeHeroProvider);
+        final backgroundItem = heroValue.when<CatalogCardItem?>(
+          data: _backgroundItemFor,
+          loading: () => null,
+          error: (_, _) => null,
+        );
         final rows = [
           _HomeCardRowSpec(
             title: strings.homeContinueWatching,
             value: ref.watch(homeContinueWatchingProvider),
-          ),
-          _HomeCardRowSpec(
-            title: strings.homeRecentLive,
-            value: ref.watch(homeRecentLiveProvider),
-            compactArtwork: true,
           ),
           _HomeCardRowSpec(
             title: strings.homeLatestMovies,
@@ -64,52 +63,52 @@ class HomeScreen extends ConsumerWidget {
             value: ref.watch(homeFavoritesProvider),
           ),
         ];
-        final categoriesValue = ref.watch(homePinnedCategoriesProvider);
 
         return Directionality(
           textDirection: strings.textDirection,
           child: ColoredBox(
             color: const Color(0xFF0C0D0E),
             child: SafeArea(
-              child: CustomScrollView(
-                slivers: [
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(30, 26, 30, 8),
-                      child: _HomeHero(
-                        value: heroValue,
-                        onPlay: (item) => _openItem(ref, item),
-                        onDetails: (item) => _openDetails(context, ref, item),
-                        onBrowse: (item) => _browseItem(ref, item),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _HomeBackground(item: backgroundItem),
+                  CustomScrollView(
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 20, 24, 6),
+                          child: _HomeHero(
+                            value: heroValue,
+                            onPlay: (item) => _openItem(ref, item),
+                            onDetails: (item) =>
+                                _openDetails(context, ref, item),
+                            onBrowse: (item) => _browseItem(ref, item),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(30, 8, 30, 0),
-                      child: Text(
-                        strings.homeSubtitle,
-                        style: Theme.of(context).textTheme.bodyMedium,
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 6, 24, 0),
+                          child: Text(
+                            strings.homeSubtitle,
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ),
                       ),
-                    ),
+                      for (final row in rows)
+                        SliverToBoxAdapter(
+                          child: _HomeCardRail(
+                            spec: row,
+                            onSelect: (item) => _selectHomeItem(ref, item),
+                            onOpen: (item) => _openItem(ref, item),
+                            onDetails: (item) =>
+                                _openDetails(context, ref, item),
+                          ),
+                        ),
+                      const SliverPadding(padding: EdgeInsets.only(bottom: 28)),
+                    ],
                   ),
-                  for (final row in rows)
-                    SliverToBoxAdapter(
-                      child: _HomeCardRail(
-                        spec: row,
-                        onSelect: (item) => _selectHomeItem(ref, item),
-                        onOpen: (item) => _openItem(ref, item),
-                        onDetails: (item) => _openDetails(context, ref, item),
-                      ),
-                    ),
-                  SliverToBoxAdapter(
-                    child: _PinnedCategoryRail(
-                      title: strings.homePinnedCategories,
-                      value: categoriesValue,
-                      onOpen: (category) => _openCategory(ref, category),
-                    ),
-                  ),
-                  const SliverPadding(padding: EdgeInsets.only(bottom: 34)),
                 ],
               ),
             ),
@@ -219,11 +218,48 @@ class HomeScreen extends ConsumerWidget {
   void _selectHomeItem(WidgetRef ref, CatalogCardItem item) {
     ref.read(navigationControllerProvider).selectHomeItem(item.id);
   }
+}
 
-  void _openCategory(WidgetRef ref, HomeCategoryTile category) {
-    final navigation = ref.read(navigationControllerProvider);
-    navigation.selectSection(category.section);
-    navigation.selectCategory(category.id);
+class _HomeBackground extends StatelessWidget {
+  const _HomeBackground({required this.item});
+
+  final CatalogCardItem? item;
+
+  @override
+  Widget build(BuildContext context) {
+    final backgroundUrl = item?.artworkUrl?.trim();
+    final hasBackground = backgroundUrl != null && backgroundUrl.isNotEmpty;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const DecoratedBox(decoration: BoxDecoration(color: Color(0xFF0C0D0E))),
+        if (hasBackground)
+          Image.network(
+            backgroundUrl,
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => const SizedBox.shrink(),
+          ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xDD0C0D0E), Color(0xCC0C0D0E), Color(0xF20C0D0E)],
+            ),
+          ),
+        ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [Color(0xEE0C0D0E), Color(0xAA0C0D0E)],
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -264,13 +300,12 @@ class _HomeHero extends StatelessWidget {
           );
         }
         return _HeroShell(
-          backgroundUrl: item.artworkUrl,
           child: Align(
             alignment: Alignment.bottomLeft,
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 760),
+              constraints: const BoxConstraints(maxWidth: 680),
               child: Padding(
-                padding: const EdgeInsets.all(28),
+                padding: const EdgeInsets.all(22),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -348,70 +383,62 @@ class _HomeHero extends StatelessWidget {
 }
 
 class _HeroShell extends StatelessWidget {
-  const _HeroShell({required this.child, this.backgroundUrl});
+  const _HeroShell({required this.child});
 
   final Widget child;
-  final String? backgroundUrl;
 
   @override
   Widget build(BuildContext context) {
-    final hasBackground = backgroundUrl?.trim().isNotEmpty == true;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: SizedBox(
-        height: 380,
-        child: DecoratedBox(
-          decoration: const BoxDecoration(color: Color(0xFF111315)),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              if (hasBackground)
-                Image.network(
-                  backgroundUrl!,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                ),
-              const DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.centerLeft,
-                    end: Alignment.centerRight,
-                    colors: [
-                      Color(0xEE0C0D0E),
-                      Color(0xAA0C0D0E),
-                      Color(0x330C0D0E),
-                    ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 760;
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: SizedBox(
+            height: compact ? 280 : 320,
+            child: DecoratedBox(
+              decoration: const BoxDecoration(color: Color(0x66111315)),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        colors: [
+                          Color(0xEE0C0D0E),
+                          Color(0xAA0C0D0E),
+                          Color(0x330C0D0E),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              const DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.bottomCenter,
-                    end: Alignment.topCenter,
-                    colors: [Color(0xDD0C0D0E), Color(0x000C0D0E)],
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [Color(0xDD0C0D0E), Color(0x000C0D0E)],
+                      ),
+                    ),
                   ),
-                ),
+                  child,
+                ],
               ),
-              child,
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
 
 class _HomeCardRowSpec {
-  const _HomeCardRowSpec({
-    required this.title,
-    required this.value,
-    this.compactArtwork = false,
-  });
+  const _HomeCardRowSpec({required this.title, required this.value});
 
   final String title;
   final AsyncValue<List<CatalogCardItem>> value;
-  final bool compactArtwork;
 }
 
 class _HomeCardRail extends StatelessWidget {
@@ -433,7 +460,7 @@ class _HomeCardRail extends StatelessWidget {
       loading: () => _RailShell(
         title: spec.title,
         child: const SizedBox(
-          height: 206,
+          height: 172,
           child: Center(child: CircularProgressIndicator(strokeWidth: 3)),
         ),
       ),
@@ -448,17 +475,16 @@ class _HomeCardRail extends StatelessWidget {
         return _RailShell(
           title: spec.title,
           child: SizedBox(
-            height: spec.compactArtwork ? 178 : 248,
+            height: 218,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 30),
+              padding: const EdgeInsets.symmetric(horizontal: 24),
               itemCount: items.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 14),
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
               itemBuilder: (context, index) {
                 final item = items[index];
                 return _HomeCard(
                   item: item,
-                  compactArtwork: spec.compactArtwork,
                   onSelect: () => onSelect(item),
                   onOpen: item.canPlay ? () => onOpen(item) : null,
                   onDetails: () => onDetails(item),
@@ -481,12 +507,12 @@ class _RailShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(top: 28),
+      padding: const EdgeInsets.only(top: 22),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 30),
+            padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Text(
               title,
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -506,21 +532,19 @@ class _RailShell extends StatelessWidget {
 class _HomeCard extends StatelessWidget {
   const _HomeCard({
     required this.item,
-    required this.compactArtwork,
     required this.onSelect,
     required this.onOpen,
     required this.onDetails,
   });
 
   final CatalogCardItem item;
-  final bool compactArtwork;
   final VoidCallback onSelect;
   final VoidCallback? onOpen;
   final VoidCallback onDetails;
 
   @override
   Widget build(BuildContext context) {
-    final width = compactArtwork ? 222.0 : 168.0;
+    const width = 148.0;
     return SizedBox(
       width: width,
       child: Material(
@@ -534,10 +558,7 @@ class _HomeCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(
-                height: compactArtwork ? 124 : 178,
-                child: _HomeArtwork(item: item, compact: compactArtwork),
-              ),
+              SizedBox(height: 154, child: _HomeArtwork(item: item)),
               const SizedBox(height: 10),
               Text(
                 item.title,
@@ -564,10 +585,9 @@ class _HomeCard extends StatelessWidget {
 }
 
 class _HomeArtwork extends StatelessWidget {
-  const _HomeArtwork({required this.item, required this.compact});
+  const _HomeArtwork({required this.item});
 
   final CatalogCardItem item;
-  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -589,7 +609,7 @@ class _HomeArtwork extends StatelessWidget {
             if (item.hasArtwork)
               Image.network(
                 item.artworkUrl!,
-                fit: compact || item.contentType == CatalogContentType.live
+                fit: item.contentType == CatalogContentType.live
                     ? BoxFit.contain
                     : BoxFit.cover,
                 errorBuilder: (_, _, _) =>
@@ -631,84 +651,6 @@ class _HomeArtwork extends StatelessWidget {
                 ),
               ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PinnedCategoryRail extends StatelessWidget {
-  const _PinnedCategoryRail({
-    required this.title,
-    required this.value,
-    required this.onOpen,
-  });
-
-  final String title;
-  final AsyncValue<List<HomeCategoryTile>> value;
-  final ValueChanged<HomeCategoryTile> onOpen;
-
-  @override
-  Widget build(BuildContext context) {
-    return value.when(
-      loading: () => const SizedBox.shrink(),
-      error: (_, _) => const SizedBox.shrink(),
-      data: (categories) {
-        if (categories.isEmpty) {
-          return const SizedBox.shrink();
-        }
-        return _RailShell(
-          title: title,
-          child: SizedBox(
-            height: 76,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 30),
-              itemCount: categories.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 12),
-              itemBuilder: (context, index) {
-                final category = categories[index];
-                return _CategoryShortcut(
-                  category: category,
-                  onPressed: () => onOpen(category),
-                );
-              },
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _CategoryShortcut extends StatelessWidget {
-  const _CategoryShortcut({required this.category, required this.onPressed});
-
-  final HomeCategoryTile category;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 250,
-      child: OutlinedButton.icon(
-        onPressed: onPressed,
-        icon: Icon(category.section.icon),
-        label: Align(
-          alignment: Alignment.centerLeft,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(category.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-              Text(
-                '${category.itemCount} items',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -801,6 +743,16 @@ VelaSection _sectionFor(CatalogContentType type) {
     CatalogContentType.live => VelaSection.live,
     CatalogContentType.movie => VelaSection.movies,
     CatalogContentType.series => VelaSection.series,
+  };
+}
+
+CatalogCardItem? _backgroundItemFor(CatalogCardItem? item) {
+  if (item == null || !item.hasArtwork) {
+    return null;
+  }
+  return switch (item.contentType) {
+    CatalogContentType.movie || CatalogContentType.series => item,
+    CatalogContentType.live => null,
   };
 }
 
