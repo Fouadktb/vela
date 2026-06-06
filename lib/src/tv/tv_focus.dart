@@ -7,6 +7,7 @@ class TvFocusCard extends StatelessWidget {
     required this.onPressed,
     this.autofocus = false,
     this.padding = const EdgeInsets.all(18),
+    this.onFocusChange,
     super.key,
   });
 
@@ -14,6 +15,7 @@ class TvFocusCard extends StatelessWidget {
   final VoidCallback? onPressed;
   final bool autofocus;
   final EdgeInsetsGeometry padding;
+  final ValueChanged<bool>? onFocusChange;
 
   @override
   Widget build(BuildContext context) {
@@ -29,6 +31,7 @@ class TvFocusCard extends StatelessWidget {
       },
       autofocus: autofocus,
       enabled: onPressed != null,
+      onFocusChange: onFocusChange,
       mouseCursor: SystemMouseCursors.click,
       shortcuts: const {
         SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
