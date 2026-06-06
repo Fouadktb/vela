@@ -6,12 +6,14 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app/navigation_controller.dart';
 import '../app/section_state.dart';
+import '../app/vela_strings.dart';
 import '../playback/playable_item.dart';
 import '../playback/vela_player_route.dart';
 import '../shared/vela_logo_mark.dart';
 import '../updates/update_checker.dart';
 import 'tv_catalog_screen.dart';
 import 'tv_focus.dart';
+import 'tv_home_screen.dart';
 import 'tv_provider_setup_screen.dart';
 
 class VelaTvShell extends ConsumerStatefulWidget {
@@ -80,11 +82,17 @@ class _VelaTvShellState extends ConsumerState<VelaTvShell> {
                         ),
                         const SizedBox(width: 18),
                         Expanded(
-                          child: TvCatalogScreen(
-                            section: navigation.selectedSection,
-                            persistentCategories: true,
-                            onOpenPlayer: (item) => _openPlayer(context, item),
-                          ),
+                          child: navigation.selectedSection == VelaSection.home
+                              ? TvHomeScreen(
+                                  onOpenPlayer: (item) =>
+                                      _openPlayer(context, item),
+                                )
+                              : TvCatalogScreen(
+                                  section: navigation.selectedSection,
+                                  persistentCategories: true,
+                                  onOpenPlayer: (item) =>
+                                      _openPlayer(context, item),
+                                ),
                         ),
                       ],
                     ),
@@ -125,11 +133,17 @@ class _VelaTvShellState extends ConsumerState<VelaTvShell> {
                         const Expanded(child: TvProviderSetupScreen())
                       else
                         Expanded(
-                          child: TvCatalogScreen(
-                            section: navigation.selectedSection,
-                            persistentCategories: false,
-                            onOpenPlayer: (item) => _openPlayer(context, item),
-                          ),
+                          child: navigation.selectedSection == VelaSection.home
+                              ? TvHomeScreen(
+                                  onOpenPlayer: (item) =>
+                                      _openPlayer(context, item),
+                                )
+                              : TvCatalogScreen(
+                                  section: navigation.selectedSection,
+                                  persistentCategories: false,
+                                  onOpenPlayer: (item) =>
+                                      _openPlayer(context, item),
+                                ),
                         ),
                     ],
                   ),
@@ -422,6 +436,7 @@ class _TvSidebarItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final strings = VelaStrings.of(context);
     final color = selected
         ? theme.colorScheme.primary
         : const Color(0xFFF4F0E8);
@@ -439,7 +454,7 @@ class _TvSidebarItem extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                section.label,
+                strings.sectionLabel(section),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.titleSmall?.copyWith(

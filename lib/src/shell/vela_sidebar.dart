@@ -3,6 +3,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app/app_version.dart';
 import '../app/section_state.dart';
+import '../app/vela_strings.dart';
 import '../shared/vela_logo_mark.dart';
 import '../updates/update_checker.dart';
 
@@ -78,7 +79,9 @@ class _VelaSidebarState extends State<VelaSidebar> {
                     isExpanded: _isExpanded,
                     isSelected: section == widget.selectedSection,
                     isEnabled:
-                        widget.hasProviders || section == VelaSection.live,
+                        widget.hasProviders ||
+                        section == VelaSection.home ||
+                        section == VelaSection.live,
                     onPressed: () => widget.onSectionSelected(section),
                   ),
                   if (section == VelaSection.recent)
@@ -315,8 +318,8 @@ class _SidebarItem extends StatelessWidget {
         ? const Color(0xFF25211A)
         : Colors.transparent;
     final tooltip = isEnabled || isExpanded
-        ? section.label
-        : '${section.label} requires a provider';
+        ? VelaStrings.of(context).sectionLabel(section)
+        : '${VelaStrings.of(context).sectionLabel(section)} requires a provider';
 
     return Tooltip(
       message: isExpanded && isEnabled ? '' : tooltip,
@@ -349,7 +352,7 @@ class _SidebarItem extends StatelessWidget {
                             opacity: 1,
                             duration: const Duration(milliseconds: 120),
                             child: Text(
-                              section.label,
+                              VelaStrings.of(context).sectionLabel(section),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.labelLarge?.copyWith(

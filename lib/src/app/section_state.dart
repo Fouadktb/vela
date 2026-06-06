@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../catalog/catalog_models.dart';
 
 enum VelaSection {
+  home('Home', LucideIcons.house),
   live('Live', LucideIcons.tv),
   movies('Movies', LucideIcons.film),
   series('Series', LucideIcons.library),
@@ -21,6 +22,7 @@ enum VelaSection {
       VelaSection.live => CatalogContentType.live,
       VelaSection.movies => CatalogContentType.movie,
       VelaSection.series => CatalogContentType.series,
+      VelaSection.home ||
       VelaSection.favorites ||
       VelaSection.recent ||
       VelaSection.settings => null,
@@ -29,6 +31,7 @@ enum VelaSection {
 
   String get eyebrow {
     return switch (this) {
+      VelaSection.home => 'Home',
       VelaSection.settings => 'Preferences',
       VelaSection.recent => 'History',
       _ => 'Catalog',
@@ -37,6 +40,7 @@ enum VelaSection {
 
   String get searchPlaceholder {
     return switch (this) {
+      VelaSection.home => 'Search everything',
       VelaSection.live => 'Search channels',
       VelaSection.movies => 'Search movies',
       VelaSection.series => 'Search series',
@@ -48,6 +52,7 @@ enum VelaSection {
 
   String get emptyTitle {
     return switch (this) {
+      VelaSection.home => 'No home rows yet',
       VelaSection.live => 'No live channels',
       VelaSection.movies => 'No movies',
       VelaSection.series => 'No series',

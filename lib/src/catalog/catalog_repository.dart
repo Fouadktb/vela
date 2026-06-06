@@ -470,6 +470,20 @@ class CatalogRepository {
     ).watch().map(_mapItemRows);
   }
 
+  Stream<List<CatalogItem>> watchLatestItems({
+    String? providerId,
+    required CatalogContentType section,
+    int limit = 40,
+  }) {
+    return _selectItems(
+      providerId: providerId,
+      section: section,
+      limit: limit,
+      latestFirst: true,
+      watch: true,
+    ).watch().map(_mapItemRows);
+  }
+
   Stream<CatalogItem?> watchItem({
     required String providerId,
     required CatalogContentType contentType,
@@ -831,6 +845,7 @@ class CatalogRepository {
     String? searchQuery,
     bool favoritesOnly = false,
     bool includeSubtitleInSearch = false,
+    bool latestFirst = false,
     int? limit,
   }) {
     final where = <String>['i.content_type = ?', 'i.is_stale = 0'];
@@ -878,7 +893,7 @@ class CatalogRepository {
         AND fi.item_id = i.id
         AND fi.item_type = i.content_type
       WHERE ${where.join(' AND ')}
-      ORDER BY i.normalized_title ASC
+      ORDER BY ${latestFirst ? 'i.last_seen_at DESC, i.created_at DESC, i.normalized_title ASC' : 'i.normalized_title ASC'}
       ${safeLimit == null ? '' : 'LIMIT ?'}
       ''',
       variables: variables,

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/navigation_controller.dart';
 import '../app/section_state.dart';
 import '../features/catalog/catalog_screen.dart';
+import '../features/home/home_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../playback/playable_item.dart';
 import '../playback/vela_player_route.dart';
@@ -42,8 +43,10 @@ class _VelaShellState extends ConsumerState<VelaShell> {
     );
     final selectedSection = navigation.selectedSection;
     final effectiveSection =
-        !hasProviders && selectedSection != VelaSection.live
-        ? VelaSection.live
+        !hasProviders &&
+            selectedSection != VelaSection.home &&
+            selectedSection != VelaSection.live
+        ? VelaSection.home
         : selectedSection;
     if (effectiveSection != selectedSection) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -66,7 +69,9 @@ class _VelaShellState extends ConsumerState<VelaShell> {
                 ? () => unawaited(openExternalUrl(updateStatus!.releaseUrl))
                 : null,
             onSectionSelected: (section) {
-              if (!hasProviders && section != VelaSection.live) {
+              if (!hasProviders &&
+                  section != VelaSection.home &&
+                  section != VelaSection.live) {
                 return;
               }
               ref.read(navigationControllerProvider).selectSection(section);
@@ -74,6 +79,9 @@ class _VelaShellState extends ConsumerState<VelaShell> {
           ),
           Expanded(
             child: switch (effectiveSection) {
+              VelaSection.home => HomeScreen(
+                onOpenPlayer: (item) => _openPlayer(context, item),
+              ),
               VelaSection.settings => const SettingsScreen(),
               _ => CatalogScreen(
                 section: effectiveSection,

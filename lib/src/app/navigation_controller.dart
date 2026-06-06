@@ -139,10 +139,11 @@ final appSettingsProvider = StreamProvider<Map<String, String>>((ref) {
 enum LiveCatalogViewMode { list, guide }
 
 class NavigationController extends ChangeNotifier {
-  VelaSection _selectedSection = VelaSection.live;
+  VelaSection _selectedSection = VelaSection.home;
   LiveCatalogViewMode _liveViewMode = LiveCatalogViewMode.list;
   int _liveGuideDayStartMs = _startOfTodayMs();
   double _categorySidebarWidth = defaultCategorySidebarWidth;
+  String? _selectedHomeItemId;
   final Map<VelaSection, SectionState> _states = {
     for (final section in VelaSection.values) section: const SectionState(),
   };
@@ -154,6 +155,8 @@ class NavigationController extends ChangeNotifier {
   int get liveGuideDayStartMs => _liveGuideDayStartMs;
 
   double get categorySidebarWidth => _categorySidebarWidth;
+
+  String? get selectedHomeItemId => _selectedHomeItemId;
 
   SectionState get activeState => stateFor(_selectedSection);
 
@@ -194,6 +197,14 @@ class NavigationController extends ChangeNotifier {
         clearSelectedItem: itemId == null,
       ),
     );
+  }
+
+  void selectHomeItem(String? itemId) {
+    if (_selectedHomeItemId == itemId) {
+      return;
+    }
+    _selectedHomeItemId = itemId;
+    notifyListeners();
   }
 
   void setLiveViewMode(LiveCatalogViewMode mode) {

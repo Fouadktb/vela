@@ -7,6 +7,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app/navigation_controller.dart';
 import '../app/section_state.dart';
+import '../app/vela_strings.dart';
 import '../catalog/catalog_models.dart';
 import '../features/catalog/catalog_card_mapper.dart';
 import '../features/catalog/catalog_playback_target.dart';
@@ -342,7 +343,9 @@ class _TvCatalogScreenState extends ConsumerState<TvCatalogScreen> {
   }
 
   bool _sectionCanPage(VelaSection section) {
-    return section != VelaSection.recent && section != VelaSection.settings;
+    return section != VelaSection.home &&
+        section != VelaSection.recent &&
+        section != VelaSection.settings;
   }
 
   void _loadMore() {
@@ -449,6 +452,7 @@ class _TvBrowseBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final strings = VelaStrings.of(context);
     return SizedBox(
       height: 70,
       child: Row(
@@ -482,7 +486,7 @@ class _TvBrowseBar extends StatelessWidget {
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            section.label,
+                            strings.sectionLabel(section),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: theme.textTheme.titleSmall?.copyWith(
@@ -612,6 +616,7 @@ class _TvPersistentCategoryColumn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final strings = VelaStrings.of(context);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: const Color(0xFF111315),
@@ -633,7 +638,7 @@ class _TvPersistentCategoryColumn extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '${section.label} categories',
+                    '${strings.sectionLabel(section)} categories',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.titleSmall?.copyWith(
