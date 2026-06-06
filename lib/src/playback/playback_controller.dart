@@ -9,6 +9,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'playable_item.dart';
 import 'player_state.dart';
+import 'playback_error_policy.dart';
 import 'track_models.dart';
 
 class PlaybackController extends ChangeNotifier {
@@ -47,6 +48,7 @@ class PlaybackController extends ChangeNotifier {
   Duration _stallStartPosition = Duration.zero;
   Duration _stallStartBuffer = Duration.zero;
   double _lastAudibleVolume = 100;
+  String? _dismissedPlaybackWarningMessage;
   bool _disposed = false;
   bool _restoreMaximizedAfterFullscreen = false;
 
@@ -54,6 +56,7 @@ class PlaybackController extends ChangeNotifier {
 
   Future<void> open(PlayableItem item) async {
     _cancelStalledTimer();
+    _dismissedPlaybackWarningMessage = null;
     _emit(
       _state.copyWith(
         item: item,
@@ -64,6 +67,7 @@ class PlaybackController extends ChangeNotifier {
         bufferingPercentage: 0,
         completed: false,
         errorMessage: null,
+        playbackWarningMessage: null,
         audioTracks: const [],
         subtitleTracks: const [],
         videoTracks: const [],
@@ -85,6 +89,7 @@ class PlaybackController extends ChangeNotifier {
           playing: true,
           completed: false,
           errorMessage: null,
+          playbackWarningMessage: null,
         ),
       );
     } catch (error) {
@@ -94,9 +99,16 @@ class PlaybackController extends ChangeNotifier {
           status: VelaPlaybackStatus.error,
           playing: false,
           errorMessage: error.toString(),
+          playbackWarningMessage: null,
         ),
       );
     }
+  }
+
+  void clearPlaybackWarning() {
+    if (_state.playbackWarningMessage == null) return;
+    _dismissedPlaybackWarningMessage = _state.playbackWarningMessage;
+    _emit(_state.copyWith(playbackWarningMessage: null));
   }
 
   Future<void> togglePlayPause() => _player.playOrPause();
@@ -207,6 +219,7 @@ class PlaybackController extends ChangeNotifier {
 
   Future<void> stop() async {
     _cancelStalledTimer();
+    _dismissedPlaybackWarningMessage = null;
     await _player.stop();
     _emit(
       _state.copyWith(
@@ -219,6 +232,7 @@ class PlaybackController extends ChangeNotifier {
         buffer: Duration.zero,
         bufferingPercentage: 0,
         errorMessage: null,
+        playbackWarningMessage: null,
         audioTracks: const [],
         subtitleTracks: const [],
         videoTracks: const [],
@@ -287,14 +301,7 @@ class PlaybackController extends ChangeNotifier {
       )
       ..add(
         _player.stream.error.listen((value) {
-          _cancelStalledTimer();
-          _emit(
-            _state.copyWith(
-              status: VelaPlaybackStatus.error,
-              playing: false,
-              errorMessage: value,
-            ),
-          );
+          _handlePlayerError(value);
         }),
       )
       ..add(
@@ -380,6 +387,47 @@ class PlaybackController extends ChangeNotifier {
     if (_state.buffering) {
       _startStalledTimer();
     }
+  }
+
+  void _handlePlayerError(String value) {
+    final decision = classifyPlaybackError(_state, value);
+    if (decision.isFatal) {
+      _cancelStalledTimer();
+      _dismissedPlaybackWarningMessage = null;
+      _emit(
+        _state.copyWith(
+          status: VelaPlaybackStatus.error,
+          playing: false,
+          errorMessage: decision.message,
+          playbackWarningMessage: null,
+        ),
+      );
+      return;
+    }
+
+    if (_dismissedPlaybackWarningMessage == decision.message) {
+      return;
+    }
+    if (_state.playbackWarningMessage != decision.message) {
+      _dismissedPlaybackWarningMessage = null;
+    }
+    final nextStatus =
+        _state.status == VelaPlaybackStatus.opening ||
+            _state.status == VelaPlaybackStatus.error
+        ? VelaPlaybackStatus.ready
+        : _state.status;
+    if (_state.status == nextStatus &&
+        _state.errorMessage == null &&
+        _state.playbackWarningMessage == decision.message) {
+      return;
+    }
+    _emit(
+      _state.copyWith(
+        status: nextStatus,
+        errorMessage: null,
+        playbackWarningMessage: decision.message,
+      ),
+    );
   }
 
   void _startStalledTimer() {

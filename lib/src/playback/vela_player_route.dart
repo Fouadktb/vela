@@ -64,6 +64,7 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
   bool _spaceHoldActive = false;
   double? _spaceSpeedBeforeHold;
   String? _currentLiveChannelKey;
+  String? _lastPlaybackWarningMessage;
   bool _recentLiveChannelsExpanded = true;
 
   @override
@@ -145,6 +146,8 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
                           seekFeedbackAlignment: _seekFeedbackAlignment,
                           onClose: () => unawaited(_close()),
                           onRetry: _isOpeningMedia ? null : _retryPlayback,
+                          onDismissPlaybackWarning:
+                              _controller.clearPlaybackWarning,
                           onNextEpisode: _openNextEpisode,
                           onAudioTrackSelected: _selectAudioTrack,
                           onSubtitleTrackSelected: _selectSubtitleTrack,
@@ -533,6 +536,12 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute>
 
   void _handlePlaybackUpdate() {
     final state = _controller.state;
+    final warningMessage = state.playbackWarningMessage;
+    if (warningMessage != null &&
+        warningMessage != _lastPlaybackWarningMessage) {
+      _showControls();
+    }
+    _lastPlaybackWarningMessage = warningMessage;
     final nextLiveChannelKey = liveChannelKeyForItem(state.item);
     if (nextLiveChannelKey != _currentLiveChannelKey && mounted) {
       setState(() => _currentLiveChannelKey = nextLiveChannelKey);
@@ -992,6 +1001,7 @@ class _PlayerSurface extends StatelessWidget {
     required this.seekFeedbackAlignment,
     required this.onClose,
     required this.onRetry,
+    required this.onDismissPlaybackWarning,
     required this.onNextEpisode,
     required this.onAudioTrackSelected,
     required this.onSubtitleTrackSelected,
@@ -1012,6 +1022,7 @@ class _PlayerSurface extends StatelessWidget {
   final Alignment seekFeedbackAlignment;
   final VoidCallback onClose;
   final VoidCallback? onRetry;
+  final VoidCallback onDismissPlaybackWarning;
   final ValueChanged<PlayableItem> onNextEpisode;
   final ValueChanged<String> onAudioTrackSelected;
   final ValueChanged<String> onSubtitleTrackSelected;
@@ -1061,6 +1072,8 @@ class _PlayerSurface extends StatelessWidget {
               controller: controller,
               state: state,
               onClose: onClose,
+              onRetry: onRetry,
+              onDismissPlaybackWarning: onDismissPlaybackWarning,
               onNextEpisode: onNextEpisode,
               onAudioTrackSelected: onAudioTrackSelected,
               onSubtitleTrackSelected: onSubtitleTrackSelected,

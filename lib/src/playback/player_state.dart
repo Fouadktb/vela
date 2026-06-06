@@ -15,6 +15,7 @@ class VelaPlayerState {
     this.playing = false,
     this.completed = false,
     this.errorMessage,
+    this.playbackWarningMessage,
     this.volume = 100,
     this.isMuted = false,
     this.playbackSpeed = 1,
@@ -34,6 +35,7 @@ class VelaPlayerState {
   final bool playing;
   final bool completed;
   final String? errorMessage;
+  final String? playbackWarningMessage;
   final double volume;
   final bool isMuted;
   final double playbackSpeed;
@@ -67,6 +69,7 @@ class VelaPlayerState {
     bool? playing,
     bool? completed,
     Object? errorMessage = _unchanged,
+    Object? playbackWarningMessage = _unchanged,
     double? volume,
     bool? isMuted,
     double? playbackSpeed,
@@ -88,6 +91,9 @@ class VelaPlayerState {
       errorMessage: identical(errorMessage, _unchanged)
           ? this.errorMessage
           : errorMessage as String?,
+      playbackWarningMessage: identical(playbackWarningMessage, _unchanged)
+          ? this.playbackWarningMessage
+          : playbackWarningMessage as String?,
       volume: volume ?? this.volume,
       isMuted: isMuted ?? this.isMuted,
       playbackSpeed: playbackSpeed ?? this.playbackSpeed,

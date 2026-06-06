@@ -12,6 +12,8 @@ class VelaPlayerControls extends StatelessWidget {
     required this.controller,
     required this.state,
     required this.onClose,
+    required this.onRetry,
+    required this.onDismissPlaybackWarning,
     required this.onNextEpisode,
     required this.onAudioTrackSelected,
     required this.onSubtitleTrackSelected,
@@ -26,6 +28,8 @@ class VelaPlayerControls extends StatelessWidget {
   final PlaybackController controller;
   final VelaPlayerState state;
   final VoidCallback onClose;
+  final VoidCallback? onRetry;
+  final VoidCallback onDismissPlaybackWarning;
   final ValueChanged<PlayableItem> onNextEpisode;
   final ValueChanged<String> onAudioTrackSelected;
   final ValueChanged<String> onSubtitleTrackSelected;
@@ -71,9 +75,12 @@ class VelaPlayerControls extends StatelessWidget {
               child: _TopBar(
                 item: item,
                 onClose: onClose,
+                onRetry: item == null ? null : onRetry,
                 showRecentChannels: isLive,
                 recentChannelsExpanded: recentLiveChannelsExpanded,
                 onToggleRecentChannels: onToggleRecentLiveChannels,
+                playbackWarningMessage: state.playbackWarningMessage,
+                onDismissPlaybackWarning: onDismissPlaybackWarning,
               ),
             ),
           ),
@@ -121,16 +128,22 @@ class _TopBar extends StatelessWidget {
   const _TopBar({
     required this.item,
     required this.onClose,
+    required this.onRetry,
     required this.showRecentChannels,
     required this.recentChannelsExpanded,
     required this.onToggleRecentChannels,
+    required this.playbackWarningMessage,
+    required this.onDismissPlaybackWarning,
   });
 
   final PlayableItem? item;
   final VoidCallback onClose;
+  final VoidCallback? onRetry;
   final bool showRecentChannels;
   final bool recentChannelsExpanded;
   final VoidCallback onToggleRecentChannels;
+  final String? playbackWarningMessage;
+  final VoidCallback onDismissPlaybackWarning;
 
   @override
   Widget build(BuildContext context) {
@@ -184,7 +197,82 @@ class _TopBar extends StatelessWidget {
             ],
           ),
         ),
+        if (playbackWarningMessage != null) ...[
+          const SizedBox(width: 12),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 340),
+            child: _PlaybackWarningChip(
+              message: playbackWarningMessage!,
+              onDismiss: onDismissPlaybackWarning,
+            ),
+          ),
+        ],
+        if (item != null) ...[
+          const SizedBox(width: 8),
+          _RoundIconButton(
+            tooltip: item!.kind == PlayableKind.live
+                ? 'Refresh stream'
+                : 'Retry playback',
+            icon: LucideIcons.refreshCw,
+            onPressed: onRetry,
+          ),
+        ],
       ],
+    );
+  }
+}
+
+class _PlaybackWarningChip extends StatelessWidget {
+  const _PlaybackWarningChip({required this.message, required this.onDismiss});
+
+  final String message;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.only(left: 12, right: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xE62B2113),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0x66ECC15D)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            LucideIcons.triangleAlert,
+            color: Color(0xFFECC15D),
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              'Stream warning: $message',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Dismiss stream warning',
+            onPressed: onDismiss,
+            icon: const Icon(LucideIcons.x, size: 16),
+            color: Colors.white,
+            style: IconButton.styleFrom(
+              minimumSize: const Size(34, 34),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

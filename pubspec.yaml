@@ -1,7 +1,7 @@
 name: vela
 description: Vela desktop IPTV player for macOS and Windows.
 publish_to: "none"
-version: 0.4.4+10
+version: 0.4.5+11
 
 environment:
   sdk: ">=3.9.0 <4.0.0"
@@ -29,6 +29,8 @@ dependencies:
 dev_dependencies:
   build_runner: ^2.10.4
   drift_dev: ^2.33.0
+  flutter_test:
+    sdk: flutter
   flutter_lints: ^6.0.0
 
 flutter:
