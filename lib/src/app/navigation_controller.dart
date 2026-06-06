@@ -91,6 +91,7 @@ final catalogItemsProvider = StreamProvider.autoDispose
             section: query.section,
             categoryId: query.categoryId,
             favoritesOnly: query.favoritesOnly,
+            limit: query.limit,
           );
     });
 
@@ -290,12 +291,14 @@ class CatalogItemsQuery {
     this.providerId,
     this.categoryId,
     this.favoritesOnly = false,
+    this.limit,
   });
 
   final CatalogContentType section;
   final String? providerId;
   final String? categoryId;
   final bool favoritesOnly;
+  final int? limit;
 
   @override
   bool operator ==(Object other) {
@@ -303,12 +306,13 @@ class CatalogItemsQuery {
         other.section == section &&
         other.providerId == providerId &&
         other.categoryId == categoryId &&
-        other.favoritesOnly == favoritesOnly;
+        other.favoritesOnly == favoritesOnly &&
+        other.limit == limit;
   }
 
   @override
   int get hashCode {
-    return Object.hash(section, providerId, categoryId, favoritesOnly);
+    return Object.hash(section, providerId, categoryId, favoritesOnly, limit);
   }
 }
 

@@ -453,12 +453,14 @@ class CatalogRepository {
     required CatalogContentType section,
     String? categoryId,
     bool favoritesOnly = false,
+    int? limit,
   }) {
     return _selectItems(
       providerId: providerId,
       section: section,
       categoryId: categoryId,
       favoritesOnly: favoritesOnly,
+      limit: limit,
       watch: true,
     ).watch().map(_mapItemRows);
   }
@@ -857,7 +859,7 @@ class CatalogRepository {
       where.add('fi.item_id IS NOT NULL');
     }
 
-    final safeLimit = limit?.clamp(1, 100).toInt();
+    final safeLimit = limit?.clamp(1, 1200).toInt();
     if (safeLimit != null) {
       variables.add(Variable<int>(safeLimit));
     }

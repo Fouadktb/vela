@@ -16,6 +16,8 @@ import 'tv_detail_panel.dart';
 import 'tv_focus.dart';
 
 const _tvCatalogCacheDuration = Duration(minutes: 10);
+const _tvCatalogInitialLimit = 160;
+const _tvCatalogLimitStep = 160;
 
 final _tvRecentCatalogCardsProvider =
     StreamProvider.autoDispose<List<CatalogCardItem>>((ref) {
@@ -57,6 +59,7 @@ final _tvCatalogCardsProvider = StreamProvider.autoDispose
             section: query.section,
             categoryId: query.categoryId,
             favoritesOnly: query.favoritesOnly,
+            limit: query.limit,
           )
           .asyncMap((items) {
             return catalogItemsToCards(
@@ -67,7 +70,7 @@ final _tvCatalogCardsProvider = StreamProvider.autoDispose
           });
     });
 
-class TvCatalogScreen extends ConsumerWidget {
+class TvCatalogScreen extends ConsumerStatefulWidget {
   const TvCatalogScreen({
     required this.section,
     required this.onOpenPlayer,
@@ -78,9 +81,20 @@ class TvCatalogScreen extends ConsumerWidget {
   final ValueChanged<PlayableItem> onOpenPlayer;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<TvCatalogScreen> createState() => _TvCatalogScreenState();
+}
+
+class _TvCatalogScreenState extends ConsumerState<TvCatalogScreen> {
+  int _itemLimit = _tvCatalogInitialLimit;
+  String? _lastCatalogScope;
+  DateTime? _lastLoadMoreAt;
+
+  @override
+  Widget build(BuildContext context) {
     final navigation = ref.watch(navigationControllerProvider);
+    final section = widget.section;
     final state = navigation.stateFor(section);
+    _resetLimitIfScopeChanged(section, state.selectedCategoryId);
     final categoriesValue = _categoriesForSection(ref, section);
     final selectedCategoryLabel = _selectedCategoryLabel(
       categoriesValue.value,
@@ -116,8 +130,13 @@ class TvCatalogScreen extends ConsumerWidget {
           )
         else ...[
           Expanded(
-            child: _itemsForSection(ref, section, state.selectedCategoryId)
-                .when(
+            child:
+                _itemsForSection(
+                  ref,
+                  section,
+                  state.selectedCategoryId,
+                  limit: _itemLimit,
+                ).when(
                   loading: () => const Center(
                     child: CircularProgressIndicator(strokeWidth: 3),
                   ),
@@ -128,6 +147,8 @@ class TvCatalogScreen extends ConsumerWidget {
                   ),
                   data: (items) {
                     final selected = _selectedItem(items, state.selectedItemId);
+                    final hasMore =
+                        _sectionCanPage(section) && items.length >= _itemLimit;
                     _syncSelectedItem(
                       ref,
                       section,
@@ -148,11 +169,13 @@ class TvCatalogScreen extends ConsumerWidget {
                           return _TvCatalogGrid(
                             items: items,
                             selected: selected,
+                            hasMore: hasMore,
                             onFocusItem: (item) => _selectItem(ref, item),
                             onOpenItem: (item) =>
                                 unawaited(_openItem(ref, item)),
                             onToggleFavorite: (item) =>
                                 unawaited(_toggleItemFavorite(ref, item)),
+                            onLoadMore: _loadMore,
                           );
                         }
                         final detailWidth = constraints.maxWidth >= 1320
@@ -165,11 +188,13 @@ class TvCatalogScreen extends ConsumerWidget {
                               child: _TvCatalogGrid(
                                 items: items,
                                 selected: selected,
+                                hasMore: hasMore,
                                 onFocusItem: (item) => _selectItem(ref, item),
                                 onOpenItem: (item) =>
                                     unawaited(_openItem(ref, item)),
                                 onToggleFavorite: (item) =>
                                     unawaited(_toggleItemFavorite(ref, item)),
+                                onLoadMore: _loadMore,
                               ),
                             ),
                             const SizedBox(width: 22),
@@ -177,7 +202,7 @@ class TvCatalogScreen extends ConsumerWidget {
                               width: detailWidth,
                               child: TvDetailPanel(
                                 item: selected,
-                                onOpenPlayer: onOpenPlayer,
+                                onOpenPlayer: widget.onOpenPlayer,
                                 onToggleFavorite: selected == null
                                     ? null
                                     : () => unawaited(
@@ -200,8 +225,9 @@ class TvCatalogScreen extends ConsumerWidget {
   AsyncValue<List<CatalogCardItem>> _itemsForSection(
     WidgetRef ref,
     VelaSection section,
-    String? categoryId,
-  ) {
+    String? categoryId, {
+    required int limit,
+  }) {
     if (section == VelaSection.recent) {
       return ref.watch(_tvRecentCatalogCardsProvider);
     }
@@ -209,25 +235,28 @@ class TvCatalogScreen extends ConsumerWidget {
     if (section == VelaSection.favorites) {
       final live = ref.watch(
         _tvCatalogCardsProvider(
-          const CatalogItemsQuery(
+          CatalogItemsQuery(
             section: CatalogContentType.live,
             favoritesOnly: true,
+            limit: limit,
           ),
         ),
       );
       final movies = ref.watch(
         _tvCatalogCardsProvider(
-          const CatalogItemsQuery(
+          CatalogItemsQuery(
             section: CatalogContentType.movie,
             favoritesOnly: true,
+            limit: limit,
           ),
         ),
       );
       final series = ref.watch(
         _tvCatalogCardsProvider(
-          const CatalogItemsQuery(
+          CatalogItemsQuery(
             section: CatalogContentType.series,
             favoritesOnly: true,
+            limit: limit,
           ),
         ),
       );
@@ -237,9 +266,38 @@ class TvCatalogScreen extends ConsumerWidget {
     final contentType = section.contentType ?? CatalogContentType.live;
     return ref.watch(
       _tvCatalogCardsProvider(
-        CatalogItemsQuery(section: contentType, categoryId: categoryId),
+        CatalogItemsQuery(
+          section: contentType,
+          categoryId: categoryId,
+          limit: limit,
+        ),
       ),
     );
+  }
+
+  void _resetLimitIfScopeChanged(VelaSection section, String? categoryId) {
+    final scope = '${section.name}:${categoryId ?? 'all'}';
+    if (_lastCatalogScope == scope) return;
+    _lastCatalogScope = scope;
+    _itemLimit = _tvCatalogInitialLimit;
+    _lastLoadMoreAt = null;
+  }
+
+  bool _sectionCanPage(VelaSection section) {
+    return section != VelaSection.recent && section != VelaSection.settings;
+  }
+
+  void _loadMore() {
+    final now = DateTime.now();
+    final lastLoadMoreAt = _lastLoadMoreAt;
+    if (lastLoadMoreAt != null &&
+        now.difference(lastLoadMoreAt) < const Duration(milliseconds: 450)) {
+      return;
+    }
+    _lastLoadMoreAt = now;
+    setState(() {
+      _itemLimit += _tvCatalogLimitStep;
+    });
   }
 
   AsyncValue<List<CatalogCategory>> _categoriesForSection(
@@ -296,7 +354,7 @@ class TvCatalogScreen extends ConsumerWidget {
               }),
         );
       }
-      onOpenPlayer(target.playable);
+      widget.onOpenPlayer(target.playable);
     } catch (error, stackTrace) {
       debugPrint('Failed to open TV catalog item: $error');
       debugPrintStack(stackTrace: stackTrace);
@@ -811,38 +869,98 @@ class _TvCatalogGrid extends StatelessWidget {
   const _TvCatalogGrid({
     required this.items,
     required this.selected,
+    required this.hasMore,
     required this.onFocusItem,
     required this.onOpenItem,
     required this.onToggleFavorite,
+    required this.onLoadMore,
   });
 
   final List<CatalogCardItem> items;
   final CatalogCardItem? selected;
+  final bool hasMore;
   final ValueChanged<CatalogCardItem> onFocusItem;
   final ValueChanged<CatalogCardItem> onOpenItem;
   final ValueChanged<CatalogCardItem> onToggleFavorite;
+  final VoidCallback onLoadMore;
 
   @override
   Widget build(BuildContext context) {
-    return GridView.builder(
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 210,
-        mainAxisExtent: 260,
-        crossAxisSpacing: 14,
-        mainAxisSpacing: 14,
-      ),
-      itemCount: items.length,
-      itemBuilder: (context, index) {
-        final item = items[index];
-        return _TvContentCard(
-          item: item,
-          selected: selected?.id == item.id,
-          autofocus: index == 0,
-          onFocus: () => onFocusItem(item),
-          onPressed: () => onOpenItem(item),
-          onToggleFavorite: () => onToggleFavorite(item),
-        );
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (hasMore &&
+            notification.metrics.axis == Axis.vertical &&
+            notification.metrics.extentAfter < 1200) {
+          onLoadMore();
+        }
+        return false;
       },
+      child: GridView.builder(
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 210,
+          mainAxisExtent: 260,
+          crossAxisSpacing: 14,
+          mainAxisSpacing: 14,
+        ),
+        itemCount: items.length + (hasMore ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index >= items.length) {
+            return _TvLoadMoreCard(
+              loadedCount: items.length,
+              onPressed: onLoadMore,
+            );
+          }
+          final item = items[index];
+          return _TvContentCard(
+            item: item,
+            selected: selected?.id == item.id,
+            autofocus: index == 0,
+            onFocus: () => onFocusItem(item),
+            onPressed: () => onOpenItem(item),
+            onToggleFavorite: () => onToggleFavorite(item),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _TvLoadMoreCard extends StatelessWidget {
+  const _TvLoadMoreCard({required this.loadedCount, required this.onPressed});
+
+  final int loadedCount;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return TvFocusCard(
+      onPressed: onPressed,
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(LucideIcons.plus, size: 34, color: theme.colorScheme.primary),
+          const SizedBox(height: 14),
+          Text(
+            'Load more',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '$loadedCount loaded',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: const Color(0xFFA9A39A),
+              letterSpacing: 0,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
