@@ -107,16 +107,18 @@ class _TvCatalogScreenState extends ConsumerState<TvCatalogScreen> {
       builder: (context, constraints) {
         final usePersistentCategories =
             widget.persistentCategories &&
-            constraints.maxWidth >= 620 &&
+            constraints.maxWidth >= 700 &&
             section.contentType != null;
         final content = _buildSectionContent(ref, section, state);
 
         if (usePersistentCategories) {
           final categoryWidth = constraints.maxWidth >= 1360
+              ? 360.0
+              : constraints.maxWidth >= 1100
               ? 320.0
-              : constraints.maxWidth >= 920
+              : constraints.maxWidth >= 860
               ? 280.0
-              : 210.0;
+              : 240.0;
           return Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -634,7 +636,7 @@ class _TvPersistentCategoryColumn extends StatelessWidget {
                     '${section.label} categories',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleMedium?.copyWith(
+                    style: theme.textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w900,
                       height: 1.08,
                       letterSpacing: 0,
@@ -937,10 +939,10 @@ class _TvCategorySheetRow extends StatelessWidget {
                   label,
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.titleMedium?.copyWith(
+                  style: theme.textTheme.titleSmall?.copyWith(
                     color: selected ? theme.colorScheme.primary : null,
                     fontWeight: FontWeight.w900,
-                    height: 1.08,
+                    height: 1.12,
                     letterSpacing: 0,
                   ),
                 ),
@@ -1160,6 +1162,11 @@ class _TvLoadMoreCard extends StatelessWidget {
     final theme = Theme.of(context);
     return TvFocusCard(
       onPressed: onPressed,
+      onFocusChange: (focused) {
+        if (focused) {
+          _ensureFocusedVisible(context);
+        }
+      },
       padding: const EdgeInsets.all(18),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -1223,6 +1230,7 @@ class _TvContentCard extends StatelessWidget {
       onFocusChange: (focused) {
         if (focused) {
           onFocus();
+          _ensureFocusedVisible(context);
         }
       },
       shortcuts: const {
@@ -1403,74 +1411,58 @@ class _TvSettingsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(
-          child: TvFocusCard(
-            autofocus: true,
-            onPressed: onRefreshProviders,
-            padding: const EdgeInsets.all(24),
-            child: _TvSettingsAction(
-              icon: LucideIcons.refreshCw,
-              title: 'Refresh Providers',
-              body: 'Update stale catalogs and episode details.',
-            ),
-          ),
+    final tiles = [
+      TvFocusCard(
+        autofocus: true,
+        onPressed: onRefreshProviders,
+        padding: const EdgeInsets.all(22),
+        child: _TvSettingsAction(
+          icon: LucideIcons.refreshCw,
+          title: 'Refresh Providers',
+          body: 'Update stale catalogs and episode details.',
         ),
-        const SizedBox(width: 18),
-        Expanded(
-          child: TvFocusCard(
-            onPressed: onOpenLive,
-            padding: const EdgeInsets.all(24),
-            child: _TvSettingsAction(
-              icon: LucideIcons.tv,
-              title: 'Open Live TV',
-              body: 'Return to the channel catalog.',
-            ),
-          ),
+      ),
+      TvFocusCard(
+        onPressed: onOpenLive,
+        padding: const EdgeInsets.all(22),
+        child: _TvSettingsAction(
+          icon: LucideIcons.tv,
+          title: 'Open Live TV',
+          body: 'Return to the channel catalog.',
         ),
-        const SizedBox(width: 18),
-        Expanded(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: const Color(0xFF151719),
-              border: Border.all(color: const Color(0xFF292D31)),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    LucideIcons.settings,
-                    size: 34,
-                    color: theme.colorScheme.primary,
-                  ),
-                  const Spacer(),
-                  Text(
-                    'Settings',
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Provider maintenance is available here. Detailed preferences remain in the desktop settings area for now.',
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      color: const Color(0xFFAFA8A0),
-                      height: 1.35,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+      ),
+      TvFocusCard(
+        onPressed: () {},
+        padding: const EdgeInsets.all(22),
+        child: _TvSettingsAction(
+          icon: LucideIcons.settings,
+          title: 'Settings',
+          body:
+              'Provider maintenance is available here. More TV preferences will live in this menu.',
         ),
-      ],
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 840) {
+          return ListView.separated(
+            itemCount: tiles.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 14),
+            itemBuilder: (_, index) =>
+                SizedBox(height: 190, child: tiles[index]),
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var index = 0; index < tiles.length; index += 1) ...[
+              Expanded(child: tiles[index]),
+              if (index != tiles.length - 1) const SizedBox(width: 18),
+            ],
+          ],
+        );
+      },
     );
   }
 }
@@ -1619,5 +1611,17 @@ void _keepTvCatalogProviderWarm(Ref ref) {
   });
   ref.onDispose(() {
     disposeTimer?.cancel();
+  });
+}
+
+void _ensureFocusedVisible(BuildContext context) {
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (!context.mounted) return;
+    Scrollable.ensureVisible(
+      context,
+      duration: const Duration(milliseconds: 160),
+      curve: Curves.easeOutCubic,
+      alignment: 0.12,
+    );
   });
 }

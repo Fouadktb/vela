@@ -1,13 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../app/navigation_controller.dart';
 import '../catalog/catalog_models.dart';
 import '../features/providers/provider_setup_screen.dart';
+import '../providers/provider_input_validator.dart';
 import '../providers/provider_models.dart';
 import '../providers/provider_repository.dart';
 import '../providers/refresh_interval.dart';
+import 'pairing_session_service.dart';
 import 'tv_focus.dart';
 
 class TvProviderSetupScreen extends ConsumerStatefulWidget {
@@ -19,6 +24,8 @@ class TvProviderSetupScreen extends ConsumerStatefulWidget {
 }
 
 class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
+  final PairingSessionService _pairingService = PairingSessionService();
+  StreamSubscription<PairingSessionSnapshot>? _pairingSubscription;
   var _type = ProviderType.xtream;
   var _name = 'Primary IPTV';
   var _serverUrl = '';
@@ -27,217 +34,325 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
   var _m3uUrl = '';
   var _refreshIntervalMinutes = defaultRefreshIntervalMinutes;
   String? _validationMessage;
+  PairingSessionSnapshot _pairingSnapshot = const PairingSessionSnapshot(
+    status: PairingSessionStatus.idle,
+  );
+  int? _handledSubmissionId;
+
+  @override
+  void initState() {
+    super.initState();
+    _pairingSubscription = _pairingService.stream.listen(_handlePairingUpdate);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_startPairing());
+    });
+  }
+
+  @override
+  void dispose() {
+    _pairingSubscription?.cancel();
+    unawaited(_pairingService.dispose());
+    super.dispose();
+  }
+
+  Future<void> _startPairing() async {
+    try {
+      final snapshot = await _pairingService.start();
+      if (mounted) {
+        setState(() => _pairingSnapshot = snapshot);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _pairingSnapshot = const PairingSessionSnapshot(
+          status: PairingSessionStatus.failed,
+          message: 'Could not start local pairing on this device.',
+        );
+      });
+    }
+  }
+
+  void _handlePairingUpdate(PairingSessionSnapshot snapshot) {
+    if (!mounted) return;
+    setState(() => _pairingSnapshot = snapshot);
+    final submission = snapshot.submission;
+    final submissionId = snapshot.submissionId;
+    if (submission == null ||
+        submissionId == null ||
+        submissionId == _handledSubmissionId) {
+      return;
+    }
+    _handledSubmissionId = submissionId;
+    _applyProviderInput(submission.input);
+    unawaited(_importProviderInput(submission.input, fromPairing: true));
+  }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final importState = ref.watch(providerSetupImportControllerProvider);
     final isImporting = importState.isImporting;
 
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.only(bottom: 24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1040),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: const Color(0xFF151719),
-              border: Border.all(color: const Color(0xFF292D31)),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(28),
-              child: FocusTraversalGroup(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final horizontal = constraints.maxWidth >= 920;
+        final compact =
+            constraints.maxWidth < 1100 || constraints.maxHeight < 720;
+        final formPanel = _panel(
+          child: _buildForm(context, importState, isImporting, compact),
+        );
+        final qrPanel = _panel(
+          child: _PairingPanel(
+            snapshot: _pairingSnapshot,
+            isImporting: isImporting,
+            onRestart: _startPairing,
+          ),
+        );
+
+        return Center(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.only(bottom: compact ? 12 : 24),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: horizontal ? 1180 : 720),
+              child: horizontal
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(
-                          LucideIcons.radioTower,
-                          color: theme.colorScheme.primary,
-                          size: 34,
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Text(
-                            'Add Provider',
-                            style: theme.textTheme.headlineMedium?.copyWith(
+                        Expanded(flex: 7, child: formPanel),
+                        const SizedBox(width: 18),
+                        Expanded(flex: 4, child: qrPanel),
+                      ],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        formPanel,
+                        const SizedBox(height: 14),
+                        qrPanel,
+                      ],
+                    ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _panel({required Widget child}) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF151719),
+        border: Border.all(color: const Color(0xFF292D31)),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _buildForm(
+    BuildContext context,
+    ProviderSetupImportController importState,
+    bool isImporting,
+    bool compact,
+  ) {
+    final theme = Theme.of(context);
+    final padding = compact ? 18.0 : 22.0;
+
+    return Padding(
+      padding: EdgeInsets.all(padding),
+      child: FocusTraversalGroup(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  LucideIcons.radioTower,
+                  color: theme.colorScheme.primary,
+                  size: compact ? 27 : 31,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Add Provider',
+                    style:
+                        (compact
+                                ? theme.textTheme.headlineSmall
+                                : theme.textTheme.headlineMedium)
+                            ?.copyWith(
                               fontWeight: FontWeight.w900,
                               letterSpacing: 0,
                             ),
-                          ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _ProviderTypePicker(
+              selectedType: _type,
+              isImporting: isImporting,
+              compact: compact,
+              onChanged: (type) {
+                setState(() {
+                  _type = type;
+                  _validationMessage = null;
+                });
+              },
+            ),
+            const SizedBox(height: 14),
+            _TvValueField(
+              label: 'Provider name',
+              value: _name,
+              icon: LucideIcons.tag,
+              autofocus: true,
+              compact: compact,
+              enabled: !isImporting,
+              error: _fieldError(_name),
+              onPressed: () => _editText(
+                title: 'Provider name',
+                value: _name,
+                onChanged: (value) => setState(() => _name = value),
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (_type == ProviderType.xtream) ...[
+              _TvValueField(
+                label: 'Server URL',
+                value: _serverUrl,
+                placeholder: 'https://example.com',
+                icon: LucideIcons.server,
+                keyboardType: TextInputType.url,
+                compact: compact,
+                enabled: !isImporting,
+                error: _fieldError(_serverUrl),
+                onPressed: () => _editText(
+                  title: 'Server URL',
+                  value: _serverUrl,
+                  keyboardType: TextInputType.url,
+                  onChanged: (value) => setState(() => _serverUrl = value),
+                ),
+              ),
+              const SizedBox(height: 10),
+              _ResponsivePair(
+                children: [
+                  _TvValueField(
+                    label: 'Username',
+                    value: _username,
+                    icon: LucideIcons.user,
+                    compact: compact,
+                    enabled: !isImporting,
+                    error: _fieldError(_username),
+                    onPressed: () => _editText(
+                      title: 'Username',
+                      value: _username,
+                      onChanged: (value) => setState(() => _username = value),
+                    ),
+                  ),
+                  _TvValueField(
+                    label: 'Password',
+                    value: _password,
+                    icon: LucideIcons.keyRound,
+                    obscure: true,
+                    compact: compact,
+                    enabled: !isImporting,
+                    error: _fieldError(_password),
+                    onPressed: () => _editText(
+                      title: 'Password',
+                      value: _password,
+                      obscure: true,
+                      onChanged: (value) => setState(() => _password = value),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            if (_type == ProviderType.m3uUrl)
+              _TvValueField(
+                label: 'M3U URL',
+                value: _m3uUrl,
+                placeholder: 'https://example.com/playlist.m3u',
+                icon: LucideIcons.link,
+                keyboardType: TextInputType.url,
+                compact: compact,
+                enabled: !isImporting,
+                error: _fieldError(_m3uUrl),
+                onPressed: () => _editText(
+                  title: 'M3U URL',
+                  value: _m3uUrl,
+                  keyboardType: TextInputType.url,
+                  onChanged: (value) => setState(() => _m3uUrl = value),
+                ),
+              ),
+            const SizedBox(height: 10),
+            _TvValueField(
+              label: 'Auto-refresh interval',
+              value: refreshIntervalLabel(_refreshIntervalMinutes),
+              icon: LucideIcons.clock,
+              compact: compact,
+              enabled: !isImporting,
+              trailingIcon: LucideIcons.chevronDown,
+              onPressed: _pickRefreshInterval,
+            ),
+            const SizedBox(height: 14),
+            if (_validationMessage != null)
+              _TvStatusBanner(
+                icon: LucideIcons.circleAlert,
+                message: _validationMessage!,
+                color: const Color(0xFFE26D5A),
+              ),
+            if (importState.errorMessage != null)
+              _TvStatusBanner(
+                icon: LucideIcons.circleAlert,
+                message: importState.errorMessage!,
+                color: const Color(0xFFE26D5A),
+              ),
+            if (importState.statusMessage != null)
+              _TvStatusBanner(
+                icon: importState.isImporting
+                    ? LucideIcons.loaderCircle
+                    : LucideIcons.circleCheck,
+                message: _progressMessage(importState),
+                color: theme.colorScheme.primary,
+                loading: importState.isImporting,
+              ),
+            if (importState.isImporting ||
+                importState.stage == ProviderImportStage.done ||
+                importState.stage == ProviderImportStage.failed) ...[
+              const SizedBox(height: 10),
+              _TvImportStepper(
+                currentStage: importState.stage,
+                failedStage: importState.failedStage,
+                isImporting: importState.isImporting,
+              ),
+            ],
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.icon(
+                onPressed: isImporting ? null : _saveAndImport,
+                icon: isImporting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Color(0xFF0C0D0E),
                         ),
-                      ],
+                      )
+                    : const Icon(LucideIcons.download, size: 20),
+                label: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Text(
+                    isImporting ? 'Importing' : 'Save and Import',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
                     ),
-                    const SizedBox(height: 24),
-                    _ProviderTypePicker(
-                      selectedType: _type,
-                      isImporting: isImporting,
-                      onChanged: (type) {
-                        setState(() {
-                          _type = type;
-                          _validationMessage = null;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 20),
-                    _TvValueField(
-                      label: 'Provider name',
-                      value: _name,
-                      icon: LucideIcons.tag,
-                      autofocus: true,
-                      enabled: !isImporting,
-                      error: _fieldError(_name),
-                      onPressed: () => _editText(
-                        title: 'Provider name',
-                        value: _name,
-                        onChanged: (value) => setState(() => _name = value),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    if (_type == ProviderType.xtream) ...[
-                      _TvValueField(
-                        label: 'Server URL',
-                        value: _serverUrl,
-                        placeholder: 'https://example.com',
-                        icon: LucideIcons.server,
-                        keyboardType: TextInputType.url,
-                        enabled: !isImporting,
-                        error: _fieldError(_serverUrl),
-                        onPressed: () => _editText(
-                          title: 'Server URL',
-                          value: _serverUrl,
-                          keyboardType: TextInputType.url,
-                          onChanged: (value) {
-                            setState(() => _serverUrl = value);
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      _ResponsivePair(
-                        children: [
-                          _TvValueField(
-                            label: 'Username',
-                            value: _username,
-                            icon: LucideIcons.user,
-                            enabled: !isImporting,
-                            error: _fieldError(_username),
-                            onPressed: () => _editText(
-                              title: 'Username',
-                              value: _username,
-                              onChanged: (value) {
-                                setState(() => _username = value);
-                              },
-                            ),
-                          ),
-                          _TvValueField(
-                            label: 'Password',
-                            value: _password,
-                            icon: LucideIcons.keyRound,
-                            obscure: true,
-                            enabled: !isImporting,
-                            error: _fieldError(_password),
-                            onPressed: () => _editText(
-                              title: 'Password',
-                              value: _password,
-                              obscure: true,
-                              onChanged: (value) {
-                                setState(() => _password = value);
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                    if (_type == ProviderType.m3uUrl)
-                      _TvValueField(
-                        label: 'M3U URL',
-                        value: _m3uUrl,
-                        placeholder: 'https://example.com/playlist.m3u',
-                        icon: LucideIcons.link,
-                        keyboardType: TextInputType.url,
-                        enabled: !isImporting,
-                        error: _fieldError(_m3uUrl),
-                        onPressed: () => _editText(
-                          title: 'M3U URL',
-                          value: _m3uUrl,
-                          keyboardType: TextInputType.url,
-                          onChanged: (value) {
-                            setState(() => _m3uUrl = value);
-                          },
-                        ),
-                      ),
-                    const SizedBox(height: 12),
-                    _TvValueField(
-                      label: 'Auto-refresh interval',
-                      value: refreshIntervalLabel(_refreshIntervalMinutes),
-                      icon: LucideIcons.clock,
-                      enabled: !isImporting,
-                      trailingIcon: LucideIcons.chevronDown,
-                      onPressed: _pickRefreshInterval,
-                    ),
-                    const SizedBox(height: 18),
-                    if (_validationMessage != null)
-                      _TvStatusBanner(
-                        icon: LucideIcons.circleAlert,
-                        message: _validationMessage!,
-                        color: const Color(0xFFE26D5A),
-                      ),
-                    if (importState.errorMessage != null)
-                      _TvStatusBanner(
-                        icon: LucideIcons.circleAlert,
-                        message: importState.errorMessage!,
-                        color: const Color(0xFFE26D5A),
-                      ),
-                    if (importState.statusMessage != null)
-                      _TvStatusBanner(
-                        icon: LucideIcons.circleCheck,
-                        message: importState.statusMessage!,
-                        color: theme.colorScheme.primary,
-                      ),
-                    if (importState.isImporting ||
-                        importState.stage == ProviderImportStage.done ||
-                        importState.stage == ProviderImportStage.failed) ...[
-                      const SizedBox(height: 12),
-                      _TvImportStepper(
-                        currentStage: importState.stage,
-                        failedStage: importState.failedStage,
-                        isImporting: importState.isImporting,
-                      ),
-                    ],
-                    const SizedBox(height: 20),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: FilledButton.icon(
-                        onPressed: isImporting ? null : _saveAndImport,
-                        icon: isImporting
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Color(0xFF0C0D0E),
-                                ),
-                              )
-                            : const Icon(LucideIcons.download, size: 22),
-                        label: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Text(
-                            isImporting ? 'Importing' : 'Save and Import',
-                            style: const TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -248,6 +363,32 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
       return null;
     }
     return value.trim().isEmpty ? 'Required' : null;
+  }
+
+  String _progressMessage(ProviderSetupImportController importState) {
+    final message = importState.statusMessage ?? 'Importing provider';
+    final current = importState.current;
+    final total = importState.total;
+    if (current == null) {
+      return message;
+    }
+    if (total == null || total <= 0) {
+      return '$message · ${_formatCount(current)}';
+    }
+    return '$message · ${_formatCount(current)} of ${_formatCount(total)}';
+  }
+
+  void _applyProviderInput(ProviderInput input) {
+    setState(() {
+      _type = input.type;
+      _name = input.name;
+      _serverUrl = input.serverUrl ?? '';
+      _username = input.username ?? '';
+      _password = input.password ?? '';
+      _m3uUrl = input.m3uUrl ?? '';
+      _refreshIntervalMinutes = input.refreshIntervalMinutes;
+      _validationMessage = null;
+    });
   }
 
   Future<void> _editText({
@@ -289,25 +430,32 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
   }
 
   Future<void> _saveAndImport() async {
-    final missing = _missingFields();
-    if (missing.isNotEmpty) {
+    final validation = validateProviderInput(_providerInput());
+    if (!validation.isValid) {
       setState(() {
-        _validationMessage = 'Fill in ${missing.join(', ')} before importing.';
+        _validationMessage = validation.message;
       });
       return;
     }
+    await _importProviderInput(validation.input);
+  }
 
+  Future<void> _importProviderInput(
+    ProviderInput input, {
+    bool fromPairing = false,
+  }) async {
     final importController = ref.read(providerSetupImportControllerProvider);
     final providerRepository = ref.read(providerRepositoryProvider);
     final refreshService = ref.read(providerRefreshServiceProvider);
     importController.start();
     setState(() => _validationMessage = null);
+    if (fromPairing) {
+      _pairingService.markImporting('Importing provider on Vela');
+    }
     IptvProvider? provider;
 
     try {
-      provider = await providerRepository.createOrUpdateProvider(
-        _providerInput(),
-      );
+      provider = await providerRepository.createOrUpdateProvider(input);
       final result = await refreshService.refreshProvider(
         provider.id,
         onProgress: importController.progress,
@@ -317,39 +465,33 @@ class _TvProviderSetupScreenState extends ConsumerState<TvProviderSetupScreen> {
           await _deleteFailedProvider(providerRepository, provider);
         }
         importController.fail(result.message ?? 'Provider import failed');
+        if (fromPairing) {
+          _pairingService.markFailed(
+            result.message ?? 'Provider import failed',
+          );
+        }
         return;
       }
       importController.succeed(
         result.message ?? 'Imported ${result.itemCount} items',
       );
+      if (fromPairing) {
+        _pairingService.markSucceeded(
+          result.message ?? 'Imported ${result.itemCount} items',
+        );
+      } else {
+        await _pairingService.stop();
+      }
     } catch (error) {
       final createdProvider = provider;
       if (createdProvider != null && !createdProvider.hasImportedCatalog) {
         await _deleteFailedProvider(providerRepository, createdProvider);
       }
       importController.fail(error.toString());
-    }
-  }
-
-  List<String> _missingFields() {
-    final missing = <String>[];
-    if (_name.trim().isEmpty) {
-      missing.add('provider name');
-    }
-    if (_type == ProviderType.xtream) {
-      if (_serverUrl.trim().isEmpty) {
-        missing.add('server URL');
+      if (fromPairing) {
+        _pairingService.markFailed(error.toString());
       }
-      if (_username.trim().isEmpty) {
-        missing.add('username');
-      }
-      if (_password.trim().isEmpty) {
-        missing.add('password');
-      }
-    } else if (_type == ProviderType.m3uUrl && _m3uUrl.trim().isEmpty) {
-      missing.add('M3U URL');
     }
-    return missing;
   }
 
   Future<void> _deleteFailedProvider(
@@ -381,11 +523,13 @@ class _ProviderTypePicker extends StatelessWidget {
   const _ProviderTypePicker({
     required this.selectedType,
     required this.isImporting,
+    required this.compact,
     required this.onChanged,
   });
 
   final ProviderType selectedType;
   final bool isImporting;
+  final bool compact;
   final ValueChanged<ProviderType> onChanged;
 
   @override
@@ -397,7 +541,10 @@ class _ProviderTypePicker extends StatelessWidget {
           Expanded(
             child: TvFocusCard(
               onPressed: isImporting ? null : () => onChanged(type),
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+              padding: EdgeInsets.symmetric(
+                horizontal: compact ? 12 : 16,
+                vertical: compact ? 12 : 14,
+              ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -408,21 +555,25 @@ class _ProviderTypePicker extends StatelessWidget {
                     color: selectedType == type
                         ? Theme.of(context).colorScheme.primary
                         : const Color(0xFFF4F0E8),
-                    size: 26,
+                    size: compact ? 21 : 24,
                   ),
-                  const SizedBox(width: 12),
+                  SizedBox(width: compact ? 8 : 10),
                   Flexible(
                     child: Text(
                       _providerTypeLabel(type),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0,
-                        color: selectedType == type
-                            ? Theme.of(context).colorScheme.primary
-                            : const Color(0xFFF4F0E8),
-                      ),
+                      style:
+                          (compact
+                                  ? Theme.of(context).textTheme.titleMedium
+                                  : Theme.of(context).textTheme.titleLarge)
+                              ?.copyWith(
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0,
+                                color: selectedType == type
+                                    ? Theme.of(context).colorScheme.primary
+                                    : const Color(0xFFF4F0E8),
+                              ),
                     ),
                   ),
                 ],
@@ -432,6 +583,218 @@ class _ProviderTypePicker extends StatelessWidget {
           if (type != types.last) const SizedBox(width: 12),
         ],
       ],
+    );
+  }
+}
+
+class _PairingPanel extends StatelessWidget {
+  const _PairingPanel({
+    required this.snapshot,
+    required this.isImporting,
+    required this.onRestart,
+  });
+
+  final PairingSessionSnapshot snapshot;
+  final bool isImporting;
+  final VoidCallback onRestart;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final url = snapshot.url;
+    final ready =
+        snapshot.status == PairingSessionStatus.ready ||
+        snapshot.status == PairingSessionStatus.received ||
+        snapshot.status == PairingSessionStatus.importing ||
+        snapshot.status == PairingSessionStatus.failed;
+    final message = snapshot.message ?? _statusLabel(snapshot.status);
+
+    return Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                LucideIcons.qrCode,
+                color: theme.colorScheme.primary,
+                size: 28,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Add by QR',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Scan from a phone or desktop on the same network.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: const Color(0xFFAFA8A0),
+              height: 1.3,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 14),
+          AspectRatio(
+            aspectRatio: 1,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: ready && url != null
+                    ? QrImageView(
+                        data: url.toString(),
+                        backgroundColor: Colors.white,
+                        eyeStyle: const QrEyeStyle(
+                          eyeShape: QrEyeShape.square,
+                          color: Colors.black,
+                        ),
+                        dataModuleStyle: const QrDataModuleStyle(
+                          dataModuleShape: QrDataModuleShape.square,
+                          color: Colors.black,
+                        ),
+                      )
+                    : const Center(
+                        child: CircularProgressIndicator(strokeWidth: 3),
+                      ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _PairingStatusRow(status: snapshot.status, message: message),
+          if (url != null) ...[
+            const SizedBox(height: 10),
+            SelectableText(
+              url.toString(),
+              maxLines: 3,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: const Color(0xFFCFC7B8),
+                letterSpacing: 0,
+              ),
+            ),
+          ],
+          if (snapshot.code != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Code ${snapshot.code}',
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: theme.colorScheme.primary,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0,
+              ),
+            ),
+          ],
+          if (snapshot.status == PairingSessionStatus.expired ||
+              snapshot.status == PairingSessionStatus.failed) ...[
+            const SizedBox(height: 14),
+            TvFocusCard(
+              onPressed: isImporting ? null : onRestart,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(LucideIcons.refreshCw, size: 20),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Restart QR',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _statusLabel(PairingSessionStatus status) {
+    return switch (status) {
+      PairingSessionStatus.idle => 'QR pairing is idle',
+      PairingSessionStatus.starting => 'Starting local pairing',
+      PairingSessionStatus.ready => 'Waiting for provider details',
+      PairingSessionStatus.received => 'Provider received',
+      PairingSessionStatus.importing => 'Importing provider',
+      PairingSessionStatus.succeeded => 'Provider imported',
+      PairingSessionStatus.failed => 'QR pairing failed',
+      PairingSessionStatus.expired => 'QR pairing expired',
+    };
+  }
+}
+
+class _PairingStatusRow extends StatelessWidget {
+  const _PairingStatusRow({required this.status, required this.message});
+
+  final PairingSessionStatus status;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (status) {
+      PairingSessionStatus.failed ||
+      PairingSessionStatus.expired => const Color(0xFFE26D5A),
+      PairingSessionStatus.succeeded => const Color(0xFF8EC5A1),
+      PairingSessionStatus.ready ||
+      PairingSessionStatus.received ||
+      PairingSessionStatus.importing => Theme.of(context).colorScheme.primary,
+      _ => const Color(0xFFAFA8A0),
+    };
+    final loading =
+        status == PairingSessionStatus.starting ||
+        status == PairingSessionStatus.importing;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        border: Border.all(color: color.withValues(alpha: 0.42)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: loading
+                  ? CircularProgressIndicator(strokeWidth: 2, color: color)
+                  : Icon(
+                      status == PairingSessionStatus.failed ||
+                              status == PairingSessionStatus.expired
+                          ? LucideIcons.circleAlert
+                          : LucideIcons.circleCheck,
+                      color: color,
+                      size: 20,
+                    ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                message,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: const Color(0xFFF4F0E8),
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -449,6 +812,7 @@ class _TvValueField extends StatelessWidget {
     this.error,
     this.trailingIcon = LucideIcons.pencil,
     this.keyboardType,
+    this.compact = false,
   });
 
   final String label;
@@ -462,6 +826,7 @@ class _TvValueField extends StatelessWidget {
   final String? error;
   final IconData trailingIcon;
   final TextInputType? keyboardType;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -477,35 +842,46 @@ class _TvValueField extends StatelessWidget {
     return TvFocusCard(
       autofocus: autofocus,
       onPressed: enabled ? onPressed : null,
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 13 : 16,
+        vertical: compact ? 12 : 14,
+      ),
       child: Row(
         children: [
-          Icon(icon, size: 30, color: const Color(0xFFF4F0E8)),
-          const SizedBox(width: 16),
+          Icon(icon, size: compact ? 24 : 28, color: const Color(0xFFF4F0E8)),
+          SizedBox(width: compact ? 12 : 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   label,
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    color: const Color(0xFFCFC7B8),
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0,
-                  ),
+                  style:
+                      (compact
+                              ? theme.textTheme.labelLarge
+                              : theme.textTheme.titleSmall)
+                          ?.copyWith(
+                            color: const Color(0xFFCFC7B8),
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0,
+                          ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   displayValue,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    color: hasValue
-                        ? const Color(0xFFF4F0E8)
-                        : const Color(0xFF8E8980),
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0,
-                  ),
+                  style:
+                      (compact
+                              ? theme.textTheme.titleMedium
+                              : theme.textTheme.titleLarge)
+                          ?.copyWith(
+                            color: hasValue
+                                ? const Color(0xFFF4F0E8)
+                                : const Color(0xFF8E8980),
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0,
+                          ),
                 ),
                 if (error != null) ...[
                   const SizedBox(height: 4),
@@ -521,8 +897,12 @@ class _TvValueField extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 14),
-          Icon(trailingIcon, size: 24, color: theme.colorScheme.primary),
+          SizedBox(width: compact ? 10 : 12),
+          Icon(
+            trailingIcon,
+            size: compact ? 20 : 23,
+            color: theme.colorScheme.primary,
+          ),
         ],
       ),
     );
@@ -814,11 +1194,13 @@ class _TvStatusBanner extends StatelessWidget {
     required this.icon,
     required this.message,
     required this.color,
+    this.loading = false,
   });
 
   final IconData icon;
   final String message;
   final Color color;
+  final bool loading;
 
   @override
   Widget build(BuildContext context) {
@@ -834,7 +1216,13 @@ class _TvStatusBanner extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           child: Row(
             children: [
-              Icon(icon, color: color, size: 24),
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: loading
+                    ? CircularProgressIndicator(strokeWidth: 2, color: color)
+                    : Icon(icon, color: color, size: 24),
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -923,4 +1311,14 @@ String _providerTypeLabel(ProviderType type) {
     ProviderType.m3uUrl => 'M3U URL',
     ProviderType.m3uFile => 'Local File',
   };
+}
+
+String _formatCount(int value) {
+  if (value >= 1000000) {
+    return '${(value / 1000000).toStringAsFixed(1)}M';
+  }
+  if (value >= 1000) {
+    return '${(value / 1000).toStringAsFixed(1)}K';
+  }
+  return value.toString();
 }

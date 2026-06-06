@@ -4,59 +4,34 @@ class M3uParser {
   const M3uParser();
 
   M3uParseResult parse(String input, {required String providerId}) {
-    final lines = input.split(RegExp(r'\r?\n'));
+    return parseLines(input.split(RegExp(r'\r?\n')), providerId: providerId);
+  }
+
+  M3uParseResult parseLines(
+    Iterable<String> lines, {
+    required String providerId,
+    void Function(int line, int entries)? onProgress,
+  }) {
     final diagnostics = <M3uParseDiagnostic>[];
     final entries = <M3uPlaylistEntry>[];
     final slugCounts = <String, int>{};
     _ExtInfDraft? pending;
 
-    for (var index = 0; index < lines.length; index += 1) {
-      final lineNumber = index + 1;
-      final line = lines[index].trim();
-      if (line.isEmpty || line == '#EXTM3U') {
-        continue;
+    var lineNumber = 0;
+    for (final rawLine in lines) {
+      lineNumber += 1;
+      pending = _parseLine(
+        providerId: providerId,
+        rawLine: rawLine,
+        lineNumber: lineNumber,
+        pending: pending,
+        slugCounts: slugCounts,
+        diagnostics: diagnostics,
+        entries: entries,
+      );
+      if (lineNumber % 10000 == 0) {
+        onProgress?.call(lineNumber, entries.length);
       }
-
-      if (line.startsWith('#EXTINF:')) {
-        if (pending != null) {
-          diagnostics.add(
-            M3uParseDiagnostic(
-              line: pending.line,
-              message: 'EXTINF entry has no following stream URL',
-            ),
-          );
-        }
-        pending = _parseExtInf(line, lineNumber);
-        continue;
-      }
-
-      if (line.startsWith('#')) {
-        continue;
-      }
-
-      if (pending == null) {
-        diagnostics.add(
-          M3uParseDiagnostic(
-            line: lineNumber,
-            message: 'Stream URL has no preceding EXTINF metadata',
-          ),
-        );
-        continue;
-      }
-
-      final slug = _allocateSlug(pending, slugCounts);
-      final entry = _entryFromDraft(providerId, pending, line, slug);
-      if (entry == null) {
-        diagnostics.add(
-          M3uParseDiagnostic(
-            line: pending.line,
-            message: 'EXTINF entry is missing a playable title or URL',
-          ),
-        );
-      } else {
-        entries.add(entry);
-      }
-      pending = null;
     }
 
     if (pending != null) {
@@ -74,6 +49,106 @@ class M3uParser {
       snapshot: _snapshotFor(providerId, entries),
     );
   }
+
+  Future<M3uParseResult> parseStream(
+    Stream<String> lines, {
+    required String providerId,
+    void Function(int line, int entries)? onProgress,
+  }) async {
+    final diagnostics = <M3uParseDiagnostic>[];
+    final entries = <M3uPlaylistEntry>[];
+    final slugCounts = <String, int>{};
+    _ExtInfDraft? pending;
+    var lineNumber = 0;
+
+    await for (final rawLine in lines) {
+      lineNumber += 1;
+      pending = _parseLine(
+        providerId: providerId,
+        rawLine: rawLine,
+        lineNumber: lineNumber,
+        pending: pending,
+        slugCounts: slugCounts,
+        diagnostics: diagnostics,
+        entries: entries,
+      );
+      if (lineNumber % 10000 == 0) {
+        onProgress?.call(lineNumber, entries.length);
+      }
+    }
+
+    if (pending != null) {
+      diagnostics.add(
+        M3uParseDiagnostic(
+          line: pending.line,
+          message: 'EXTINF entry has no following stream URL',
+        ),
+      );
+    }
+    onProgress?.call(lineNumber, entries.length);
+
+    return M3uParseResult(
+      entries: entries,
+      diagnostics: diagnostics,
+      snapshot: _snapshotFor(providerId, entries),
+    );
+  }
+}
+
+_ExtInfDraft? _parseLine({
+  required String providerId,
+  required String rawLine,
+  required int lineNumber,
+  required _ExtInfDraft? pending,
+  required Map<String, int> slugCounts,
+  required List<M3uParseDiagnostic> diagnostics,
+  required List<M3uPlaylistEntry> entries,
+}) {
+  final line = (lineNumber == 1 ? rawLine.replaceFirst('\uFEFF', '') : rawLine)
+      .trim();
+  if (line.isEmpty || line == '#EXTM3U') {
+    return pending;
+  }
+
+  if (line.startsWith('#EXTINF:')) {
+    if (pending != null) {
+      diagnostics.add(
+        M3uParseDiagnostic(
+          line: pending.line,
+          message: 'EXTINF entry has no following stream URL',
+        ),
+      );
+    }
+    return _parseExtInf(line, lineNumber);
+  }
+
+  if (line.startsWith('#')) {
+    return pending;
+  }
+
+  if (pending == null) {
+    diagnostics.add(
+      M3uParseDiagnostic(
+        line: lineNumber,
+        message: 'Stream URL has no preceding EXTINF metadata',
+      ),
+    );
+    return null;
+  }
+
+  final slug = _allocateSlug(pending, slugCounts);
+  final entry = _entryFromDraft(providerId, pending, line, slug);
+  if (entry == null) {
+    diagnostics.add(
+      M3uParseDiagnostic(
+        line: pending.line,
+        message: 'EXTINF entry is missing a playable title or URL',
+      ),
+    );
+  } else {
+    entries.add(entry);
+  }
+  return null;
 }
 
 class M3uParseResult {

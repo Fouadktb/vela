@@ -16,8 +16,10 @@ class ProviderRefreshService {
   ProviderRefreshService({
     required ProviderRepository providerRepository,
     http.Client? httpClient,
-    this.playlistTimeout = const Duration(seconds: 15),
-    this.maxPlaylistBytes = 100 * 1024 * 1024,
+    this.playlistTimeout = const Duration(seconds: 20),
+    this.playlistFirstByteTimeout = const Duration(seconds: 20),
+    this.playlistIdleTimeout = const Duration(seconds: 45),
+    this.maxPlaylistBytes = 256 * 1024 * 1024,
   }) : _providerRepository = providerRepository,
        _httpClient = httpClient ?? http.Client(),
        _ownsHttpClient = httpClient == null;
@@ -26,6 +28,8 @@ class ProviderRefreshService {
   final http.Client _httpClient;
   final bool _ownsHttpClient;
   final Duration playlistTimeout;
+  final Duration playlistFirstByteTimeout;
+  final Duration playlistIdleTimeout;
   final int maxPlaylistBytes;
   final Map<String, _InFlightProviderRefresh> _inFlightRefreshes = {};
   final Map<String, Future<void>> _inFlightEpgRefreshes = {};
@@ -350,11 +354,22 @@ class ProviderRefreshService {
       _emitImportProgress(
         onProgress,
         ProviderImportStage.indexing,
-        'Indexing catalog',
-        current: itemCount,
+        'Saving catalog',
+        current: 0,
         total: itemCount,
       );
-      await _providerRepository.replaceProviderCatalog(importResult.snapshot);
+      await _providerRepository.replaceProviderCatalog(
+        importResult.snapshot,
+        onProgress: (current, total) {
+          _emitImportProgress(
+            onProgress,
+            ProviderImportStage.indexing,
+            'Saving catalog ${_formatCount(current)} of ${_formatCount(total)}',
+            current: current,
+            total: total,
+          );
+        },
+      );
       final message = _successMessage(itemCount, importResult.warningMessage);
       await _providerRepository.finishRefreshRun(
         runId: run.id,
@@ -537,18 +552,11 @@ class ProviderRefreshService {
       ProviderImportStage.live,
       'Loading M3U playlist',
     );
-    final playlist = await _loadPlaylistUrl(source);
-    _emitImportProgress(
-      onProgress,
-      ProviderImportStage.movies,
-      'Parsing M3U playlist',
+    return _loadAndParsePlaylistUrl(
+      providerId: provider.id,
+      source: source,
+      onProgress: onProgress,
     );
-    _emitImportProgress(
-      onProgress,
-      ProviderImportStage.series,
-      'Preparing playlist catalog',
-    );
-    return _parsePlaylist(provider.id, playlist);
   }
 
   Future<_ProviderImportResult> _importM3uFile(
@@ -575,18 +583,13 @@ class ProviderRefreshService {
       if (length > maxPlaylistBytes) {
         throw const ProviderRefreshFailure('Playlist is too large to import');
       }
-      final playlist = await file.readAsString();
-      _emitImportProgress(
-        onProgress,
-        ProviderImportStage.movies,
-        'Parsing M3U playlist',
+      return _loadAndParsePlaylistStream(
+        providerId: provider.id,
+        byteStream: file.openRead(),
+        totalBytes: length,
+        onProgress: onProgress,
+        loadingMessage: 'Reading local playlist',
       );
-      _emitImportProgress(
-        onProgress,
-        ProviderImportStage.series,
-        'Preparing playlist catalog',
-      );
-      return _parsePlaylist(provider.id, playlist);
     } on ProviderRefreshFailure {
       rethrow;
     } on FileSystemException {
@@ -653,20 +656,12 @@ class ProviderRefreshService {
       'Xtream API was rejected; loading generated M3U playlist',
     );
     try {
-      final playlist = await _loadPlaylistUrl(
-        client.buildM3uPlaylistUri().toString(),
+      final parsed = await _loadAndParsePlaylistUrl(
+        providerId: providerId,
+        source: client.buildM3uPlaylistUri().toString(),
+        onProgress: onProgress,
+        loadingMessage: 'Loading generated M3U playlist',
       );
-      _emitImportProgress(
-        onProgress,
-        ProviderImportStage.movies,
-        'Parsing generated M3U playlist',
-      );
-      _emitImportProgress(
-        onProgress,
-        ProviderImportStage.series,
-        'Preparing generated playlist catalog',
-      );
-      final parsed = _parsePlaylist(providerId, playlist);
       return XtreamImportResult(
         snapshot: parsed.snapshot,
         warningMessage: _combineWarnings(
@@ -681,8 +676,129 @@ class ProviderRefreshService {
     }
   }
 
-  _ProviderImportResult _parsePlaylist(String providerId, String playlist) {
-    final parsed = const M3uParser().parse(playlist, providerId: providerId);
+  Future<_ProviderImportResult> _loadAndParsePlaylistUrl({
+    required String providerId,
+    required String source,
+    ProviderImportProgressCallback? onProgress,
+    String loadingMessage = 'Loading M3U playlist',
+  }) async {
+    final uri = Uri.tryParse(source);
+    if (uri == null ||
+        !uri.hasScheme ||
+        (uri.scheme != 'http' && uri.scheme != 'https')) {
+      throw const ProviderRefreshFailure('Playlist source is not supported');
+    }
+
+    late http.StreamedResponse response;
+    try {
+      response = await _httpClient
+          .send(http.Request('GET', uri)..headers.addAll(_playlistHeaders))
+          .timeout(playlistFirstByteTimeout);
+    } on TimeoutException {
+      throw const ProviderRefreshFailure(
+        'Playlist server did not respond in time',
+      );
+    } on http.ClientException {
+      throw const ProviderRefreshFailure('Playlist could not be loaded');
+    } catch (_) {
+      throw const ProviderRefreshFailure('Playlist could not be loaded');
+    }
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ProviderRefreshFailure(
+        'Playlist request failed with HTTP ${response.statusCode}',
+      );
+    }
+    if (response.contentLength != null &&
+        response.contentLength! > maxPlaylistBytes) {
+      throw const ProviderRefreshFailure('Playlist is too large to import');
+    }
+
+    return _loadAndParsePlaylistStream(
+      providerId: providerId,
+      byteStream: response.stream,
+      totalBytes: response.contentLength,
+      onProgress: onProgress,
+      loadingMessage: loadingMessage,
+    );
+  }
+
+  Future<_ProviderImportResult> _loadAndParsePlaylistStream({
+    required String providerId,
+    required Stream<List<int>> byteStream,
+    required int? totalBytes,
+    ProviderImportProgressCallback? onProgress,
+    required String loadingMessage,
+  }) async {
+    var receivedBytes = 0;
+    var nextProgressBytes = 0;
+    final progressStep = totalBytes == null
+        ? 5 * 1024 * 1024
+        : (totalBytes / 20).ceil().clamp(1024 * 1024, 8 * 1024 * 1024).toInt();
+
+    Stream<List<int>> checkedBytes() async* {
+      await for (final chunk in byteStream.timeout(playlistIdleTimeout)) {
+        receivedBytes += chunk.length;
+        if (receivedBytes > maxPlaylistBytes) {
+          throw const ProviderRefreshFailure('Playlist is too large to import');
+        }
+        if (receivedBytes >= nextProgressBytes) {
+          nextProgressBytes = receivedBytes + progressStep;
+          _emitImportProgress(
+            onProgress,
+            ProviderImportStage.live,
+            totalBytes == null
+                ? '$loadingMessage (${_formatBytes(receivedBytes)})'
+                : '$loadingMessage (${_formatBytes(receivedBytes)} of ${_formatBytes(totalBytes)})',
+            current: receivedBytes,
+            total: totalBytes,
+          );
+        }
+        yield chunk;
+      }
+    }
+
+    final lines = checkedBytes()
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .transform(const LineSplitter());
+    _emitImportProgress(
+      onProgress,
+      ProviderImportStage.movies,
+      'Parsing M3U playlist',
+    );
+    try {
+      final parsed = await const M3uParser().parseStream(
+        lines,
+        providerId: providerId,
+        onProgress: (line, entries) {
+          _emitImportProgress(
+            onProgress,
+            ProviderImportStage.movies,
+            'Parsing playlist line ${_formatCount(line)} (${_formatCount(entries)} items)',
+            current: entries,
+          );
+        },
+      );
+      _emitImportProgress(
+        onProgress,
+        ProviderImportStage.series,
+        'Preparing playlist catalog',
+        current: parsed.entries.length,
+        total: parsed.entries.length,
+      );
+      return _parsedPlaylistResult(parsed);
+    } on ProviderRefreshFailure {
+      rethrow;
+    } on TimeoutException {
+      throw const ProviderRefreshFailure(
+        'Playlist download stopped receiving data',
+      );
+    } catch (_) {
+      throw const ProviderRefreshFailure('Playlist could not be imported');
+    }
+  }
+
+  _ProviderImportResult _parsedPlaylistResult(M3uParseResult parsed) {
     if (parsed.entries.isEmpty) {
       throw const ProviderRefreshFailure(
         'Playlist did not contain any playable items',
@@ -706,7 +822,7 @@ class ProviderRefreshService {
     try {
       response = await _httpClient
           .send(http.Request('GET', uri)..headers.addAll(_playlistHeaders))
-          .timeout(playlistTimeout);
+          .timeout(playlistFirstByteTimeout);
     } on TimeoutException {
       throw const ProviderRefreshFailure('Playlist could not be loaded');
     } on http.ClientException {
@@ -727,7 +843,7 @@ class ProviderRefreshService {
 
     final bytes = <int>[];
     try {
-      await for (final chunk in response.stream.timeout(playlistTimeout)) {
+      await for (final chunk in response.stream.timeout(playlistIdleTimeout)) {
         bytes.addAll(chunk);
         if (bytes.length > maxPlaylistBytes) {
           throw const ProviderRefreshFailure('Playlist is too large to import');
@@ -810,6 +926,26 @@ String _successMessage(int itemCount, String? warningMessage) {
     return base;
   }
   return '$base. $warningMessage';
+}
+
+String _formatCount(int value) {
+  if (value >= 1000000) {
+    return '${(value / 1000000).toStringAsFixed(1)}M';
+  }
+  if (value >= 1000) {
+    return '${(value / 1000).toStringAsFixed(1)}K';
+  }
+  return value.toString();
+}
+
+String _formatBytes(int value) {
+  if (value >= 1024 * 1024) {
+    return '${(value / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+  if (value >= 1024) {
+    return '${(value / 1024).toStringAsFixed(1)} KB';
+  }
+  return '$value B';
 }
 
 String _combineWarnings(String first, String? second) {

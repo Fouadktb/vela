@@ -201,35 +201,25 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
         }
         _toggleControlsVisible();
       case LogicalKeyboardKey.arrowLeft:
-        _showControls();
-        if (!_routeHasPrimaryFocus) {
-          return KeyEventResult.ignored;
-        }
-        _seek(SeekZoneDirection.backward);
+        _handleDirectionalKey(
+          TraversalDirection.left,
+          () => _seek(SeekZoneDirection.backward),
+        );
       case LogicalKeyboardKey.arrowRight:
-        _showControls();
-        if (!_routeHasPrimaryFocus) {
-          return KeyEventResult.ignored;
-        }
-        _seek(SeekZoneDirection.forward);
+        _handleDirectionalKey(
+          TraversalDirection.right,
+          () => _seek(SeekZoneDirection.forward),
+        );
       case LogicalKeyboardKey.arrowUp:
-        _showControls();
-        if (_moveFocus(TraversalDirection.up)) {
-          return KeyEventResult.handled;
-        }
-        if (!_routeHasPrimaryFocus) {
-          return KeyEventResult.ignored;
-        }
-        unawaited(_controller.setVolume(_controller.state.volume + 5));
+        _handleDirectionalKey(
+          TraversalDirection.up,
+          () => unawaited(_controller.setVolume(_controller.state.volume + 5)),
+        );
       case LogicalKeyboardKey.arrowDown:
-        _showControls();
-        if (_moveFocus(TraversalDirection.down)) {
-          return KeyEventResult.handled;
-        }
-        if (!_routeHasPrimaryFocus) {
-          return KeyEventResult.ignored;
-        }
-        unawaited(_controller.setVolume(_controller.state.volume - 5));
+        _handleDirectionalKey(
+          TraversalDirection.down,
+          () => unawaited(_controller.setVolume(_controller.state.volume - 5)),
+        );
       case LogicalKeyboardKey.keyF:
         _showControls();
         unawaited(_controller.toggleFullscreen());
@@ -285,6 +275,20 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
     final primaryFocus = FocusManager.instance.primaryFocus ?? _focusNode;
     if (primaryFocus.context == null) return false;
     return primaryFocus.focusInDirection(direction);
+  }
+
+  void _handleDirectionalKey(
+    TraversalDirection direction,
+    VoidCallback fallback,
+  ) {
+    _showControls();
+    if (_moveFocus(direction)) {
+      return;
+    }
+    if (_controlsHaveFocusedChild) {
+      return;
+    }
+    fallback();
   }
 
   void _handleSpaceKey(KeyEvent event) {
@@ -371,8 +375,17 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
     _hideTimer?.cancel();
     _hideTimer = Timer(const Duration(seconds: 3), () {
       if (!mounted || !_controller.state.playing) return;
+      if (_controlsHaveFocusedChild) {
+        _scheduleHide();
+        return;
+      }
       setState(() => _controlsVisible = false);
     });
+  }
+
+  bool get _controlsHaveFocusedChild {
+    final primaryFocus = FocusManager.instance.primaryFocus;
+    return primaryFocus != null && primaryFocus != _focusNode;
   }
 
   void _handleSeekZone(SeekZoneDirection direction) {

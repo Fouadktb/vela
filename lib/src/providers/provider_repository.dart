@@ -148,8 +148,14 @@ class ProviderRepository {
     );
   }
 
-  Future<void> replaceProviderCatalog(ProviderCatalogSnapshot snapshot) {
-    return _catalogRepository.replaceProviderCatalog(snapshot);
+  Future<void> replaceProviderCatalog(
+    ProviderCatalogSnapshot snapshot, {
+    void Function(int current, int total)? onProgress,
+  }) {
+    return _catalogRepository.replaceProviderCatalog(
+      snapshot,
+      onProgress: onProgress,
+    );
   }
 
   Future<void> replaceSeriesEpisodeDetails({

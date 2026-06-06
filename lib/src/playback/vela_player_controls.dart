@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'playback_controller.dart';
@@ -400,80 +401,108 @@ class _RecentLiveChannelTile extends StatelessWidget {
 
     return SizedBox(
       width: 220,
-      child: Material(
-        color: const Color(0x1AFFFFFF),
-        borderRadius: BorderRadius.circular(8),
-        child: InkWell(
-          onTap: onSelect,
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
+      child: FocusableActionDetector(
+        actions: {
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              onSelect();
+              return null;
+            },
+          ),
+        },
+        shortcuts: const {
+          SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+          SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
+        },
+        child: Builder(
+          builder: (context) {
+            final focused = Focus.of(context).hasFocus;
+            return Material(
+              color: focused
+                  ? const Color(0x332A2E33)
+                  : const Color(0x1AFFFFFF),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0x18FFFFFF)),
-            ),
-            child: Row(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: Container(
-                    width: 46,
-                    height: 46,
-                    color: const Color(0xFF0E1012),
-                    alignment: Alignment.center,
-                    child: hasLogo
-                        ? Image.network(
-                            logoUrl!,
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, _, _) => const Icon(
-                              LucideIcons.tv,
-                              color: Color(0xFF8E8980),
-                              size: 21,
-                            ),
-                          )
-                        : const Icon(
-                            LucideIcons.tv,
-                            color: Color(0xFF8E8980),
-                            size: 21,
-                          ),
+              child: InkWell(
+                onTap: onSelect,
+                canRequestFocus: false,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: focused
+                          ? const Color(0xFFECC15D)
+                          : const Color(0x18FFFFFF),
+                      width: focused ? 2 : 1,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
+                  child: Row(
                     children: [
-                      Text(
-                        item.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          height: 1.1,
-                          letterSpacing: 0,
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: Container(
+                          width: 46,
+                          height: 46,
+                          color: const Color(0xFF0E1012),
+                          alignment: Alignment.center,
+                          child: hasLogo
+                              ? Image.network(
+                                  logoUrl!,
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (_, _, _) => const Icon(
+                                    LucideIcons.tv,
+                                    color: Color(0xFF8E8980),
+                                    size: 21,
+                                  ),
+                                )
+                              : const Icon(
+                                  LucideIcons.tv,
+                                  color: Color(0xFF8E8980),
+                                  size: 21,
+                                ),
                         ),
                       ),
-                      if (item.subtitle?.trim().isNotEmpty == true) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          item.subtitle!.trim(),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.labelSmall
-                              ?.copyWith(
-                                color: const Color(0xFFA9A39A),
-                                letterSpacing: 0,
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              item.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.labelLarge
+                                  ?.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800,
+                                    height: 1.1,
+                                    letterSpacing: 0,
+                                  ),
+                            ),
+                            if (item.subtitle?.trim().isNotEmpty == true) ...[
+                              const SizedBox(height: 3),
+                              Text(
+                                item.subtitle!.trim(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      color: const Color(0xFFA9A39A),
+                                      letterSpacing: 0,
+                                    ),
                               ),
+                            ],
+                          ],
                         ),
-                      ],
+                      ),
                     ],
                   ),
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -885,11 +914,12 @@ class _MenuIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final focused = Focus.of(context).hasFocus;
     return Container(
       height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       constraints: const BoxConstraints(minWidth: 44, maxWidth: 190),
-      decoration: _controlDecoration(),
+      decoration: _controlDecoration(focused: focused),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -963,61 +993,92 @@ class _RoundIconButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final foreground = isPrimary ? Colors.black : Colors.white;
-    final background = isPrimary ? Colors.white : const Color(0x66000000);
     final isEnabled = onPressed != null;
 
-    return Tooltip(
-      message: tooltip,
-      child: SizedBox(
-        width: 44,
-        height: 44,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: background,
-            borderRadius: BorderRadius.circular(22),
-            border: isPrimary
-                ? null
-                : Border.all(color: const Color(0x2EFFFFFF)),
-          ),
-          child: IconButton(
-            onPressed: onPressed,
-            icon: Stack(
-              alignment: Alignment.center,
-              children: [
-                Icon(
-                  icon,
-                  color: isEnabled ? foreground : foreground.withAlpha(89),
-                  size: 20,
-                ),
-                if (label != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 1),
-                    child: Text(
-                      label!,
-                      style: TextStyle(
-                        color: isEnabled
-                            ? foreground
-                            : foreground.withAlpha(89),
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0,
-                      ),
+    return FocusableActionDetector(
+      enabled: isEnabled,
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (_) {
+            onPressed?.call();
+            return null;
+          },
+        ),
+      },
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
+      },
+      child: Builder(
+        builder: (context) {
+          final focused = Focus.of(context).hasFocus;
+          return Tooltip(
+            message: tooltip,
+            child: SizedBox(
+              width: 44,
+              height: 44,
+              child: Material(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(22),
+                child: InkWell(
+                  onTap: onPressed,
+                  canRequestFocus: false,
+                  borderRadius: BorderRadius.circular(22),
+                  child: DecoratedBox(
+                    decoration: _controlDecoration(
+                      focused: focused,
+                      primary: isPrimary,
+                    ),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Icon(
+                          icon,
+                          color: isEnabled
+                              ? foreground
+                              : foreground.withAlpha(89),
+                          size: 20,
+                        ),
+                        if (label != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 1),
+                            child: Text(
+                              label!,
+                              style: TextStyle(
+                                color: isEnabled
+                                    ? foreground
+                                    : foreground.withAlpha(89),
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-              ],
+                ),
+              ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
 }
 
-BoxDecoration _controlDecoration() {
+BoxDecoration _controlDecoration({bool focused = false, bool primary = false}) {
   return BoxDecoration(
-    color: const Color(0x66000000),
+    color: primary
+        ? Colors.white
+        : focused
+        ? const Color(0xCC2A2E33)
+        : const Color(0x66000000),
     borderRadius: BorderRadius.circular(22),
-    border: Border.all(color: const Color(0x2EFFFFFF)),
+    border: Border.all(
+      color: focused ? const Color(0xFFECC15D) : const Color(0x2EFFFFFF),
+      width: focused ? 2 : 1,
+    ),
   );
 }
 

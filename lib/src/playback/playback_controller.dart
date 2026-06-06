@@ -44,6 +44,9 @@ class PlaybackController extends ChangeNotifier {
   late media_kit.Track _selectedTrack;
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   Timer? _stalledTimer;
+  DateTime? _lastTimelineNotifiedAt;
+  Duration _lastNotifiedPosition = Duration.zero;
+  Duration _lastNotifiedBuffer = Duration.zero;
   Duration _stallStartPosition = Duration.zero;
   Duration _stallStartBuffer = Duration.zero;
   double _lastAudibleVolume = 100;
@@ -236,7 +239,9 @@ class PlaybackController extends ChangeNotifier {
       )
       ..add(
         _player.stream.bufferingPercentage.listen((value) {
-          _emit(_state.copyWith(bufferingPercentage: value.clamp(0, 100)));
+          _emitTimeline(
+            _state.copyWith(bufferingPercentage: value.clamp(0, 100)),
+          );
         }),
       )
       ..add(
@@ -305,7 +310,7 @@ class PlaybackController extends ChangeNotifier {
 
   void _handlePositionChanged(Duration value) {
     final progressed = value > _state.position;
-    _emit(_state.copyWith(position: value));
+    _emitTimeline(_state.copyWith(position: value));
     if (!progressed) return;
 
     _clearStalledStatus();
@@ -316,7 +321,7 @@ class PlaybackController extends ChangeNotifier {
 
   void _handleBufferChanged(Duration value) {
     final progressed = value > _state.buffer;
-    _emit(_state.copyWith(buffer: value));
+    _emitTimeline(_state.copyWith(buffer: value));
     if (progressed && _state.buffering) {
       _startStalledTimer();
     }
@@ -494,6 +499,29 @@ class PlaybackController extends ChangeNotifier {
   void _emit(VelaPlayerState next) {
     if (_disposed) return;
     _state = next;
+    _lastTimelineNotifiedAt = DateTime.now();
+    _lastNotifiedPosition = next.position;
+    _lastNotifiedBuffer = next.buffer;
+    notifyListeners();
+  }
+
+  void _emitTimeline(VelaPlayerState next) {
+    if (_disposed) return;
+    _state = next;
+    final now = DateTime.now();
+    final elapsed = _lastTimelineNotifiedAt == null
+        ? const Duration(seconds: 1)
+        : now.difference(_lastTimelineNotifiedAt!);
+    final positionDelta = (next.position - _lastNotifiedPosition).abs();
+    final bufferDelta = (next.buffer - _lastNotifiedBuffer).abs();
+    if (elapsed < const Duration(milliseconds: 350) &&
+        positionDelta < const Duration(seconds: 1) &&
+        bufferDelta < const Duration(seconds: 5)) {
+      return;
+    }
+    _lastTimelineNotifiedAt = now;
+    _lastNotifiedPosition = next.position;
+    _lastNotifiedBuffer = next.buffer;
     notifyListeners();
   }
 }

@@ -197,10 +197,27 @@ class CatalogRepository {
     );
   }
 
-  Future<void> replaceProviderCatalog(ProviderCatalogSnapshot snapshot) async {
+  Future<void> replaceProviderCatalog(
+    ProviderCatalogSnapshot snapshot, {
+    void Function(int current, int total)? onProgress,
+  }) async {
     final now = snapshot.refreshedAtMs ?? _nowMs();
     _validateSnapshot(snapshot);
     final refreshedEpisodeSeriesIds = snapshot.refreshedEpisodeSeriesIds;
+    final categories = _collectCategories(snapshot).values.toList();
+    final totalWrites =
+        categories.length +
+        snapshot.items.length +
+        snapshot.series.length +
+        snapshot.seasons.length +
+        snapshot.episodes.length;
+    var written = 0;
+
+    void emitProgress(int count) {
+      if (count <= 0) return;
+      written += count;
+      onProgress?.call(written.clamp(0, totalWrites).toInt(), totalWrites);
+    }
 
     await _db.transaction(() async {
       await (_db.update(_db.categories)
@@ -221,17 +238,9 @@ class CatalogRepository {
             .write(const EpisodesCompanion(isStale: Value(true)));
       }
 
-      final categories = _collectCategories(snapshot);
-      for (final category in categories.values) {
-        await _upsertCategory(category, now);
-      }
-
-      for (final item in snapshot.items) {
-        await _upsertCatalogItem(item, now);
-      }
-      for (final item in snapshot.series) {
-        await _upsertSeries(item, now);
-      }
+      await _batchUpsertCategories(categories, now, emitProgress);
+      await _batchUpsertCatalogItems(snapshot.items, now, emitProgress);
+      await _batchUpsertSeries(snapshot, now, emitProgress);
       if (refreshedEpisodeSeriesIds != null) {
         await _markEpisodeDetailsStaleForSeries(
           providerId: snapshot.providerId,
@@ -239,12 +248,8 @@ class CatalogRepository {
         );
         await _markEpisodeDetailsStaleForRemovedSeries(snapshot.providerId);
       }
-      for (final item in snapshot.seasons) {
-        await _upsertSeason(item, now);
-      }
-      for (final item in snapshot.episodes) {
-        await _upsertEpisode(item, now);
-      }
+      await _batchUpsertSeasons(snapshot.seasons, now, emitProgress);
+      await _batchUpsertEpisodes(snapshot.episodes, now, emitProgress);
 
       await (_db.update(
         _db.catalogProviders,
@@ -1006,95 +1011,6 @@ class CatalogRepository {
     });
   }
 
-  Future<void> _upsertCategory(
-    CatalogCategoryInput input,
-    int lastSeenAt,
-  ) async {
-    final normalizedName = normalizeCatalogText(input.name);
-    final categoryId = catalogCategoryId(
-      input.providerId,
-      input.contentType,
-      input.name,
-    );
-    await _db
-        .into(_db.categories)
-        .insertOnConflictUpdate(
-          CategoriesCompanion.insert(
-            id: categoryId,
-            providerId: input.providerId,
-            contentType: input.contentType.name,
-            name: input.name.trim(),
-            normalizedName: normalizedName,
-            externalId: Value(input.externalId ?? input.id),
-            itemCount: Value(input.itemCount ?? 0),
-            lastSeenAt: Value(lastSeenAt),
-            isStale: const Value(false),
-          ),
-        );
-  }
-
-  Future<void> _upsertCatalogItem(CatalogItemInput input, int now) async {
-    final categoryId = await _resolveCategoryId(input);
-
-    await _db
-        .into(_db.catalogItems)
-        .insertOnConflictUpdate(
-          CatalogItemsCompanion.insert(
-            id: input.id,
-            providerId: input.providerId,
-            contentType: input.contentType.name,
-            title: input.title.trim(),
-            normalizedTitle: normalizeCatalogText(input.title),
-            categoryId: Value(categoryId),
-            subtitle: Value(input.subtitle),
-            description: Value(input.description),
-            artworkUrl: Value(input.artworkUrl),
-            streamUrl: Value(input.streamUrl),
-            streamJson: Value(input.streamJson),
-            externalId: Value(input.externalId),
-            year: Value(input.year),
-            rating: Value(input.rating),
-            durationSeconds: Value(input.durationSeconds),
-            epgChannelId: Value(input.epgChannelId),
-            containerExtension: Value(input.containerExtension),
-            updatedAt: Value(now),
-            lastSeenAt: Value(now),
-            isStale: const Value(false),
-          ),
-        );
-  }
-
-  Future<void> _upsertSeries(SeriesInput input, int now) async {
-    if (input.catalogItemId != null &&
-        !await _catalogItemExists(
-          providerId: input.providerId,
-          contentType: CatalogContentType.series,
-          itemId: input.catalogItemId!,
-        )) {
-      throw ArgumentError('Series catalog item is not in provider scope');
-    }
-
-    final seriesId = _seriesRowId(input);
-    await _db
-        .into(_db.series)
-        .insertOnConflictUpdate(
-          SeriesCompanion.insert(
-            id: seriesId,
-            providerId: input.providerId,
-            title: input.title.trim(),
-            normalizedTitle: normalizeCatalogText(input.title),
-            catalogItemId: Value(input.catalogItemId),
-            externalId: Value(input.id),
-            overview: Value(input.overview),
-            posterUrl: Value(input.posterUrl),
-            backdropUrl: Value(input.backdropUrl),
-            updatedAt: Value(now),
-            lastSeenAt: Value(now),
-            isStale: const Value(false),
-          ),
-        );
-  }
-
   Future<void> _upsertSeason(SeasonInput input, int now) async {
     final seriesId = await _resolveSeriesId(
       providerId: input.providerId,
@@ -1157,6 +1073,176 @@ class CatalogRepository {
         );
   }
 
+  Future<void> _batchUpsertCategories(
+    Iterable<CatalogCategoryInput> inputs,
+    int now,
+    void Function(int count) onProgress,
+  ) async {
+    for (final chunk in _chunked(inputs, 500)) {
+      await _db.batch((batch) {
+        batch.insertAllOnConflictUpdate(_db.categories, [
+          for (final input in chunk)
+            CategoriesCompanion.insert(
+              id: catalogCategoryId(
+                input.providerId,
+                input.contentType,
+                input.name,
+              ),
+              providerId: input.providerId,
+              contentType: input.contentType.name,
+              name: input.name.trim(),
+              normalizedName: normalizeCatalogText(input.name),
+              externalId: Value(input.externalId ?? input.id),
+              itemCount: Value(input.itemCount ?? 0),
+              lastSeenAt: Value(now),
+              isStale: const Value(false),
+            ),
+        ]);
+      });
+      onProgress(chunk.length);
+    }
+  }
+
+  Future<void> _batchUpsertCatalogItems(
+    Iterable<CatalogItemInput> inputs,
+    int now,
+    void Function(int count) onProgress,
+  ) async {
+    for (final chunk in _chunked(inputs, 500)) {
+      await _db.batch((batch) {
+        batch.insertAllOnConflictUpdate(_db.catalogItems, [
+          for (final input in chunk)
+            CatalogItemsCompanion.insert(
+              id: input.id,
+              providerId: input.providerId,
+              contentType: input.contentType.name,
+              title: input.title.trim(),
+              normalizedTitle: normalizeCatalogText(input.title),
+              categoryId: Value(_snapshotCategoryIdForItem(input)),
+              subtitle: Value(input.subtitle),
+              description: Value(input.description),
+              artworkUrl: Value(input.artworkUrl),
+              streamUrl: Value(input.streamUrl),
+              streamJson: Value(input.streamJson),
+              externalId: Value(input.externalId),
+              year: Value(input.year),
+              rating: Value(input.rating),
+              durationSeconds: Value(input.durationSeconds),
+              epgChannelId: Value(input.epgChannelId),
+              containerExtension: Value(input.containerExtension),
+              updatedAt: Value(now),
+              lastSeenAt: Value(now),
+              isStale: const Value(false),
+            ),
+        ]);
+      });
+      onProgress(chunk.length);
+    }
+  }
+
+  Future<void> _batchUpsertSeries(
+    ProviderCatalogSnapshot snapshot,
+    int now,
+    void Function(int count) onProgress,
+  ) async {
+    final seriesCatalogItems = snapshot.items
+        .where((item) => item.contentType == CatalogContentType.series)
+        .map((item) => item.id)
+        .toSet();
+    for (final input in snapshot.series) {
+      final catalogItemId = input.catalogItemId?.trim();
+      if (catalogItemId != null &&
+          catalogItemId.isNotEmpty &&
+          !seriesCatalogItems.contains(catalogItemId)) {
+        throw ArgumentError('Series catalog item is not in provider scope');
+      }
+    }
+
+    for (final chunk in _chunked(snapshot.series, 500)) {
+      await _db.batch((batch) {
+        batch.insertAllOnConflictUpdate(_db.series, [
+          for (final input in chunk)
+            SeriesCompanion.insert(
+              id: _seriesRowId(input),
+              providerId: input.providerId,
+              title: input.title.trim(),
+              normalizedTitle: normalizeCatalogText(input.title),
+              catalogItemId: Value(input.catalogItemId),
+              externalId: Value(input.id),
+              overview: Value(input.overview),
+              posterUrl: Value(input.posterUrl),
+              backdropUrl: Value(input.backdropUrl),
+              updatedAt: Value(now),
+              lastSeenAt: Value(now),
+              isStale: const Value(false),
+            ),
+        ]);
+      });
+      onProgress(chunk.length);
+    }
+  }
+
+  Future<void> _batchUpsertSeasons(
+    Iterable<SeasonInput> inputs,
+    int now,
+    void Function(int count) onProgress,
+  ) async {
+    for (final chunk in _chunked(inputs, 500)) {
+      await _db.batch((batch) {
+        batch.insertAllOnConflictUpdate(_db.seasons, [
+          for (final input in chunk)
+            SeasonsCompanion.insert(
+              id: _seasonRowId(input),
+              providerId: input.providerId,
+              seriesId: input.seriesId,
+              seasonNumber: input.seasonNumber,
+              title: Value(input.title),
+              overview: Value(input.overview),
+              posterUrl: Value(input.posterUrl),
+              updatedAt: Value(now),
+              lastSeenAt: Value(now),
+              isStale: const Value(false),
+            ),
+        ]);
+      });
+      onProgress(chunk.length);
+    }
+  }
+
+  Future<void> _batchUpsertEpisodes(
+    Iterable<EpisodeInput> inputs,
+    int now,
+    void Function(int count) onProgress,
+  ) async {
+    for (final chunk in _chunked(inputs, 500)) {
+      await _db.batch((batch) {
+        batch.insertAllOnConflictUpdate(_db.episodes, [
+          for (final input in chunk)
+            EpisodesCompanion.insert(
+              id: input.id,
+              providerId: input.providerId,
+              seriesId: input.seriesId,
+              seasonId: _snapshotSeasonIdForEpisode(input),
+              seasonNumber: input.seasonNumber,
+              episodeNumber: input.episodeNumber,
+              title: input.title.trim(),
+              normalizedTitle: normalizeCatalogText(input.title),
+              description: Value(input.description),
+              artworkUrl: Value(input.artworkUrl),
+              streamUrl: Value(input.streamUrl),
+              streamJson: Value(input.streamJson),
+              externalId: Value(input.externalId),
+              durationSeconds: Value(input.durationSeconds),
+              updatedAt: Value(now),
+              lastSeenAt: Value(now),
+              isStale: const Value(false),
+            ),
+        ]);
+      });
+      onProgress(chunk.length);
+    }
+  }
+
   Future<void> _markEpisodeDetailsStaleForSeries({
     required String providerId,
     required Set<String> seriesIds,
@@ -1214,67 +1300,6 @@ class CatalogRepository {
     );
   }
 
-  Future<String?> _resolveCategoryId(CatalogItemInput input) async {
-    final categoryName = input.categoryName?.trim();
-    if (categoryName != null && categoryName.isNotEmpty) {
-      final row =
-          await (_db.select(_db.categories)..where(
-                (category) =>
-                    category.providerId.equals(input.providerId) &
-                    category.contentType.equals(input.contentType.name) &
-                    category.normalizedName.equals(
-                      normalizeCatalogText(categoryName),
-                    ) &
-                    category.isStale.equals(false),
-              ))
-              .getSingleOrNull();
-      if (row != null) {
-        return row.id;
-      }
-    }
-
-    final sourceCategoryId = input.categoryId?.trim();
-    if (sourceCategoryId == null || sourceCategoryId.isEmpty) {
-      if (categoryName != null && categoryName.isNotEmpty) {
-        throw ArgumentError('Catalog item category is not in provider scope');
-      }
-      return null;
-    }
-
-    final row =
-        await (_db.select(_db.categories)..where(
-              (category) =>
-                  category.providerId.equals(input.providerId) &
-                  category.contentType.equals(input.contentType.name) &
-                  (category.id.equals(sourceCategoryId) |
-                      category.externalId.equals(sourceCategoryId)) &
-                  category.isStale.equals(false),
-            ))
-            .getSingleOrNull();
-    if (row == null) {
-      throw ArgumentError('Catalog item category is not in provider scope');
-    }
-
-    return row.id;
-  }
-
-  Future<bool> _catalogItemExists({
-    required String providerId,
-    required CatalogContentType contentType,
-    required String itemId,
-  }) async {
-    final row =
-        await (_db.select(_db.catalogItems)..where(
-              (item) =>
-                  item.providerId.equals(providerId) &
-                  item.contentType.equals(contentType.name) &
-                  item.id.equals(itemId) &
-                  item.isStale.equals(false),
-            ))
-            .getSingleOrNull();
-    return row != null;
-  }
-
   Future<String> _resolveSeriesId({
     required String providerId,
     required String seriesId,
@@ -1330,6 +1355,20 @@ String _seriesRowId(SeriesInput input) {
 
 String _seasonRowId(SeasonInput input) {
   return input.seasonNumber.toString();
+}
+
+String? _snapshotCategoryIdForItem(CatalogItemInput input) {
+  final categoryName = input.categoryName?.trim();
+  if (categoryName != null && categoryName.isNotEmpty) {
+    return catalogCategoryId(input.providerId, input.contentType, categoryName);
+  }
+  final categoryId = input.categoryId?.trim();
+  return categoryId == null || categoryId.isEmpty ? null : categoryId;
+}
+
+String _snapshotSeasonIdForEpisode(EpisodeInput input) {
+  final seasonId = input.seasonId.trim();
+  return seasonId.isEmpty ? input.seasonNumber.toString() : seasonId;
 }
 
 String catalogCategoryId(

@@ -22,12 +22,16 @@ class ProviderSetupImportController extends ChangeNotifier {
   String? _errorMessage;
   ProviderImportStage _stage = ProviderImportStage.validating;
   ProviderImportStage? _failedStage;
+  int? _current;
+  int? _total;
 
   bool get isImporting => _isImporting;
   String? get statusMessage => _statusMessage;
   String? get errorMessage => _errorMessage;
   ProviderImportStage get stage => _stage;
   ProviderImportStage? get failedStage => _failedStage;
+  int? get current => _current;
+  int? get total => _total;
   bool get shouldKeepSetupVisible => _isImporting || _errorMessage != null;
 
   void start() {
@@ -36,6 +40,8 @@ class ProviderSetupImportController extends ChangeNotifier {
     _errorMessage = null;
     _stage = ProviderImportStage.validating;
     _failedStage = null;
+    _current = null;
+    _total = null;
     notifyListeners();
   }
 
@@ -47,6 +53,8 @@ class ProviderSetupImportController extends ChangeNotifier {
           ? ProviderImportStage.indexing
           : _stage;
       _stage = ProviderImportStage.failed;
+      _current = progress.current;
+      _total = progress.total;
       notifyListeners();
       return;
     }
@@ -54,6 +62,8 @@ class ProviderSetupImportController extends ChangeNotifier {
     _errorMessage = null;
     _stage = progress.stage;
     _failedStage = null;
+    _current = progress.current;
+    _total = progress.total;
     notifyListeners();
   }
 
@@ -63,6 +73,8 @@ class ProviderSetupImportController extends ChangeNotifier {
     _errorMessage = null;
     _stage = ProviderImportStage.done;
     _failedStage = null;
+    _current = null;
+    _total = null;
     notifyListeners();
   }
 
@@ -77,6 +89,8 @@ class ProviderSetupImportController extends ChangeNotifier {
       _ => _stage,
     };
     _stage = ProviderImportStage.failed;
+    _current = null;
+    _total = null;
     notifyListeners();
   }
 }
