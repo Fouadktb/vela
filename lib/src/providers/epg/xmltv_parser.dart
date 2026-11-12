@@ -22,19 +22,22 @@ class XmltvParser {
       final channelId = node.getAttribute('channel')?.trim();
       final startAt = _xmltvDate(node.getAttribute('start'));
       final endAt = _xmltvDate(node.getAttribute('stop'));
-      final title = _childText(node, 'title');
       if (channelId == null ||
           channelId.isEmpty ||
           startAt == null ||
           endAt == null ||
           endAt.millisecondsSinceEpoch <= startAt.millisecondsSinceEpoch ||
           endAt.millisecondsSinceEpoch < fromMs ||
-          startAt.millisecondsSinceEpoch > toMs ||
-          title == null ||
-          title.isEmpty) {
+          startAt.millisecondsSinceEpoch > toMs) {
         continue;
       }
 
+      // Avoid decoding text for programmes outside the retained time window,
+      // and decode it only once when a channel has several display aliases.
+      final title = _childText(node, 'title');
+      if (title == null || title.isEmpty) continue;
+      final description = _childText(node, 'desc');
+      final category = _childText(node, 'category');
       final aliases = channelAliases[channelId] ?? [channelId];
       for (final alias in aliases) {
         programs.add(
@@ -44,8 +47,8 @@ class XmltvParser {
             startAtMs: startAt.millisecondsSinceEpoch,
             endAtMs: endAt.millisecondsSinceEpoch,
             title: title,
-            description: _childText(node, 'desc'),
-            category: _childText(node, 'category'),
+            description: description,
+            category: category,
           ),
         );
       }
@@ -90,9 +93,7 @@ DateTime? _xmltvDate(String? value) {
   if (clean == null || clean.length < 14) {
     return null;
   }
-  final match = RegExp(
-    r'^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?:\s*([+-])(\d{2})(\d{2}))?',
-  ).firstMatch(clean);
+  final match = _xmltvDatePattern.firstMatch(clean);
   if (match == null) {
     return null;
   }
@@ -113,3 +114,7 @@ DateTime? _xmltvDate(String? value) {
   }
   return date.toLocal();
 }
+
+final _xmltvDatePattern = RegExp(
+  r'^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?:\s*([+-])(\d{2})(\d{2}))?',
+);

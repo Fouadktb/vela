@@ -1,12 +1,14 @@
 # Vela
 
-Vela is a desktop IPTV player for macOS and Windows. The app uses Flutter with an embedded `media_kit` video surface, local catalog storage, provider import, and watch continuity.
+Vela supports macOS and Windows desktop apps only. The app uses Flutter with an embedded `media_kit` video surface, local catalog storage, provider import, and watch continuity.
 
 The repository is public so installed builds can check GitHub Releases for newer versions without authentication. Vela does not auto-update and is not code-signed; when an update is available, the app opens the release page and the user downloads and installs the new build manually.
 
+There are no browser, phone, or TV app targets in this repository. The supported apps share one Flutter implementation and retain native `media_kit` playback.
+
 ## Flutter Setup
 
-Install the Flutter desktop toolchain, then enable the platforms you need:
+Install Flutter 3.44.0 (the version used by CI), then enable the platforms you need:
 
 ```bash
 flutter config --enable-macos-desktop
@@ -14,25 +16,20 @@ flutter config --enable-windows-desktop
 flutter pub get
 ```
 
-On this development machine, use the bundled Flutter SDK:
-
-```bash
-PATH="$HOME/.codex/toolchains/flutter/bin:$PATH" flutter pub get
-```
-
 ## Local Development
 
 Run the macOS desktop app from the repository root:
 
 ```bash
-PATH="$HOME/.codex/toolchains/flutter/bin:$PATH" flutter run -d macos
+flutter run -d macos
 ```
 
 Format and analyze the Flutter app:
 
 ```bash
-PATH="$HOME/.codex/toolchains/flutter/bin:$PATH" dart format --set-exit-if-changed .
-PATH="$HOME/.codex/toolchains/flutter/bin:$PATH" flutter analyze
+dart format --set-exit-if-changed .
+flutter analyze
+flutter test
 ```
 
 ## Local Builds
@@ -40,13 +37,13 @@ PATH="$HOME/.codex/toolchains/flutter/bin:$PATH" flutter analyze
 Build the macOS app:
 
 ```bash
-PATH="$HOME/.codex/toolchains/flutter/bin:$PATH" flutter build macos
+flutter build macos
 ```
 
 Create a macOS DMG for GitHub upload:
 
 ```bash
-PATH="$HOME/.codex/toolchains/flutter/bin:$PATH" scripts/package-macos.sh
+scripts/package-macos.sh
 ```
 
 Build the Windows app on Windows:
@@ -83,3 +80,24 @@ gh release upload vX.Y.Z release/vela-macos-vX.Y.Z.dmg release/SHA256SUMS-vX.Y.Z
 ```
 
 Code signing, notarization, and automatic updates are intentionally out of scope. Users will see OS warnings for unsigned builds and install updates manually from GitHub Releases.
+
+## Playback preferences and import performance
+
+Volume and mute are saved globally in the app settings database, including the
+last audible level used when unmuting. Playback restores the saved level before
+opening a stream, and closing playback flushes pending changes.
+
+M3U imports use a set to track series catalog entries, avoiding repeated scans of
+the growing catalog. XMLTV imports filter by the requested time window before
+decoding programme descriptions. Run the repeatable parser benchmark with:
+
+```bash
+dart run scripts/benchmark_m3u.dart
+```
+
+The app remains Flutter/Dart. A Rust migration requires a separately validated
+native playback, storage migration, and macOS/Windows packaging path; these
+performance fixes do not introduce a second implementation.
+
+Desktop checks build both supported targets in GitHub Actions on every push to
+`main` and on pull requests.

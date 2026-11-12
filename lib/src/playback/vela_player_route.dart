@@ -12,6 +12,7 @@ import '../platform/vela_windowing.dart';
 import 'playable_item.dart';
 import 'playback_controller.dart';
 import 'playback_preferences.dart';
+import 'playback_volume_preferences.dart';
 import 'player_state.dart';
 import 'recent_live_channels.dart';
 import 'seek_zones.dart';
@@ -69,7 +70,9 @@ class _VelaPlayerRouteState extends ConsumerState<VelaPlayerRoute> {
   @override
   void initState() {
     super.initState();
-    _controller = PlaybackController();
+    _controller = PlaybackController(
+      volumePreferences: ref.read(playbackVolumePreferencesProvider),
+    );
     _preferencesRepository = PlaybackPreferencesRepository(
       ref.read(appSettingsRepositoryProvider),
     );

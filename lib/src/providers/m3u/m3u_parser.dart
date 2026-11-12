@@ -1,10 +1,12 @@
+import 'dart:convert';
+
 import '../../catalog/catalog_models.dart';
 
 class M3uParser {
   const M3uParser();
 
   M3uParseResult parse(String input, {required String providerId}) {
-    return parseLines(input.split(RegExp(r'\r?\n')), providerId: providerId);
+    return parseLines(LineSplitter.split(input), providerId: providerId);
   }
 
   M3uParseResult parseLines(
@@ -221,8 +223,7 @@ _ExtInfDraft _parseExtInf(String line, int lineNumber) {
       ? line.substring(commaIndex + 1).trim()
       : 'Unnamed Channel';
   final attributes = <String, String>{};
-  final attributePattern = RegExp(r'([\w-]+)="([^"]*)"');
-  for (final match in attributePattern.allMatches(metadata)) {
+  for (final match in _attributePattern.allMatches(metadata)) {
     attributes[match.group(1)!] = match.group(2) ?? '';
   }
 
@@ -300,6 +301,7 @@ ProviderCatalogSnapshot _snapshotFor(
 ) {
   final categories = <String, CatalogCategoryInput>{};
   final items = <CatalogItemInput>[];
+  final seriesItemIds = <String>{};
   final series = <String, SeriesInput>{};
   final seasons = <String, SeasonInput>{};
   final episodes = <EpisodeInput>[];
@@ -326,7 +328,7 @@ ProviderCatalogSnapshot _snapshotFor(
         contentType: CatalogContentType.series,
         name: entry.categoryName,
       );
-      if (!items.any((item) => item.id == seriesItemId)) {
+      if (seriesItemIds.add(seriesItemId)) {
         items.add(
           CatalogItemInput(
             id: seriesItemId,
@@ -412,21 +414,17 @@ CatalogContentType _inferContentType({
   }
 
   final text = '$title $category $url'.toLowerCase();
-  if (RegExp(r'\b(series|tv series)\b').hasMatch(text)) {
+  if (_seriesPattern.hasMatch(text)) {
     return CatalogContentType.live;
   }
-  if (RegExp(r'\b(movie|movies|vod|film|films|cinema)\b').hasMatch(text) ||
-      RegExp(r'\.(mp4|mkv|avi|mov|m4v)(\?|$)').hasMatch(text)) {
+  if (_moviePattern.hasMatch(text) || _movieExtensionPattern.hasMatch(text)) {
     return CatalogContentType.movie;
   }
   return CatalogContentType.live;
 }
 
 _EpisodeParts? _parseEpisodeParts(String title) {
-  final match = RegExp(
-    r'^(.*?)\s*[-_. ]*s(\d{1,2})\s*e(\d{1,3})\b',
-    caseSensitive: false,
-  ).firstMatch(title);
+  final match = _episodePattern.firstMatch(title);
   if (match == null) {
     return null;
   }
@@ -465,8 +463,8 @@ String _allocateSlug(_ExtInfDraft draft, Map<String, int> slugCounts) {
 String _slugify(String value) {
   final slug = value
       .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
-      .replaceAll(RegExp(r'^-+|-+$'), '');
+      .replaceAll(_slugCharactersPattern, '-')
+      .replaceAll(_slugEdgesPattern, '');
   if (slug.isEmpty) {
     return 'item';
   }
@@ -485,10 +483,23 @@ String? _firstNonEmpty(Iterable<String?> values) {
 
 String? _containerExtensionFromUrl(String url) {
   final path = Uri.tryParse(url)?.path.toLowerCase() ?? url.toLowerCase();
-  final match = RegExp(r'\.([a-z0-9]{2,5})$').firstMatch(path);
+  final match = _containerExtensionPattern.firstMatch(path);
   return match?.group(1);
 }
 
 String _categoryKey(CatalogContentType contentType, String name) {
   return '${contentType.name}:${name.trim().toLowerCase()}';
 }
+
+// Compiled once per isolate, rather than once for every playlist entry.
+final _attributePattern = RegExp(r'([\w-]+)="([^"]*)"');
+final _seriesPattern = RegExp(r'\b(series|tv series)\b');
+final _moviePattern = RegExp(r'\b(movie|movies|vod|film|films|cinema)\b');
+final _movieExtensionPattern = RegExp(r'\.(mp4|mkv|avi|mov|m4v)(\?|$)');
+final _episodePattern = RegExp(
+  r'^(.*?)\s*[-_. ]*s(\d{1,2})\s*e(\d{1,3})\b',
+  caseSensitive: false,
+);
+final _slugCharactersPattern = RegExp(r'[^a-z0-9]+');
+final _slugEdgesPattern = RegExp(r'^-+|-+$');
+final _containerExtensionPattern = RegExp(r'\.([a-z0-9]{2,5})$');

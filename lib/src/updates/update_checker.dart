@@ -10,13 +10,6 @@ final updateStatusProvider = FutureProvider<UpdateStatus>((ref) {
   return const GitHubUpdateChecker().check();
 });
 
-final _androidTvApkNamePattern = RegExp(
-  r'^vela-android-tv-v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)'
-  r'(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?'
-  r'(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\.apk$',
-  caseSensitive: false,
-);
-
 class UpdateStatus {
   const UpdateStatus({
     required this.currentVersion,
@@ -24,7 +17,6 @@ class UpdateStatus {
     required this.releaseUrl,
     required this.hasUpdate,
     required this.checkedAt,
-    this.androidApkUrl,
   });
 
   final String currentVersion;
@@ -32,7 +24,6 @@ class UpdateStatus {
   final String releaseUrl;
   final bool hasUpdate;
   final DateTime checkedAt;
-  final String? androidApkUrl;
 }
 
 class GitHubUpdateChecker {
@@ -63,7 +54,6 @@ class GitHubUpdateChecker {
 
     final tag = body['tag_name'] as String?;
     final releaseUrl = body['html_url'] as String? ?? velaReleasesUrl;
-    final androidApkUrl = _androidTvApkUrl(body['assets']);
     if (tag == null || tag.trim().isEmpty) {
       throw const UpdateCheckException('Latest release has no version tag');
     }
@@ -74,7 +64,6 @@ class GitHubUpdateChecker {
       releaseUrl: releaseUrl,
       hasUpdate: compareReleaseVersions(tag, velaReleaseTag) > 0,
       checkedAt: DateTime.now(),
-      androidApkUrl: androidApkUrl,
     );
   }
 }
@@ -117,38 +106,6 @@ List<int> _releaseVersionParts(String value) {
       .toList(growable: false);
 }
 
-String? _androidTvApkUrl(Object? assets) {
-  if (assets is! List<Object?>) {
-    return null;
-  }
-
-  for (final asset in assets) {
-    if (asset is! Map<Object?, Object?>) {
-      continue;
-    }
-
-    final name = asset['name'];
-    final downloadUrl = asset['browser_download_url'];
-    if (name is! String || downloadUrl is! String) {
-      continue;
-    }
-
-    final trimmedName = name.trim();
-    if (!_androidTvApkNamePattern.hasMatch(trimmedName)) {
-      continue;
-    }
-
-    final downloadUri = Uri.tryParse(downloadUrl.trim());
-    if (downloadUri == null ||
-        !_isVelaGitHubReleaseDownload(downloadUri, trimmedName)) {
-      continue;
-    }
-    return downloadUri.toString();
-  }
-
-  return null;
-}
-
 Future<void> openExternalUrl(String url) async {
   final uri = Uri.tryParse(url.trim());
   if (uri == null || !_isValidExternalUrl(uri)) {
@@ -170,26 +127,4 @@ Future<void> openExternalUrl(String url) async {
 bool _isValidExternalUrl(Uri uri) {
   final scheme = uri.scheme.toLowerCase();
   return (scheme == 'http' || scheme == 'https') && uri.host.isNotEmpty;
-}
-
-bool _isVelaGitHubReleaseDownload(Uri uri, String assetName) {
-  if (uri.scheme.toLowerCase() != 'https' ||
-      uri.host.toLowerCase() != 'github.com' ||
-      uri.userInfo.isNotEmpty ||
-      uri.hasQuery ||
-      uri.hasFragment) {
-    return false;
-  }
-
-  final segments = uri.pathSegments;
-  if (segments.length != 6 ||
-      segments[0].toLowerCase() != velaRepositoryOwner.toLowerCase() ||
-      segments[1].toLowerCase() != velaRepositoryName.toLowerCase() ||
-      segments[2] != 'releases' ||
-      segments[3] != 'download' ||
-      segments.last.toLowerCase() != assetName.toLowerCase()) {
-    return false;
-  }
-
-  return true;
 }

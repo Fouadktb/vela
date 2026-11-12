@@ -1,0 +1,35 @@
+name: Desktop checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  desktop:
+    name: Validate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.0
+          cache: true
+      - name: Select Xcode 16.4
+        if: runner.os == 'macOS'
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app
+      - run: flutter pub get
+      - run: dart format --output=none --set-exit-if-changed lib test scripts
+      - run: dart run scripts/verify_version_sync.dart
+      - run: flutter analyze
+      - run: flutter test
+      - if: runner.os == 'macOS'
+        run: flutter build macos --release
+      - if: runner.os == 'Windows'
+        run: flutter build windows --release

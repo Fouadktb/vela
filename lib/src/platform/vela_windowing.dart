@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'vela_platform.dart';
@@ -11,14 +10,7 @@ class VelaWindowing {
   const VelaWindowing._();
 
   static Future<void> initializeMainWindow() async {
-    if (!VelaPlatform.isDesktopWindowPlatform) {
-      await SystemChrome.setPreferredOrientations([
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]);
-      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-      return;
-    }
+    if (!VelaPlatform.isDesktopWindowPlatform) return;
 
     await windowManager.ensureInitialized();
     await windowManager.waitUntilReadyToShow(
@@ -45,7 +37,7 @@ class VelaFullscreenController {
 
   Future<bool> refreshFullscreenState() async {
     if (!VelaPlatform.isDesktopWindowPlatform) {
-      _isFullscreen = true;
+      _isFullscreen = false;
       return _isFullscreen;
     }
     _isFullscreen = await windowManager.isFullScreen();
@@ -54,8 +46,6 @@ class VelaFullscreenController {
 
   Future<void> setFullscreen(bool enabled) async {
     if (!VelaPlatform.isDesktopWindowPlatform) {
-      _isFullscreen = true;
-      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
       return;
     }
 
@@ -84,8 +74,6 @@ class VelaFullscreenController {
 
   Future<void> exitFullscreenIfNeeded() async {
     if (!VelaPlatform.isDesktopWindowPlatform) {
-      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-      _isFullscreen = true;
       return;
     }
     if (await windowManager.isFullScreen()) {

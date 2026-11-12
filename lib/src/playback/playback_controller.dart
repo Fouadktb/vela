@@ -9,10 +9,13 @@ import '../platform/vela_windowing.dart';
 import 'playable_item.dart';
 import 'player_state.dart';
 import 'playback_error_policy.dart';
+import 'playback_volume_preferences.dart';
 import 'track_models.dart';
 
 class PlaybackController extends ChangeNotifier {
-  PlaybackController() {
+  PlaybackController({
+    required PlaybackVolumePreferencesRepository volumePreferences,
+  }) {
     _player = media_kit.Player(
       configuration: const media_kit.PlayerConfiguration(
         title: 'Vela',
@@ -35,6 +38,14 @@ class PlaybackController extends ChangeNotifier {
     _syncTrackModels(notify: false);
     _bindPlayerStreams();
     _syncFullscreen();
+    _volumeSession = PlaybackVolumeSession(
+      repository: volumePreferences,
+      apply: (volume) async {
+        if (_disposed) return;
+        await _player.setVolume(volume);
+        _emit(_state.copyWith(volume: volume, isMuted: volume == 0));
+      },
+    );
   }
 
   late final media_kit.Player _player;
@@ -49,7 +60,7 @@ class PlaybackController extends ChangeNotifier {
   Duration _lastNotifiedBuffer = Duration.zero;
   Duration _stallStartPosition = Duration.zero;
   Duration _stallStartBuffer = Duration.zero;
-  double _lastAudibleVolume = 100;
+  late final PlaybackVolumeSession _volumeSession;
   String? _dismissedPlaybackWarningMessage;
   bool _disposed = false;
   final VelaFullscreenController _fullscreenController =
@@ -78,6 +89,8 @@ class PlaybackController extends ChangeNotifier {
     );
 
     try {
+      await _volumeSession.prepareForPlayback();
+      if (_disposed) return;
       await _player.open(
         media_kit.Media(item.streamUrl, httpHeaders: _mediaHttpHeaders),
         play: true,
@@ -133,22 +146,9 @@ class PlaybackController extends ChangeNotifier {
     return _player.seek(target);
   }
 
-  Future<void> setVolume(double volume) async {
-    final next = volume.clamp(0, 100).toDouble();
-    if (next > 0) {
-      _lastAudibleVolume = next;
-    }
-    await _player.setVolume(next);
-    _emit(_state.copyWith(volume: next, isMuted: next == 0));
-  }
+  Future<void> setVolume(double volume) => _volumeSession.setVolume(volume);
 
-  Future<void> toggleMute() {
-    if (_state.isMuted || _state.volume == 0) {
-      return setVolume(_lastAudibleVolume <= 0 ? 80 : _lastAudibleVolume);
-    }
-    _lastAudibleVolume = _state.volume;
-    return setVolume(0);
-  }
+  Future<void> toggleMute() => _volumeSession.toggleMute();
 
   Future<void> setPlaybackSpeed(double speed) async {
     await _player.setRate(speed);
@@ -187,6 +187,7 @@ class PlaybackController extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    await _volumeSession.flush();
     _cancelStalledTimer();
     _dismissedPlaybackWarningMessage = null;
     await _player.stop();
@@ -277,9 +278,6 @@ class PlaybackController extends ChangeNotifier {
       )
       ..add(
         _player.stream.volume.listen((value) {
-          if (value > 0) {
-            _lastAudibleVolume = value;
-          }
           _emit(_state.copyWith(volume: value, isMuted: value == 0));
         }),
       )

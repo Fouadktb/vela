@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../platform/vela_platform.dart';
 import '../shell/vela_shell.dart';
-import '../tv/vela_tv_shell.dart';
 import 'app_theme.dart';
 
 class VelaApp extends StatelessWidget {
@@ -14,9 +12,7 @@ class VelaApp extends StatelessWidget {
       title: 'Vela',
       debugShowCheckedModeBanner: false,
       theme: buildVelaTheme(),
-      home: VelaPlatform.surface == VelaSurface.android
-          ? const VelaTvShell()
-          : const VelaShell(),
+      home: const VelaShell(),
     );
   }
 }

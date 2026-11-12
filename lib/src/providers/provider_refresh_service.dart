@@ -70,13 +70,11 @@ class ProviderRefreshService {
       onProgress: onProgress,
     );
     _inFlightSeriesEpisodeRefreshes[key] = refresh;
-    unawaited(
-      refresh.whenComplete(() {
-        if (identical(_inFlightSeriesEpisodeRefreshes[key], refresh)) {
-          _inFlightSeriesEpisodeRefreshes.remove(key);
-        }
-      }),
-    );
+    _observeCompletion(refresh, () {
+      if (identical(_inFlightSeriesEpisodeRefreshes[key], refresh)) {
+        _inFlightSeriesEpisodeRefreshes.remove(key);
+      }
+    });
     return refresh;
   }
 
@@ -115,13 +113,11 @@ class ProviderRefreshService {
       CatalogContentType.live => Future<void>.value(),
     };
     _inFlightItemDetailRefreshes[key] = refresh;
-    unawaited(
-      refresh.whenComplete(() {
-        if (identical(_inFlightItemDetailRefreshes[key], refresh)) {
-          _inFlightItemDetailRefreshes.remove(key);
-        }
-      }),
-    );
+    _observeCompletion(refresh, () {
+      if (identical(_inFlightItemDetailRefreshes[key], refresh)) {
+        _inFlightItemDetailRefreshes.remove(key);
+      }
+    });
     return refresh;
   }
 
@@ -229,13 +225,11 @@ class ProviderRefreshService {
       force: force,
     );
     _inFlightEpgRefreshes[refreshKey] = refresh;
-    unawaited(
-      refresh.whenComplete(() {
-        if (identical(_inFlightEpgRefreshes[refreshKey], refresh)) {
-          _inFlightEpgRefreshes.remove(refreshKey);
-        }
-      }),
-    );
+    _observeCompletion(refresh, () {
+      if (identical(_inFlightEpgRefreshes[refreshKey], refresh)) {
+        _inFlightEpgRefreshes.remove(refreshKey);
+      }
+    });
     return refresh;
   }
 
@@ -323,13 +317,11 @@ class ProviderRefreshService {
     inFlight = _InFlightProviderRefresh(refresh);
     inFlight.addListener(onProgress);
     _inFlightRefreshes[provider.id] = inFlight;
-    unawaited(
-      refresh.whenComplete(() {
-        if (identical(_inFlightRefreshes[provider.id], inFlight)) {
-          _inFlightRefreshes.remove(provider.id);
-        }
-      }),
-    );
+    _observeCompletion(refresh, () {
+      if (identical(_inFlightRefreshes[provider.id], inFlight)) {
+        _inFlightRefreshes.remove(provider.id);
+      }
+    });
     return refresh;
   }
 
@@ -428,13 +420,11 @@ class ProviderRefreshService {
 
     final refresh = _refreshStaleProviders();
     _staleRefresh = refresh;
-    unawaited(
-      refresh.whenComplete(() {
-        if (identical(_staleRefresh, refresh)) {
-          _staleRefresh = null;
-        }
-      }),
-    );
+    _observeCompletion(refresh, () {
+      if (identical(_staleRefresh, refresh)) {
+        _staleRefresh = null;
+      }
+    });
     return refresh;
   }
 
@@ -585,7 +575,7 @@ class ProviderRefreshService {
       if (length > maxPlaylistBytes) {
         throw const ProviderRefreshFailure('Playlist is too large to import');
       }
-      return _loadAndParsePlaylistStream(
+      return await _loadAndParsePlaylistStream(
         providerId: provider.id,
         byteStream: file.openRead(),
         totalBytes: length,
@@ -992,4 +982,16 @@ String _safeRefreshError(Object error) {
     return 'Imported catalog data was not valid';
   }
   return 'Provider refresh failed';
+}
+
+// Observe completion without spawning an unhandled duplicate of a failed Future.
+void _observeCompletion<T>(Future<T> future, void Function() cleanup) {
+  future
+      .then<void>(
+        (_) => cleanup(),
+        onError: (Object error, StackTrace stack) {
+          cleanup();
+        },
+      )
+      .ignore();
 }
