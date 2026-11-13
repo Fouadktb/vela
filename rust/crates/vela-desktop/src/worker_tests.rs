@@ -1114,6 +1114,7 @@ fn live_channels_never_resume_old_positions_when_reopened_from_history() -> Resu
 }
 
 struct HeldImport {
+    begin: Option<mpsc::Sender<()>>,
     provider: Provider,
     started: mpsc::Receiver<()>,
     release: Option<mpsc::Sender<()>>,
@@ -1126,7 +1127,11 @@ impl HeldImport {
         let address = listener.local_addr()?;
         let (started_tx, started) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
+        let (begin_tx, begin_rx) = mpsc::channel();
         let join = thread::spawn(move || {
+            if begin_rx.recv().is_err() {
+                return;
+            }
             let deadline = Instant::now() + Duration::from_secs(10);
             let mut stream = loop {
                 match listener.accept() {
@@ -1165,13 +1170,18 @@ impl HeldImport {
         let mut provider = provider(id);
         provider.source = format!("http://{address}/playlist");
         Ok(Self {
+            begin: Some(begin_tx),
             provider,
             started,
             release: Some(release_tx),
             join: Some(join),
         })
     }
-    fn start(&self, worker: &Worker) -> Result<()> {
+    fn start(&mut self, worker: &Worker) -> Result<()> {
+        self.begin
+            .take()
+            .expect("import fixture starts once")
+            .send(())?;
         worker.send(Command::Refresh(self.provider.clone()));
         self.started.recv_timeout(Duration::from_secs(10))?;
         Ok(())
@@ -1184,6 +1194,7 @@ impl HeldImport {
 }
 impl Drop for HeldImport {
     fn drop(&mut self) {
+        self.begin.take();
         self.release();
         if let Some(join) = self.join.take() {
             let _ = join.join();

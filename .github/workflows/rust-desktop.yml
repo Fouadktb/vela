@@ -40,7 +40,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
       - name: Unit and integration tests
-        run: cargo test --manifest-path rust/Cargo.toml --locked --workspace
+        run: cargo test --manifest-path rust/Cargo.toml --locked --workspace -- --test-threads=2
       - name: Build, sign, and verify universal app and DMG
         run: scripts/package-rust-macos.sh
       - name: Upload macOS artifacts
@@ -74,7 +74,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
       - name: Unit and integration tests
-        run: cargo test --manifest-path rust/Cargo.toml --locked --workspace
+        run: cargo test --manifest-path rust/Cargo.toml --locked --workspace -- --test-threads=2
       - name: Install packaging tools
         shell: pwsh
         run: |
