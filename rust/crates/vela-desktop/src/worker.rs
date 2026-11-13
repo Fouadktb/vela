@@ -58,7 +58,50 @@ impl PlaybackTarget {
     }
 }
 
+#[derive(Clone)]
+pub struct GlobalSearchResult {
+    pub item: CatalogItem,
+    pub progress: Option<PlaybackProgress>,
+}
+#[derive(Clone)]
+pub struct GlobalSearchGroup {
+    pub title: &'static str,
+    pub icon: &'static str,
+    pub results: Vec<GlobalSearchResult>,
+}
+#[derive(Clone)]
+pub struct GlobalSearchResults {
+    pub query: String,
+    pub groups: Vec<GlobalSearchGroup>,
+}
+/// Slash mode is a view over the library; the underlying section filters stay
+/// intact so deleting the prefix or clicking the toggle restores them exactly.
+pub fn global_search_query(value: &str) -> Option<&str> {
+    value.trim_start().strip_prefix('/').map(str::trim)
+}
+pub fn toggle_global_search(query: &mut CatalogQuery) {
+    query.search = match global_search_query(&query.search) {
+        Some(_) => query
+            .search
+            .trim_start()
+            .strip_prefix('/')
+            .unwrap_or("")
+            .trim_start()
+            .to_owned(),
+        None => {
+            let search = query.search.trim();
+            if search.is_empty() {
+                "/".to_owned()
+            } else {
+                format!("/ {search}")
+            }
+        }
+    };
+    query.offset = 0;
+}
+
 pub struct ViewData {
+    pub global_search: Option<GlobalSearchResults>,
     pub providers: Vec<Provider>,
     pub categories: Vec<Category>,
     pub page: CatalogPage,
@@ -249,13 +292,22 @@ impl Worker {
                                     }
                                 }
                             }
+                            let global_search = global_search_query(&query.search)
+                                .map(|search| search_library(&store, search))
+                                .transpose()?;
+                            let page = if global_search.is_some() {
+                                CatalogPage::default()
+                            } else {
+                                store.catalog(&query)?
+                            };
                             let data = ViewData {
+                                global_search,
                                 providers: store.providers()?,
                                 categories: store.categories(
                                     query.provider_id.as_deref(),
                                     query.content_type.as_deref().unwrap_or("live"),
                                 )?,
-                                page: store.catalog(&query)?,
+                                page,
                                 history,
                                 home_continue,
                                 settings: store.settings()?,
@@ -798,6 +850,125 @@ fn scheduled_refreshes(
         })
         .take(slots)
         .collect()
+}
+
+fn search_library(store: &Store, search: &str) -> Result<GlobalSearchResults> {
+    let query = search.trim().to_owned();
+    let mut groups = Vec::new();
+    if query.is_empty() {
+        return Ok(GlobalSearchResults { query, groups });
+    }
+    const LIMIT: usize = 8;
+    for (title, icon, kind) in [
+        ("Live", "tv", "live"),
+        ("Movies", "film", "movie"),
+        ("Series", "library", "series"),
+    ] {
+        let items = store
+            .catalog(&CatalogQuery {
+                content_type: Some(kind.into()),
+                search: query.clone(),
+                limit: LIMIT,
+                ..Default::default()
+            })?
+            .items;
+        if !items.is_empty() {
+            groups.push(GlobalSearchGroup {
+                title,
+                icon,
+                results: items
+                    .into_iter()
+                    .map(|item| GlobalSearchResult {
+                        item,
+                        progress: None,
+                    })
+                    .collect(),
+            });
+        }
+    }
+    let mut favorites = Vec::new();
+    for kind in ["live", "movie", "series"] {
+        favorites.extend(
+            store
+                .catalog(&CatalogQuery {
+                    content_type: Some(kind.into()),
+                    favorites_only: true,
+                    search: query.clone(),
+                    limit: LIMIT,
+                    ..Default::default()
+                })?
+                .items
+                .into_iter()
+                .take(LIMIT - favorites.len())
+                .map(|item| GlobalSearchResult {
+                    item,
+                    progress: None,
+                }),
+        );
+        if favorites.len() >= LIMIT {
+            break;
+        }
+    }
+    if !favorites.is_empty() {
+        groups.push(GlobalSearchGroup {
+            title: "Favorites",
+            icon: "star",
+            results: favorites,
+        });
+    }
+    let normalized = query.to_lowercase();
+    let mut recent = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for progress in store.recent_history(1000)? {
+        if !progress.title.to_lowercase().contains(&normalized)
+            && !progress
+                .subtitle
+                .as_deref()
+                .is_some_and(|text| text.to_lowercase().contains(&normalized))
+        {
+            continue;
+        }
+        let (kind, id) = if progress.item_type == "episode" {
+            ("series", progress.series_id.as_deref().unwrap_or(""))
+        } else {
+            (progress.item_type.as_str(), progress.item_id.as_str())
+        };
+        if !seen.insert((progress.provider_id.clone(), kind.to_owned(), id.to_owned())) {
+            continue;
+        }
+        let Some(item) = store.item(&progress.provider_id, kind, id)? else {
+            continue;
+        };
+        let playable = if kind == "series" {
+            !store.episodes(&progress.provider_id, id)?.is_empty()
+        } else {
+            item.stream_url
+                .as_deref()
+                .is_some_and(|url| !url.trim().is_empty())
+                || item
+                    .stream_json
+                    .as_deref()
+                    .is_some_and(|json| !json.trim().is_empty())
+        };
+        if !playable {
+            continue;
+        }
+        recent.push(GlobalSearchResult {
+            item,
+            progress: Some(progress),
+        });
+        if recent.len() >= LIMIT {
+            break;
+        }
+    }
+    if !recent.is_empty() {
+        groups.push(GlobalSearchGroup {
+            title: "Recent",
+            icon: "history",
+            results: recent,
+        });
+    }
+    Ok(GlobalSearchResults { query, groups })
 }
 
 #[cfg(test)]

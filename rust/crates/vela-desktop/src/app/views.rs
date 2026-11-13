@@ -317,6 +317,7 @@ impl VelaApp {
                         vec2(230.0, 58.0),
                         Layout::top_down(Align::LEFT),
                         |ui| {
+                            ui.set_min_width(230.0);
                             ui.label(
                                 title(
                                     match self.section {
@@ -343,24 +344,55 @@ impl VelaApp {
                         .inner_margin(10.0)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(theme::icon("search").size(20.0).color(MUTED));
+                                ui.label(
+                                    theme::icon(
+                                        if crate::worker::global_search_query(&self.query.search)
+                                            .is_some()
+                                        {
+                                            "globe2"
+                                        } else {
+                                            "search"
+                                        },
+                                    )
+                                    .size(20.0)
+                                    .color(MUTED),
+                                );
+                                let hint = if crate::worker::global_search_query(&self.query.search)
+                                    .is_some()
+                                {
+                                    "Global search".to_owned()
+                                } else {
+                                    format!(
+                                        "Search {} or / global",
+                                        self.section.label().to_lowercase()
+                                    )
+                                };
                                 let response = ui.add_sized(
                                     [(ui.available_width() - extras).max(80.0), 28.0],
                                     egui::TextEdit::singleline(&mut self.query.search)
-                                        .hint_text(format!(
-                                            "Search {} or / global",
-                                            self.section.label().to_lowercase()
-                                        ))
+                                        .hint_text(hint)
                                         .frame(false),
                                 );
                                 if response.changed() {
                                     self.search_changed = Some(Instant::now());
+                                    self.loading = true;
                                 }
                             });
                         });
-                    if icon_button(ui, "globe2", "Search everything").clicked() {
-                        self.query.content_type = None;
-                        self.query.offset = 0;
+                    let global = crate::worker::global_search_query(&self.query.search).is_some();
+                    if icon_button(
+                        ui,
+                        if global { "search" } else { "globe2" },
+                        if global {
+                            "Search this section"
+                        } else {
+                            "Search everything"
+                        },
+                    )
+                    .clicked()
+                    {
+                        crate::worker::toggle_global_search(&mut self.query);
+                        self.search_changed = None;
                         self.reload();
                     }
                     if self.section == Section::Live {
@@ -426,12 +458,18 @@ impl VelaApp {
             return;
         }
         if self.providers.is_empty()
-            || (self.providers.iter().all(|p| p.last_refresh_at.is_none()) && self.page.total == 0)
+            || (self.providers.iter().all(|p| p.last_refresh_at.is_none())
+                && self.page.total == 0
+                && crate::worker::global_search_query(&self.query.search).is_none())
         {
             self.onboarding(ui);
             return;
         }
         self.header(ui);
+        if crate::worker::global_search_query(&self.query.search).is_some() {
+            self.global_search_ui(ui);
+            return;
+        }
         let body = ui.available_rect_before_wrap();
         let has_categories = matches!(
             self.section,
@@ -1266,8 +1304,240 @@ impl VelaApp {
         response
     }
 
+    fn global_search_ui(&mut self, ui: &mut Ui) {
+        let query = crate::worker::global_search_query(&self.query.search)
+            .unwrap_or("")
+            .to_owned();
+        let results = self
+            .global_search
+            .clone()
+            .filter(|results| results.query == query);
+        if query.is_empty() {
+            self.global_notice(ui,"globe2","Global search","Type after / to search live, movies, series, favorites, and recent items together.");
+            return;
+        }
+        if self.error.is_some() && results.is_none() && !self.loading {
+            self.global_notice(
+                ui,
+                "searchAlert",
+                "Search unavailable",
+                "The library search could not be loaded.",
+            );
+            return;
+        }
+        if self.loading || results.is_none() {
+            self.global_notice(
+                ui,
+                "search",
+                "Searching library",
+                "Checking live, movies, series, favorites, and recent items.",
+            );
+            return;
+        }
+        let results = results.unwrap();
+        if results.groups.is_empty() {
+            self.global_notice(ui,"searchX","No global results",&format!("No live channels, movies, series, favorites, or recent items match \"{query}\"."));
+            return;
+        }
+        egui::ScrollArea::vertical()
+            .id_salt("global-search-results")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Frame::new()
+                    .inner_margin(egui::Margin {
+                        left: 30,
+                        right: 30,
+                        top: 4,
+                        bottom: 32,
+                    })
+                    .show(ui, |ui| {
+                        for group in results.groups {
+                            ui.horizontal(|ui| {
+                                ui.label(theme::icon(group.icon).size(18.0).color(ACCENT));
+                                ui.label(title(group.title, 14.0));
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    ui.label(
+                                        RichText::new(group.results.len().to_string())
+                                            .size(12.0)
+                                            .color(MUTED),
+                                    );
+                                });
+                            });
+                            ui.add_space(10.0);
+                            let columns =
+                                ((ui.available_width() + 10.0) / 340.0).floor().max(1.0) as usize;
+                            for row in group.results.chunks(columns) {
+                                ui.horizontal_top(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 10.0;
+                                    for result in row {
+                                        self.global_tile(ui, result);
+                                    }
+                                });
+                                ui.add_space(10.0);
+                            }
+                            ui.add_space(8.0);
+                        }
+                    });
+            });
+    }
+    fn global_notice(&self, ui: &mut Ui, icon: &str, heading: &str, body: &str) {
+        let area = ui.available_rect_before_wrap();
+        let size = vec2(420.0_f32.min(area.width() - 32.0), 112.0);
+        let rect = Rect::from_center_size(area.center(), size);
+        ui.painter().add(
+            egui::Frame::new()
+                .fill(PANEL)
+                .stroke(Stroke::new(1.0_f32, BORDER))
+                .corner_radius(8)
+                .paint(rect),
+        );
+        ui.scope_builder(UiBuilder::new().max_rect(rect.shrink(18.0)), |ui| {
+            ui.horizontal_top(|ui| {
+                ui.label(theme::icon(icon).size(24.0).color(ACCENT));
+                ui.add_space(4.0);
+                ui.vertical(|ui| {
+                    ui.label(title(heading, 14.0));
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(theme::display_text(body)).color(MUTED));
+                });
+            });
+        });
+        ui.advance_cursor_after_rect(area);
+    }
+    fn global_tile(&mut self, ui: &mut Ui, result: &crate::worker::GlobalSearchResult) {
+        let item = &result.item;
+        let width = 330.0_f32.min(ui.available_width());
+        let (rect, response) = ui.allocate_exact_size(vec2(width, 92.0), Sense::click());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!(
+                    "{} · {}",
+                    item.title,
+                    match item.content_type.as_str() {
+                        "live" => "Live channel",
+                        "series" => "Series",
+                        _ => "Movie",
+                    }
+                ),
+            )
+        });
+
+        ui.painter().rect_filled(
+            rect,
+            8.0,
+            if response.hovered() {
+                SURFACE_HIGH
+            } else {
+                PANEL
+            },
+        );
+        ui.painter().rect_stroke(
+            rect,
+            8.0,
+            Stroke::new(1.0_f32, BORDER),
+            egui::StrokeKind::Inside,
+        );
+        let art = Rect::from_min_size(rect.min + vec2(10.0, 10.0), vec2(62.0, 72.0));
+        self.paint_artwork(ui, item, art);
+        let x = rect.left() + 84.0;
+        let available = (rect.width() - 118.0).max(60.0);
+        let text_clip = Rect::from_min_size(pos2(x, rect.top() + 10.0), vec2(available, 64.0));
+        let painter = ui.painter().with_clip_rect(text_clip);
+        let heading =
+            painter.layout_no_wrap(theme::display_text(&item.title), theme::bold(14.0), TEXT);
+        painter.galley(pos2(x, rect.top() + 14.0), heading, TEXT);
+        let subtitle = item
+            .subtitle
+            .as_deref()
+            .unwrap_or(match item.content_type.as_str() {
+                "live" => "Live channel",
+                "series" => "Series",
+                _ => "Movie",
+            });
+        let subtitle = painter.layout_no_wrap(
+            theme::display_text(subtitle),
+            FontId::proportional(12.0),
+            MUTED,
+        );
+        painter.galley(pos2(x, rect.top() + 35.0), subtitle, MUTED);
+        let mut badge_x = x;
+        for badge in [
+            Some(match item.content_type.as_str() {
+                "live" => "Live channel",
+                "series" => "Series",
+                _ => "Movie",
+            }),
+            item.is_favorite.then_some("Favorite"),
+            result.progress.is_some().then_some("Recent"),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let text = ui.painter().layout_no_wrap(
+                badge.into(),
+                theme::bold(10.0),
+                Color32::from_rgb(215, 208, 198),
+            );
+            let badge = Rect::from_min_size(
+                pos2(badge_x, rect.top() + 59.0),
+                text.size() + vec2(14.0, 6.0),
+            );
+            if badge.right() > rect.right() - 29.0 {
+                break;
+            }
+            ui.painter()
+                .rect_filled(badge, 128u8, Color32::from_rgb(26, 29, 32));
+            ui.painter().rect_stroke(
+                badge,
+                128u8,
+                Stroke::new(1.0_f32, OUTLINE),
+                egui::StrokeKind::Inside,
+            );
+            ui.painter().galley(badge.min + vec2(7.0, 3.0), text, TEXT);
+            badge_x = badge.right() + 6.0;
+        }
+        ui.painter().text(
+            pos2(rect.right() - 17.0, rect.center().y),
+            Align2::CENTER_CENTER,
+            glyph(if item.content_type == "live" {
+                "play"
+            } else {
+                "panelTopOpen"
+            }),
+            FontId::new(18.0, egui::FontFamily::Name("Vela Lucide".into())),
+            ACCENT,
+        );
+        if response.clicked() {
+            if item.content_type == "live" {
+                self.prepare(item.clone());
+            } else {
+                self.open_detail(item.clone());
+            }
+        }
+        if let Some(progress) = &result.progress {
+            response.context_menu(|ui| {
+                if ui
+                    .button(if progress.completed {
+                        "Play again"
+                    } else {
+                        "Resume"
+                    })
+                    .clicked()
+                {
+                    self.worker.send(Command::ResumeHistory(progress.clone()));
+                    ui.close();
+                }
+            });
+        }
+    }
     pub(super) fn recent_ui(&mut self, ui: &mut Ui) {
         self.header(ui);
+        if crate::worker::global_search_query(&self.query.search).is_some() {
+            self.global_search_ui(ui);
+            return;
+        }
         let body = ui.available_rect_before_wrap();
         let detail = Rect::from_min_size(
             pos2(body.right() - 320.0, body.top()),

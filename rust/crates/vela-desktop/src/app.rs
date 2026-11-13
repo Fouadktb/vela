@@ -78,6 +78,7 @@ pub struct VelaApp {
     latest_series: Vec<CatalogItem>,
     home_favorites: Vec<CatalogItem>,
     home_continue: Vec<(CatalogItem, PlaybackProgress)>,
+    global_search: Option<crate::worker::GlobalSearchResults>,
     home_selected: Option<CatalogItem>,
     selected_catalog: Option<CatalogItem>,
     category_sidebar_width: f32,
@@ -152,6 +153,7 @@ impl VelaApp {
             latest_series: vec![],
             home_favorites: vec![],
             home_continue: vec![],
+            global_search: None,
             home_selected: None,
             selected_catalog: None,
             category_sidebar_width: 280.0,
@@ -235,7 +237,9 @@ impl VelaApp {
                         latest_series,
                         home_favorites,
                         home_continue,
+                        global_search,
                     } = data;
+                    self.global_search = global_search;
                     self.latest_movies = latest_movies;
                     self.latest_series = latest_series;
                     self.home_favorites = home_favorites;

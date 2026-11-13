@@ -771,3 +771,197 @@ fn stale_provider_results_are_discarded_even_after_source_changes_back() -> Resu
     assert_eq!(count, 0);
     Ok(())
 }
+
+#[test]
+fn global_search_round_trip_ignores_then_restores_section_filters_and_recent_scope() -> Result<()> {
+    use crate::worker::{global_search_query, toggle_global_search};
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("global-worker.sqlite");
+    let store = Store::open(&path)?;
+    for id in ["a", "b"] {
+        store.upsert_provider(&provider(id))?;
+    }
+    let favorite = CatalogItem {
+        id: "a-film".into(),
+        provider_id: "a".into(),
+        content_type: "movie".into(),
+        category_id: Some("a-category".into()),
+        title: "Needle Movie".into(),
+        stream_url: Some("https://fixture.invalid/movie.ts".into()),
+        ..Default::default()
+    };
+    store.replace_catalog(&ImportSnapshot {
+        provider_id: "a".into(),
+        items: vec![
+            favorite.clone(),
+            CatalogItem {
+                id: "hidden-movie".into(),
+                provider_id: "a".into(),
+                content_type: "movie".into(),
+                category_id: Some("a-category".into()),
+                title: "Needle Unfavorited".into(),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    })?;
+    store.toggle_favorite(&favorite)?;
+    let mut items = (0..12)
+        .map(|index| CatalogItem {
+            id: format!("b-live-{index}"),
+            provider_id: "b".into(),
+            content_type: "live".into(),
+            title: format!("Needle Live {index:02}"),
+            stream_url: Some(format!("https://fixture.invalid/live-{index}.ts")),
+            ..Default::default()
+        })
+        .collect::<Vec<_>>();
+    items.push(CatalogItem {
+        id: "b-movie".into(),
+        provider_id: "b".into(),
+        content_type: "movie".into(),
+        title: "Another provider's movie".into(),
+        subtitle: Some("Needle appears in the subtitle".into()),
+        stream_url: Some("https://fixture.invalid/b-movie.ts".into()),
+        ..Default::default()
+    });
+    items.push(CatalogItem {
+        id: "b-series".into(),
+        provider_id: "b".into(),
+        content_type: "series".into(),
+        title: "Needle Series".into(),
+        ..Default::default()
+    });
+    store.replace_catalog(&ImportSnapshot {
+        provider_id: "b".into(),
+        items,
+        ..Default::default()
+    })?;
+    store.replace_series_details(&SeriesDetails {
+        series: Series {
+            id: "b-series".into(),
+            provider_id: "b".into(),
+            catalog_item_id: Some("b-series".into()),
+            title: "Needle Series".into(),
+            ..Default::default()
+        },
+        seasons: vec![Season {
+            provider_id: "b".into(),
+            series_id: "b-series".into(),
+            season_number: 2,
+            ..Default::default()
+        }],
+        episodes: vec![Episode {
+            id: "shared:episode".into(),
+            provider_id: "b".into(),
+            series_id: "b-series".into(),
+            season_id: "2".into(),
+            season_number: 2,
+            episode_number: 1,
+            title: "Needle Pilot".into(),
+            stream_url: Some("https://fixture.invalid/season-2-pilot.ts".into()),
+            ..Default::default()
+        }],
+    })?;
+    store.save_progress(&PlaybackProgress {
+        provider_id: "b".into(),
+        item_id: "shared:episode".into(),
+        item_type: "episode".into(),
+        series_id: Some("b-series".into()),
+        season_id: Some("2".into()),
+        title: "Needle Pilot".into(),
+        position_seconds: 47,
+        ..Default::default()
+    })?;
+    drop(store);
+    let worker = start(&path);
+    let mut query = CatalogQuery {
+        provider_id: Some("a".into()),
+        content_type: Some("movie".into()),
+        category_id: Some("a-category".into()),
+        favorites_only: true,
+        search: "Needle".into(),
+        limit: 60,
+        ..Default::default()
+    };
+    let section = load(&worker, 700, query.clone());
+    assert!(section.global_search.is_none());
+    assert_eq!(section.page.total, 1);
+    assert_eq!(section.page.items[0].id, "a-film");
+    toggle_global_search(&mut query);
+    assert_eq!(query.search, "/ Needle");
+    assert_eq!(global_search_query(&query.search), Some("Needle"));
+    // The UI's preserved filters remain unchanged; only the worker's separate
+    // global request ignores them. No irreversible filter reset is involved.
+    assert_eq!(query.provider_id.as_deref(), Some("a"));
+    assert_eq!(query.content_type.as_deref(), Some("movie"));
+    assert_eq!(query.category_id.as_deref(), Some("a-category"));
+    assert!(query.favorites_only);
+    let global = load(&worker, 701, query.clone())
+        .global_search
+        .expect("slash prefix must activate grouped search");
+    assert_eq!(global.query, "Needle");
+    assert_eq!(
+        global.groups.iter().map(|g| g.title).collect::<Vec<_>>(),
+        vec!["Live", "Movies", "Series", "Favorites", "Recent"]
+    );
+    assert!(global.groups.iter().all(|g| g.results.len() <= 8));
+    assert_eq!(global.groups[0].results.len(), 8);
+    assert!(
+        global.groups[1]
+            .results
+            .iter()
+            .any(|r| r.item.provider_id == "b" && r.item.id == "b-movie"),
+        "global search must include other providers and subtitle matches"
+    );
+    assert!(
+        global.groups[1]
+            .results
+            .iter()
+            .any(|r| r.item.id == "hidden-movie"),
+        "global search must ignore section's favorites-only filter"
+    );
+    assert_eq!(global.groups[3].results.len(), 1);
+    assert_eq!(global.groups[3].results[0].item.id, "a-film");
+    let recent = &global.groups[4].results[0];
+    assert_eq!(recent.item.content_type, "series");
+    assert_eq!(recent.item.id, "b-series");
+    let progress = recent
+        .progress
+        .clone()
+        .expect("recent result retains scoped playback identity");
+    assert_eq!(progress.provider_id, "b");
+    assert_eq!(progress.series_id.as_deref(), Some("b-series"));
+    assert_eq!(progress.season_id.as_deref(), Some("2"));
+    worker.send(Command::ResumeHistory(progress));
+    match until(&worker, |event| matches!(event, Event::Prepared(..))) {
+        Event::Prepared(target, Some(resume)) => {
+            assert_eq!(target.item.id, "shared:episode");
+            assert_eq!(target.season_id.as_deref(), Some("2"));
+            assert_eq!(
+                target.item.stream_url.as_deref(),
+                Some("https://fixture.invalid/season-2-pilot.ts")
+            );
+            assert_eq!(resume.position_seconds, 47);
+        }
+        _ => panic!("global Recent action must preserve episode scope"),
+    }
+    toggle_global_search(&mut query);
+    assert_eq!(query.search, "Needle");
+    let restored = load(&worker, 702, query.clone());
+    assert!(restored.global_search.is_none());
+    assert_eq!(restored.page.total, 1);
+    assert_eq!(restored.page.items[0].id, "a-film");
+    // Typing a prefix directly uses the identical path as the globe toggle.
+    query.search = "   /   Needle ".into();
+    let typed = load(&worker, 703, query.clone()).global_search.unwrap();
+    assert_eq!(typed.groups.len(), 5);
+    query.search = "/".into();
+    let prompt = load(&worker, 704, query.clone()).global_search.unwrap();
+    assert!(prompt.query.is_empty());
+    assert!(prompt.groups.is_empty());
+    query.search = "/ impossible phrase".into();
+    let empty = load(&worker, 705, query).global_search.unwrap();
+    assert!(empty.groups.is_empty());
+    Ok(())
+}
