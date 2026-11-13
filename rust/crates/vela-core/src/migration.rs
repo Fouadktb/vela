@@ -252,6 +252,9 @@ pub fn migrate_if_needed(target: &Path, candidates: &[PathBuf]) -> Result<Option
 }
 
 pub fn restrict_permissions(path: &Path) -> Result<()> {
+    // Windows files inherit the user's application-data directory ACL.
+    #[cfg(not(unix))]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
