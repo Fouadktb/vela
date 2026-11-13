@@ -1,7 +1,7 @@
 # Vela
 
 Vela is an IPTV player for **macOS and Windows desktop only**. Release
-**0.5.2** uses a native Rust application and UI with embedded libmpv playback and
+**0.5.3** uses a native Rust application and UI with embedded libmpv playback and
 SQLite storage. It preserves the existing Vela layout, charcoal and gold theme,
 Roboto typography, Lucide icons, and logo. There are no browser, phone, or TV app
 targets.
@@ -114,8 +114,8 @@ scripts/package-rust-macos.sh
 ```
 
 This creates a universal Apple Silicon/Intel `Vela.app` and
-`release/vela-macos-v0.5.2.dmg`, stages the pinned runtime, verifies both
-architectures and signatures, and writes `SHA256SUMS-macos-v0.5.2.txt`.
+`release/vela-macos-v0.5.3.dmg`, stages the pinned runtime, verifies both
+architectures and signatures, and writes `SHA256SUMS-macos-v0.5.3.txt`.
 
 On Windows, install Inno Setup 6 and 7-Zip, then run:
 
@@ -123,8 +123,8 @@ On Windows, install Inno Setup 6 and 7-Zip, then run:
 .\scripts\package-rust-windows.ps1
 ```
 
-This creates `release/vela-windows-v0.5.2-setup.exe` and
-`SHA256SUMS-windows-v0.5.2.txt`. It retains Vela's installer identity for upgrades.
+This creates `release/vela-windows-v0.5.3-setup.exe` and
+`SHA256SUMS-windows-v0.5.3.txt`. It retains Vela's installer identity for upgrades.
 The [Rust Desktop workflow](.github/workflows/rust-desktop.yml) builds both
 packages and runs tests on their native runners. Versioned filenames follow
 `rust/Cargo.toml`; the names above refer to the current candidate.

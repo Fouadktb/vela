@@ -234,6 +234,9 @@ pub enum Event {
     Epg(Vec<EpgProgram>),
     Prepared(Box<PlaybackTarget>, Option<PlaybackProgress>),
     Busy(bool),
+    ImportStarted(String, String, String),
+    ImportProgress(String, String, imports::ImportProgress),
+    ImportFinished(String, String),
     ResetComplete(PathBuf),
     PlaybackQueue(u64, Vec<Episode>),
     PlaybackPositions(u64, Vec<PlaybackProgress>),
@@ -575,19 +578,38 @@ impl Worker {
                                     return Err(error);
                                 }
                             };
-                            refresh_runs.insert(provider.id.clone(), run_id);
+                            refresh_runs.insert(provider.id.clone(), run_id.clone());
                             active_imports += 1;
                             emit(Event::Busy(true));
+                            emit(Event::ImportStarted(
+                                provider.id.clone(),
+                                provider.name.clone(),
+                                run_id.clone(),
+                            ));
+                            let progress_events = events.clone();
+                            let progress_context = context.clone();
                             let mut tx = network_tx.clone();
                             tx.generation = generation;
                             thread::spawn(move || {
-                                let result = imports::import_provider(&provider);
+                                let result = imports::import_provider_with_progress(
+                                    &provider,
+                                    &mut |progress| {
+                                        let _ = progress_events.send(Event::ImportProgress(
+                                            provider.id.clone(),
+                                            run_id.clone(),
+                                            progress,
+                                        ));
+                                        progress_context.request_repaint();
+                                    },
+                                );
                                 let _ = tx.send(Command::Imported(origin, result));
                             });
                         }
                         Command::Imported(origin, result) => {
                             let provider = &origin.provider;
                             let was_active = refreshing.remove(&provider.id);
+                            let progress_run =
+                                refresh_runs.get(&provider.id).cloned().unwrap_or_default();
                             let completed = (|| -> Result<()> {
                                 let Some(current) = store.provider(&provider.id)? else {
                                     return Ok(());
@@ -603,7 +625,7 @@ impl Worker {
                                     let _ = network_tx.send(Command::Refresh(current));
                                     return Ok(());
                                 }
-                                let result=result.and_then(|snapshot|{anyhow::ensure!(!snapshot.items.is_empty(),"Provider returned no playable items; your previous library was kept");store.replace_catalog(&snapshot)?;Ok(snapshot.items.len())});
+                                let result=result.and_then(|snapshot|{anyhow::ensure!(!snapshot.items.is_empty(),"Provider returned no playable items; your previous library was kept");store.replace_catalog_with_progress(&snapshot, &mut |completed,total| { emit(Event::ImportProgress(provider.id.clone(), progress_run.clone(), imports::ImportProgress { stage: "Saving library".into(), completed, total: Some(total), unit: "records".into() })); })?;Ok(snapshot.items.len())});
                                 if let Some(run) = refresh_runs.remove(&provider.id) {
                                     match &result {
                                         Ok(count) => {
@@ -627,6 +649,7 @@ impl Worker {
                             if was_active {
                                 active_imports = active_imports.saturating_sub(1);
                             }
+                            emit(Event::ImportFinished(provider.id.clone(), progress_run));
                             emit(Event::Busy(active_imports > 0));
                             completed?;
                         }

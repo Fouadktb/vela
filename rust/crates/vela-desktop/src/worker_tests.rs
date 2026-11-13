@@ -1367,3 +1367,63 @@ fn failed_and_deleted_imports_release_busy_only_when_all_jobs_finish() -> Result
     }
     Ok(())
 }
+
+#[test]
+fn import_progress_is_run_scoped_and_finishes_after_saved_catalog_is_visible() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("progress.sqlite");
+    let source = temporary.path().join("playlist.m3u");
+    std::fs::write(
+        &source,
+        "#EXTM3U\n#EXTINF:-1,Progress channel\nhttps://fixture.invalid/live.ts\n",
+    )?;
+    let mut provider = provider("progress");
+    provider.source_kind = Some("file".into());
+    provider.source = source.display().to_string();
+    Store::open(&path)?.upsert_provider(&provider)?;
+    let worker = start(&path);
+    worker.send(Command::Refresh(provider.clone()));
+    let mut run = None;
+    let mut saw_progress = false;
+    let mut saw_committed = false;
+    let mut finished = false;
+    loop {
+        match worker.rx.recv_timeout(Duration::from_secs(10))? {
+            Event::ImportStarted(id, name, token) => {
+                assert_eq!(id, provider.id);
+                assert_eq!(name, provider.name);
+                assert!(!token.is_empty());
+                run = Some(token);
+            }
+            Event::ImportProgress(id, token, progress) => {
+                assert_eq!(id, provider.id);
+                assert_eq!(Some(&token), run.as_ref());
+                assert!(!finished);
+                saw_progress = true;
+                if progress.stage == "Saving library" && progress.total == Some(progress.completed)
+                {
+                    assert!(progress.completed > 0);
+                    let page = Store::open(&path)?.catalog(&CatalogQuery {
+                        provider_id: Some(provider.id.clone()),
+                        ..Default::default()
+                    })?;
+                    assert_eq!(page.total, 1);
+                    saw_committed = true;
+                }
+            }
+            Event::ImportFinished(id, token) => {
+                assert_eq!(id, provider.id);
+                assert_eq!(Some(&token), run.as_ref());
+                assert!(saw_committed);
+                finished = true;
+            }
+            Event::Busy(false) => {
+                assert!(finished && saw_progress);
+                break;
+            }
+            Event::Error(error) | Event::Fatal(error) => panic!("{error}"),
+            _ => {}
+        }
+    }
+    Ok(())
+}

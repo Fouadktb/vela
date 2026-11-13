@@ -84,6 +84,14 @@ fn metadata(line: &str) -> Draft {
 }
 
 pub fn parse(input: &str, provider_id: &str) -> Result<ImportSnapshot> {
+    parse_with_progress(input, provider_id, &mut |_| {})
+}
+
+pub fn parse_with_progress(
+    input: &str,
+    provider_id: &str,
+    progress: &mut dyn FnMut(super::ImportProgress),
+) -> Result<ImportSnapshot> {
     if input.len() as u64 > super::http::MAX_IMPORT_BYTES {
         bail!("Playlist exceeds the 256 MiB import limit");
     }
@@ -97,6 +105,8 @@ pub fn parse(input: &str, provider_id: &str) -> Result<ImportSnapshot> {
     let mut series = BTreeMap::<String, Series>::new();
     let mut seasons = BTreeMap::<String, Season>::new();
     let mut seen_series = HashSet::new();
+    let mut meter = super::ProgressMeter::new("Parsing playlist", "items", None, 256, progress);
+    let mut parsed = 0;
     // split includes classic Mac CR as well as LF/CRLF, matching LineSplitter.
     for line in input
         .trim_start_matches('\u{feff}')
@@ -235,6 +245,8 @@ pub fn parse(input: &str, provider_id: &str) -> Result<ImportSnapshot> {
                 ..Default::default()
             });
         }
+        parsed += 1;
+        meter.set(parsed);
     }
     snapshot.categories = categories.into_values().collect();
     snapshot.series = series.into_values().collect();
@@ -247,6 +259,7 @@ pub fn parse(input: &str, provider_id: &str) -> Result<ImportSnapshot> {
     if snapshot.items.is_empty() {
         bail!("Playlist did not contain playable items");
     }
+    meter.finish(parsed);
     Ok(snapshot)
 }
 
@@ -275,9 +288,25 @@ mod tests {
                 })
             })
             .collect();
-        let snapshot = parse(&input, "p").unwrap();
+        let mut progress = Vec::new();
+        let snapshot = parse_with_progress(&input, "p", &mut |event| progress.push(event)).unwrap();
         assert_eq!(snapshot.items.len(), 5000);
         assert_eq!(snapshot.episodes.len(), 10000);
+        // Progress counts consumed entries, including episodes collapsed into a
+        // single series card. It must not estimate a total with an extra scan.
+        assert_eq!(progress.first().unwrap().completed, 0);
+        assert_eq!(progress.last().unwrap().completed, 10000);
+        assert!(
+            progress
+                .iter()
+                .all(|event| event.total.is_none() && event.unit == "items")
+        );
+        assert!(
+            progress
+                .windows(2)
+                .all(|events| events[0].completed < events[1].completed)
+        );
+        assert!(progress.len() < 200, "item notifications must be throttled");
     }
     #[test]
     fn category_encoding_matches_dart() {

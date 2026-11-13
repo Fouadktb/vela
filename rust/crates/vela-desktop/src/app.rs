@@ -92,6 +92,7 @@ pub struct VelaApp {
     settings: BTreeMap<String, String>,
     error: Option<String>,
     importing: bool,
+    import_jobs: BTreeMap<String, (String, String, imports::ImportProgress)>,
     search_changed: Option<Instant>,
     provider_form: Option<Provider>,
     provider_password_visible: bool,
@@ -179,6 +180,7 @@ impl VelaApp {
             settings: BTreeMap::new(),
             error: None,
             importing: false,
+            import_jobs: BTreeMap::new(),
             search_changed: None,
             provider_form: None,
             provider_password_visible: false,
@@ -353,7 +355,39 @@ impl VelaApp {
                     self.error = Some(error);
                     self.loading = false;
                 }
-                Event::Busy(busy) => self.importing = busy,
+                Event::Busy(busy) => {
+                    self.importing = busy;
+                    if !busy {
+                        self.import_jobs.clear();
+                    }
+                }
+                Event::ImportStarted(id, name, run) => {
+                    self.import_jobs.insert(
+                        id,
+                        (
+                            run,
+                            name,
+                            imports::ImportProgress {
+                                stage: "Connecting".into(),
+                                completed: 0,
+                                total: None,
+                                unit: "items".into(),
+                            },
+                        ),
+                    );
+                }
+                Event::ImportProgress(id, run, progress) => {
+                    if let Some(job) = self.import_jobs.get_mut(&id)
+                        && job.0 == run
+                    {
+                        job.2 = progress;
+                    }
+                }
+                Event::ImportFinished(id, run) => {
+                    if self.import_jobs.get(&id).is_some_and(|job| job.0 == run) {
+                        self.import_jobs.remove(&id);
+                    }
+                }
                 Event::ResetComplete(backup) => {
                     drop(backup);
                     self.volume = VolumePreferences::default();

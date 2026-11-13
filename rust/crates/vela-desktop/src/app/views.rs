@@ -184,6 +184,29 @@ fn dark(alpha: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(12, 13, 14, alpha)
 }
 
+fn import_progress_text(progress: &imports::ImportProgress) -> String {
+    let amount = |count: u64| {
+        if progress.unit == "bytes" {
+            format!("{:.1} MiB", count as f64 / 1_048_576.0)
+        } else {
+            format!("{count} {}", progress.unit)
+        }
+    };
+    match progress.total.filter(|total| *total > 0) {
+        Some(total) => format!(
+            "{} · {} / {} · {:.0}%",
+            progress.stage,
+            amount(progress.completed.min(total)),
+            amount(total),
+            (progress.completed as f64 / total as f64 * 100.0).clamp(0.0, 100.0)
+        ),
+        None if progress.completed > 0 => {
+            format!("{} · {}", progress.stage, amount(progress.completed))
+        }
+        None => progress.stage.clone(),
+    }
+}
+
 impl VelaApp {
     pub(super) fn import_status(&self, ctx: &egui::Context) {
         if !self.importing {
@@ -203,13 +226,22 @@ impl VelaApp {
                             .color(ACCENT)
                             .font(theme::bold(14.0)),
                     );
-                    ui.label(
-                        RichText::new(
-                            "Importing providers. New content and artwork will appear when ready.",
-                        )
-                        .color(MUTED),
-                    );
                 });
+                for (_, name, progress) in self.import_jobs.values() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(name).font(theme::bold(13.0)));
+                        ui.label(RichText::new(import_progress_text(progress)).color(MUTED));
+                        if let Some(total) = progress.total.filter(|total| *total > 0) {
+                            ui.add(
+                                egui::ProgressBar::new(
+                                    (progress.completed as f64 / total as f64).clamp(0.0, 1.0)
+                                        as f32,
+                                )
+                                .desired_width(160.0),
+                            );
+                        }
+                    });
+                }
             });
     }
     pub(super) fn sidebar(&mut self, ctx: &egui::Context) {
@@ -4660,5 +4692,35 @@ mod provider_action_layout_tests {
                 },
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod import_progress_tests {
+    use super::*;
+    #[test]
+    fn unknown_totals_never_claim_a_percentage_and_known_totals_are_stage_scoped() {
+        let mut p = imports::ImportProgress {
+            stage: "Downloading movies".into(),
+            completed: 2_097_152,
+            total: None,
+            unit: "bytes".into(),
+        };
+        assert_eq!(import_progress_text(&p), "Downloading movies · 2.0 MiB");
+        p.total = Some(4_194_304);
+        assert_eq!(
+            import_progress_text(&p),
+            "Downloading movies · 2.0 MiB / 4.0 MiB · 50%"
+        );
+        p.stage = "Saving library".into();
+        p.completed = 25;
+        p.total = Some(100);
+        p.unit = "items".into();
+        assert_eq!(
+            import_progress_text(&p),
+            "Saving library · 25 items / 100 items · 25%"
+        );
+        p.total = Some(0);
+        assert!(!import_progress_text(&p).contains('%'));
     }
 }

@@ -165,6 +165,24 @@ fn request(
     action: Option<&str>,
     extra: Option<(&str, &str)>,
 ) -> Result<Value> {
+    request_with_progress(
+        client,
+        provider,
+        action,
+        extra,
+        "Downloading provider data",
+        &mut |_| {},
+    )
+}
+
+fn request_with_progress(
+    client: &Client,
+    provider: &Provider,
+    action: Option<&str>,
+    extra: Option<(&str, &str)>,
+    stage: &str,
+    progress: &mut dyn FnMut(super::ImportProgress),
+) -> Result<Value> {
     let mut url = authenticated_endpoint(provider, "player_api.php")?;
     if let Some(action) = action {
         url.query_pairs_mut().append_pair("action", action);
@@ -172,21 +190,35 @@ fn request(
     if let Some((key, value)) = extra {
         url.query_pairs_mut().append_pair(key, value);
     }
-    let bytes = http::get(client, url)?;
+    let bytes = http::get_with_progress(client, url, stage, progress)?;
     let data: Value = serde_json::from_slice(&bytes)
         .map_err(|_| anyhow!("Xtream server returned invalid JSON"))?;
     check_response(&data)?;
     Ok(data)
 }
-fn list(client: &Client, p: &Provider, action: &str) -> Result<Vec<Value>> {
-    let data = request(client, p, Some(action), None)?;
+fn list_with_progress(
+    client: &Client,
+    p: &Provider,
+    action: &str,
+    stage: &str,
+    progress: &mut dyn FnMut(super::ImportProgress),
+) -> Result<Vec<Value>> {
+    let data = request_with_progress(client, p, Some(action), None, stage, progress)?;
     data.as_array()
         .cloned()
         .ok_or_else(|| anyhow!("Xtream server returned an unexpected catalog response"))
 }
 
 pub fn import(client: &Client, provider: &Provider) -> Result<ImportSnapshot> {
-    match import_api(client, provider) {
+    import_with_progress(client, provider, &mut |_| {})
+}
+
+pub fn import_with_progress(
+    client: &Client,
+    provider: &Provider,
+    progress: &mut dyn FnMut(super::ImportProgress),
+) -> Result<ImportSnapshot> {
+    match import_api(client, provider, progress) {
         Ok(snapshot) => Ok(snapshot),
         Err(error) if error.downcast_ref::<http::HttpStatusError>().is_some() => {
             // Match the legacy app: some providers reject player_api.php while
@@ -196,15 +228,21 @@ pub fn import(client: &Client, provider: &Provider) -> Result<ImportSnapshot> {
             url.query_pairs_mut()
                 .append_pair("type", "m3u_plus")
                 .append_pair("output", "ts");
-            let bytes = http::get(client, url)?;
-            m3u::parse(&String::from_utf8_lossy(&bytes), &provider.id)
+            let bytes =
+                http::get_with_progress(client, url, "Downloading fallback playlist", progress)?;
+            m3u::parse_with_progress(&String::from_utf8_lossy(&bytes), &provider.id, progress)
         }
         Err(error) => Err(error),
     }
 }
 
-fn import_api(client: &Client, provider: &Provider) -> Result<ImportSnapshot> {
-    let account = request(client, provider, None, None)?;
+fn import_api(
+    client: &Client,
+    provider: &Provider,
+    progress: &mut dyn FnMut(super::ImportProgress),
+) -> Result<ImportSnapshot> {
+    let account =
+        request_with_progress(client, provider, None, None, "Checking account", progress)?;
     if !account.is_object() {
         bail!("Xtream server returned an unexpected account response");
     }
@@ -227,20 +265,78 @@ fn import_api(client: &Client, provider: &Provider) -> Result<ImportSnapshot> {
         ),
         ("series", "get_series_categories", "get_series", "series_id"),
     ] {
+        let label = match kind {
+            "live" => "live channels",
+            "movie" => "movies",
+            _ => "series",
+        };
+        let category_stage = format!("Downloading {label} categories");
+        let stream_stage = format!("Downloading {label}");
         // Two requests at a time keeps slow category endpoints from serializing
         // the catalog import without flooding providers with parallel requests.
+        // Category progress crosses the thread through a bounded channel; the
+        // caller's FnMut is invoked only on the importing thread and need not
+        // implement Send. Dropping intermediate events never blocks networking.
+        let (sender, receiver) = std::sync::mpsc::sync_channel(8);
         let (category_response, streams) = std::thread::scope(|scope| {
-            let categories =
-                scope.spawn(|| request(client, provider, Some(categories_action), None));
-            let streams = list(client, provider, streams_action);
+            let categories = scope.spawn(|| {
+                let mut final_event = None;
+                let result = request_with_progress(
+                    client,
+                    provider,
+                    Some(categories_action),
+                    None,
+                    &category_stage,
+                    &mut |event| {
+                        final_event = Some(event.clone());
+                        let _ = sender.try_send(event);
+                    },
+                );
+                (result, final_event)
+            });
+            let streams = list_with_progress(
+                client,
+                provider,
+                streams_action,
+                &stream_stage,
+                &mut |event| {
+                    for category_event in receiver.try_iter() {
+                        progress(category_event);
+                    }
+                    progress(event);
+                },
+            );
+            // A slow category endpoint may outlive the stream request. Keep
+            // forwarding its real byte progress while waiting for completion.
+            while !categories.is_finished() {
+                if let Ok(event) = receiver.recv_timeout(std::time::Duration::from_millis(50)) {
+                    progress(event);
+                }
+            }
             let categories = categories
                 .join()
                 .map_err(|_| anyhow!("Catalog import worker failed"))?;
-            Ok::<_, anyhow::Error>((categories?, streams?))
+            for event in receiver.try_iter() {
+                progress(event);
+            }
+            // Retain the exact final byte count even if the channel was full.
+            if let Some(event) = categories.1 {
+                progress(event);
+            }
+            Ok::<_, anyhow::Error>((categories.0?, streams?))
         })?;
         let categories = category_response.as_array().cloned().unwrap_or_default();
         let mut names = BTreeMap::new();
-        for c in categories {
+        let parse_category_stage = format!("Reading {label} categories");
+        let category_count = categories.len() as u64;
+        let mut category_meter = super::ProgressMeter::new(
+            &parse_category_stage,
+            "categories",
+            Some(category_count),
+            256,
+            progress,
+        );
+        for (index, c) in categories.into_iter().enumerate() {
             if let (Some(id), Some(name)) = (field(&c, "category_id"), field(&c, "category_name")) {
                 names.insert(id.clone(), name.clone());
                 snapshot.categories.push(Category {
@@ -252,9 +348,21 @@ fn import_api(client: &Client, provider: &Provider) -> Result<ImportSnapshot> {
                     ..Default::default()
                 });
             }
+            category_meter.set(index as u64 + 1);
         }
-        for stream in streams {
+        category_meter.finish(category_count);
+        let parse_stream_stage = format!("Reading {label}");
+        let stream_count = streams.len() as u64;
+        let mut meter = super::ProgressMeter::new(
+            &parse_stream_stage,
+            "items",
+            Some(stream_count),
+            256,
+            progress,
+        );
+        for (index, stream) in streams.into_iter().enumerate() {
             let Some(external_id) = field(&stream, id_key) else {
+                meter.set(index as u64 + 1);
                 continue;
             };
             let id = format!("{}:{kind}:{external_id}", provider.id);
@@ -326,7 +434,9 @@ fn import_api(client: &Client, provider: &Provider) -> Result<ImportSnapshot> {
                     ..Default::default()
                 });
             }
+            meter.set(index as u64 + 1);
         }
+        meter.finish(stream_count);
     }
     if snapshot.items.is_empty() {
         bail!("Provider did not return playable items");
@@ -690,7 +800,56 @@ mod integration_tests {
             (200, "[]".into()),
             (200, json!([{"series_id":44,"name":"Series"}]).to_string()),
         ]);
-        let snapshot = import(&http::client().unwrap(), &p).unwrap();
+        let mut progress = Vec::new();
+        let callback_thread = std::thread::current().id();
+        let snapshot = import_with_progress(&http::client().unwrap(), &p, &mut |event| {
+            assert_eq!(std::thread::current().id(), callback_thread);
+            progress.push(event);
+        })
+        .unwrap();
+        for stage in [
+            "Checking account",
+            "Downloading live channels categories",
+            "Downloading live channels",
+            "Downloading movies categories",
+            "Downloading movies",
+            "Downloading series categories",
+            "Downloading series",
+        ] {
+            let final_event = progress
+                .iter()
+                .rev()
+                .find(|event| event.stage == stage)
+                .unwrap();
+            assert!(final_event.completed > 0);
+            assert_eq!(final_event.total, Some(final_event.completed));
+            assert_eq!(final_event.unit, "bytes");
+        }
+        for (stage, total) in [
+            ("Reading live channels categories", 1),
+            ("Reading live channels", 1),
+            ("Reading movies categories", 0),
+            ("Reading movies", 1),
+            ("Reading series categories", 0),
+            ("Reading series", 1),
+        ] {
+            let final_event = progress
+                .iter()
+                .rev()
+                .find(|event| event.stage == stage)
+                .unwrap();
+            assert_eq!(
+                (final_event.completed, final_event.total),
+                (total, Some(total))
+            );
+        }
+        assert!(
+            progress
+                .iter()
+                .all(|event| !event.stage.contains("account=")
+                    && !event.stage.contains("credential")
+                    && !event.stage.contains("http"))
+        );
         let targets = server.join().unwrap();
         assert_eq!(targets.len(), 7);
         assert!(

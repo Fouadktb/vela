@@ -469,6 +469,17 @@ impl Store {
     }
 
     pub fn replace_catalog(&self, snapshot: &CatalogSnapshot) -> Result<()> {
+        self.replace_catalog_with_progress(snapshot, &mut |_, _| {})
+    }
+
+    /// Report completed save operations in the current transaction. The total
+    /// includes the final provider refresh marker, which is reported only after
+    /// COMMIT succeeds. Intermediate counts are provisional until that point.
+    pub fn replace_catalog_with_progress(
+        &self,
+        snapshot: &CatalogSnapshot,
+        progress: &mut impl FnMut(u64, u64),
+    ) -> Result<()> {
         ensure!(
             self.provider(&snapshot.provider_id)?.is_some(),
             "Import provider does not exist"
@@ -488,14 +499,6 @@ impl Store {
                 id == provider,
                 "Import contains records outside its provider scope"
             );
-        }
-        let now = now_ms();
-        let tx = self.connection.unchecked_transaction()?;
-        for table in ["categories", "catalog_items", "series"] {
-            tx.execute(
-                &format!("UPDATE {table} SET is_stale=1 WHERE provider_id=?"),
-                [provider],
-            )?;
         }
         let mut categories: BTreeMap<(String, String), Category> = BTreeMap::new();
         for category in &snapshot.categories {
@@ -526,22 +529,60 @@ impl Store {
                     .or_default() += 1;
             }
         }
-        for category in categories.values() {
-            let id = category_id(provider, &category.content_type, &category.name);
-            tx.execute("INSERT INTO categories(id,provider_id,content_type,external_id,name,normalized_name,item_count,last_seen_at,is_stale) VALUES(?,?,?,?,?,?,?,?,0) ON CONFLICT(provider_id,content_type,id) DO UPDATE SET external_id=excluded.external_id,name=excluded.name,normalized_name=excluded.normalized_name,item_count=excluded.item_count,last_seen_at=excluded.last_seen_at,is_stale=0",params![id,provider,category.content_type,category.external_id,category.name.trim(),normalize(&category.name),category_counts.get(&(category.content_type.clone(),normalize(&category.name))).copied().unwrap_or(category.item_count),now])?;
-        }
-        for item in &snapshot.items {
-            upsert_item(&tx, item, now)?;
-        }
-        for series in &snapshot.series {
-            upsert_series(&tx, series, now)?;
-        }
-        // Every series catalog entry must have a resolvable metadata row.
+        // Count the actual write operations, including category/series records
+        // derived from imported items rather than supplied as explicit rows.
         let series_ids: HashSet<&str> = snapshot
             .series
             .iter()
             .flat_map(|s| std::iter::once(s.id.as_str()).chain(s.catalog_item_id.as_deref()))
             .collect();
+        let generated_series = snapshot
+            .items
+            .iter()
+            .filter(|item| item.content_type == "series" && !series_ids.contains(item.id.as_str()))
+            .count();
+        let total = (categories.len()
+            + snapshot.items.len()
+            + snapshot.series.len()
+            + generated_series
+            + snapshot.seasons.len()
+            + snapshot.episodes.len()
+            + snapshot.epg.len()) as u64
+            + 1;
+        progress(0, total);
+        let mut written = 0u64;
+        let mut reported = 0u64;
+        let mut last_reported = std::time::Instant::now();
+        let mut saved = |count: u64| {
+            written += count;
+            if written - reported >= 512 || last_reported.elapsed() >= Duration::from_millis(80) {
+                progress(written, total);
+                reported = written;
+                last_reported = std::time::Instant::now();
+            }
+        };
+        let now = now_ms();
+        let tx = self.connection.unchecked_transaction()?;
+        for table in ["categories", "catalog_items", "series"] {
+            tx.execute(
+                &format!("UPDATE {table} SET is_stale=1 WHERE provider_id=?"),
+                [provider],
+            )?;
+        }
+        for category in categories.values() {
+            let id = category_id(provider, &category.content_type, &category.name);
+            tx.execute("INSERT INTO categories(id,provider_id,content_type,external_id,name,normalized_name,item_count,last_seen_at,is_stale) VALUES(?,?,?,?,?,?,?,?,0) ON CONFLICT(provider_id,content_type,id) DO UPDATE SET external_id=excluded.external_id,name=excluded.name,normalized_name=excluded.normalized_name,item_count=excluded.item_count,last_seen_at=excluded.last_seen_at,is_stale=0",params![id,provider,category.content_type,category.external_id,category.name.trim(),normalize(&category.name),category_counts.get(&(category.content_type.clone(),normalize(&category.name))).copied().unwrap_or(category.item_count),now])?;
+            saved(1);
+        }
+        for item in &snapshot.items {
+            upsert_item(&tx, item, now)?;
+            saved(1);
+        }
+        for series in &snapshot.series {
+            upsert_series(&tx, series, now)?;
+            saved(1);
+        }
+        // Every series catalog entry must have a resolvable metadata row.
         for item in snapshot.items.iter().filter(|i| i.content_type == "series") {
             if !series_ids.contains(item.id.as_str()) {
                 upsert_series(
@@ -558,6 +599,7 @@ impl Store {
                     },
                     now,
                 )?;
+                saved(1);
             }
         }
         for table in ["seasons", "episodes"] {
@@ -572,18 +614,22 @@ impl Store {
         }
         for season in &snapshot.seasons {
             upsert_season(&tx, season, now)?;
+            saved(1);
         }
         for episode in &snapshot.episodes {
             upsert_episode(&tx, episode, now)?;
+            saved(1);
         }
         if !snapshot.epg.is_empty() {
             replace_epg_on(&tx, provider, &snapshot.epg, now)?;
+            saved(snapshot.epg.len() as u64);
         }
         tx.execute(
             "UPDATE providers SET last_refresh_at=?,updated_at=? WHERE id=?",
             params![now, now, provider],
         )?;
         tx.commit()?;
+        progress(total, total);
         Ok(())
     }
     pub fn replace_series_details(&self, details: &SeriesDetails) -> Result<()> {
@@ -1113,5 +1159,154 @@ mod series_lookup_tests {
         let index_exists:bool=store.connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_series_provider_external')",[],|row|row.get(0)).unwrap();
         assert!(index_exists);
         store.integrity_check().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod catalog_save_progress_tests {
+    use super::*;
+
+    fn provider() -> Provider {
+        Provider {
+            id: "p".into(),
+            kind: "m3u".into(),
+            name: "Progress fixture".into(),
+            source: "https://fixture.invalid/list.m3u".into(),
+            auto_refresh_interval_minutes: 1440,
+            ..Default::default()
+        }
+    }
+    fn item(id: &str) -> CatalogItem {
+        CatalogItem {
+            id: id.into(),
+            provider_id: "p".into(),
+            content_type: "movie".into(),
+            title: id.into(),
+            category_name: Some("Movies".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn save_progress_reports_commit_only_after_external_readers_see_the_complete_catalog()
+    -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let path = temporary.path().join("catalog.sqlite");
+        let store = Store::open(&path)?;
+        store.upsert_provider(&provider())?;
+        store.replace_catalog(&CatalogSnapshot {
+            provider_id: "p".into(),
+            items: vec![item("old")],
+            ..Default::default()
+        })?;
+        let reader = Connection::open(&path)?;
+        let mut snapshot = CatalogSnapshot {
+            provider_id: "p".into(),
+            items: (0..1100)
+                .map(|index| item(&format!("movie-{index}")))
+                .collect(),
+            ..Default::default()
+        };
+        for id in ["explicit", "generated"] {
+            snapshot.items.push(CatalogItem {
+                id: id.into(),
+                provider_id: "p".into(),
+                content_type: "series".into(),
+                title: id.into(),
+                ..Default::default()
+            });
+        }
+        snapshot.series.push(Series {
+            id: "explicit".into(),
+            provider_id: "p".into(),
+            catalog_item_id: Some("explicit".into()),
+            title: "Explicit series".into(),
+            ..Default::default()
+        });
+        snapshot.seasons.push(Season {
+            provider_id: "p".into(),
+            series_id: "explicit".into(),
+            season_number: 1,
+            ..Default::default()
+        });
+        snapshot.episodes.push(Episode {
+            id: "pilot".into(),
+            provider_id: "p".into(),
+            series_id: "explicit".into(),
+            season_id: "1".into(),
+            season_number: 1,
+            episode_number: 1,
+            title: "Pilot".into(),
+            ..Default::default()
+        });
+        let mut reports = Vec::new();
+        store.replace_catalog_with_progress(&snapshot, &mut |done, total| {
+            let visible: i64 = reader
+                .query_row(
+                    "SELECT COUNT(*) FROM catalog_items WHERE provider_id='p' AND is_stale=0",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            reports.push((done, total, visible));
+        })?;
+        // One derived category, 1,102 items, one explicit + one generated
+        // series, one season, one episode, and the committed provider marker.
+        let total = 1108;
+        assert_eq!(reports.first(), Some(&(0, total, 1)));
+        assert!(
+            reports
+                .iter()
+                .any(|(done, _, _)| *done > 0 && *done < total)
+        );
+        assert!(reports.iter().all(|(done, total, _)| done <= total));
+        assert!(
+            reports
+                .windows(2)
+                .all(|pair| pair[0].0 < pair[1].0 && pair[0].1 == pair[1].1)
+        );
+        assert!(
+            reports
+                .iter()
+                .filter(|(done, total, _)| done < total)
+                .all(|(_, _, visible)| *visible == 1)
+        );
+        assert_eq!(reports.last(), Some(&(total, total, 1102)));
+        assert_eq!(store.episodes("p", "explicit")?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_save_rolls_back_without_reporting_completion() -> Result<()> {
+        let store = Store::open(":memory:")?;
+        store.upsert_provider(&provider())?;
+        store.replace_catalog(&CatalogSnapshot {
+            provider_id: "p".into(),
+            items: vec![item("old")],
+            ..Default::default()
+        })?;
+        let mut snapshot = CatalogSnapshot {
+            provider_id: "p".into(),
+            items: (0..600)
+                .map(|index| item(&format!("new-{index}")))
+                .collect(),
+            ..Default::default()
+        };
+        let mut broken = item("invalid-duration");
+        broken.duration_seconds = Some(-1);
+        snapshot.items.push(broken);
+        let mut reports = Vec::new();
+        assert!(
+            store
+                .replace_catalog_with_progress(&snapshot, &mut |done, total| reports
+                    .push((done, total)))
+                .is_err()
+        );
+        assert!(reports.iter().any(|(done, _)| *done > 0));
+        assert!(reports.iter().all(|(done, total)| done < total));
+        let page = store.catalog(&CatalogQuery::default())?;
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].id, "old");
+        Ok(())
     }
 }
