@@ -1,0 +1,93 @@
+name: Rust Desktop
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS universal Rust app
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 16.4
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.4'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.100.0'
+          components: rustfmt, clippy
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Check formatting
+        run: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+      - name: Clippy
+        run: cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
+      - name: Unit and integration tests
+        run: cargo test --manifest-path rust/Cargo.toml --locked --workspace
+      - name: Build, sign, and verify universal app and DMG
+        run: scripts/package-rust-macos.sh
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vela-rust-macos-universal
+          path: |
+            release/vela-macos-v*.dmg
+            release/SHA256SUMS-macos-v*.txt
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64 Rust installer
+    runs-on: windows-2022
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.100.0'
+          components: rustfmt, clippy
+          targets: x86_64-pc-windows-msvc
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Check formatting
+        run: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+      - name: Clippy
+        run: cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
+      - name: Unit and integration tests
+        run: cargo test --manifest-path rust/Cargo.toml --locked --workspace
+      - name: Install packaging tools
+        shell: pwsh
+        run: |
+          choco install innosetup 7zip --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Packaging tools installation failed" }
+      - name: Build installer and run packaged libmpv smoke
+        shell: pwsh
+        run: ./scripts/package-rust-windows.ps1
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vela-rust-windows-x64
+          path: |
+            release/vela-windows-v*-setup.exe
+            release/SHA256SUMS-windows-v*.txt
+          if-no-files-found: error

@@ -1,0 +1,15 @@
+[package]
+name = "vela-player"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+libloading.workspace = true
+eframe.workspace = true
+
+[lib]
+path = "src/lib.rs"

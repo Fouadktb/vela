@@ -1,0 +1,18 @@
+#EXTM3U
+#EXTINF:-1 tvg-id="news/one" tvg-name="News, World" tvg-logo="https://example.test/news.png" group-title="Live TV",Fallback
+https://example.test/live/1.ts
+#EXTINF:-1 tvg-id="news/one" group-title="Café & News",Café News
+https://example.test/live/2.m3u8
+#EXTINF:-1 group-title="Films",Film One
+https://example.test/movie/3.MKV?token=1
+#EXTINF:-1 tvg-id="ep.1" group-title="TV Series" tvg-logo="https://example.test/first.png",Example S01E01 - Pilot
+https://example.test/series/4.mp4
+#EXTINF:-1 group-title="TV Series" tvg-logo="https://example.test/second.png",Example S01E02
+https://example.test/series/5.mp4
+#EXTINF:-1 group-title="TV Series",Example S02E01
+https://example.test/series/6.mp4
+#EXTINF:-1 group-title="Series",Trailer
+https://example.test/trailer.mp4
+#EXTINF:-1,أخبار
+https://example.test/live/7.ts
+#EXTINF:-1,Missing URL

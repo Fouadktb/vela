@@ -1,0 +1,21 @@
+{
+  "info": {
+    "name": "The Show",
+    "plot": "A series plot.",
+    "cover": "https://example.test/cover.jpg",
+    "backdrop_path": ["", "https://example.test/backdrop.jpg"]
+  },
+  "seasons": [
+    {"season_number": "1", "name": "First Season", "overview": "Season overview", "cover": "https://example.test/season.jpg"},
+    {"season_number": 2, "name": "Second Season"}
+  ],
+  "episodes": {
+    "1": [
+      {"id": 42, "episode_num": "1", "title": "Pilot", "container_extension": "MKV", "info": {"duration": "01:02:03", "plot": "Episode plot", "movie_image": "https://example.test/episode.jpg"}},
+      {"id": "43", "episode_num": 2, "title": "", "container_extension": "mp4", "info": {"duration_secs": "1800"}}
+    ],
+    "2": [
+      {"id": "44", "season": "2", "episode_num": 1, "title": "Return", "container_extension": "m-K_v", "info": {"duration": "25:30"}}
+    ]
+  }
+}

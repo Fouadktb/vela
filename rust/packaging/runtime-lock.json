@@ -1,0 +1,14 @@
+{
+  "macos": {
+    "version": "media-kit-v0.6.0-video-default",
+    "url": "https://github.com/media-kit/libmpv-darwin-build/releases/download/v0.6.0/libmpv-xcframeworks_v0.6.0_macos-universal-video-default.tar.gz",
+    "sha256": "84d2ad98e046e82c6dc34d8547d76c2afeaee89c0f53032773be8985c95536d6",
+    "source": "https://github.com/media-kit/libmpv-darwin-build/tree/v0.6.0"
+  },
+  "windows": {
+    "version": "media-kit-2023-09-24-652a1dd",
+    "url": "https://github.com/media-kit/libmpv-win32-video-build/releases/download/2023-09-24/mpv-dev-x86_64-20230924-git-652a1dd.7z",
+    "sha256": "dce982222d7a23e4a1c6f0fb6cc39f6e899a6714624b95ea49cff6558ee97572",
+    "source": "https://github.com/mpv-player/mpv/tree/652a1dd90711839acdccc08004056d25514ef2d8"
+  }
+}

@@ -1,103 +1,154 @@
 # Vela
 
-Vela supports macOS and Windows desktop apps only. The app uses Flutter with an embedded `media_kit` video surface, local catalog storage, provider import, and watch continuity.
+Vela is an IPTV player for **macOS and Windows desktop only**. The next release,
+**0.5.0**, uses a native Rust application and UI with embedded libmpv playback and
+SQLite storage. It preserves the existing Vela layout, charcoal and gold theme,
+Roboto typography, Lucide icons, and logo. There are no browser, phone, or TV app
+targets.
 
-The repository is public so installed builds can check GitHub Releases for newer versions without authentication. Vela does not auto-update and is not code-signed; when an update is available, the app opens the release page and the user downloads and installs the new build manually.
+This repository contains one application implementation: the native Rust desktop
+app. The previous Flutter implementation is archived in
+[legacy commit 2829911](https://github.com/Fouadktb/vela/tree/2829911a167bdc8e185c3b62938c1f94b53f295e) and is not an active build target.
+The 0.5.0 candidate must pass [the release checklist](docs/release-checklist.md)
+before publication; source cutover alone does not mean a release has shipped.
 
-There are no browser, phone, or TV app targets in this repository. The supported apps share one Flutter implementation and retain native `media_kit` playback.
+## Native architecture
 
-## Flutter Setup
+- `rust/crates/vela-desktop`: native egui/Glow UI, background workers, artwork,
+  provider management, catalog, guide, settings, and playback controls.
+- `rust/crates/vela-core`: provider imports, XMLTV, catalog/search, SQLite,
+  migration, preferences, favorites, and watch continuity.
+- `rust/crates/vela-player`: embedded libmpv commands, events, and GPU rendering.
 
-Install Flutter 3.44.0 (the version used by CI), then enable the platforms you need:
+Vela's UI and application logic are Rust. Playback uses the existing native
+libmpv/FFmpeg ecosystem; the rebuild does not rewrite codecs in Rust. Packaged
+apps include their playback runtime. Runtime download hashes and provenance are
+recorded in [the runtime lock](rust/packaging/runtime-lock.json) and
+[third-party notices](rust/packaging/THIRD_PARTY.md). Fonts are the existing
+Flutter app's fonts, with notices in [the fonts directory](rust/assets/fonts).
 
-```bash
-flutter config --enable-macos-desktop
-flutter config --enable-windows-desktop
-flutter pub get
-```
+## Rust development
 
-## Local Development
-
-Run the macOS desktop app from the repository root:
-
-```bash
-flutter run -d macos
-```
-
-Format and analyze the Flutter app:
-
-```bash
-dart format --set-exit-if-changed .
-flutter analyze
-flutter test
-```
-
-## Local Builds
-
-Build the macOS app:
+Install Rust through rustup; the repository pins its toolchain in
+[`rust-toolchain.toml`](rust-toolchain.toml). macOS also needs Xcode command line
+tools; Windows needs the MSVC C++ build tools and Windows SDK. Packaging needs
+Python 3.12 or newer. Run from the repository root:
 
 ```bash
-flutter build macos
+rustup show
+cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
+cargo test --manifest-path rust/Cargo.toml --locked --workspace
 ```
 
-Create a macOS DMG for GitHub upload:
+Stage the pinned macOS runtime for an unbundled development run:
 
 ```bash
-scripts/package-macos.sh
+python3 rust/packaging/runtime.py macos --destination rust/target/dev-runtime
+DYLD_FRAMEWORK_PATH="$PWD/rust/target/dev-runtime" \
+VELA_MPV_LIBRARY="$PWD/rust/target/dev-runtime/Mpv.framework/Mpv" \
+  cargo run --manifest-path rust/Cargo.toml -p vela-desktop
 ```
 
-Build the Windows app on Windows:
+On Windows, install 7-Zip, then stage the runtime beside the development binary:
 
 ```powershell
-flutter build windows
+python rust/packaging/runtime.py windows --destination rust/target/debug
+cargo run --manifest-path rust/Cargo.toml -p vela-desktop
 ```
 
-Create a Windows installer for GitHub upload on Windows. This requires Inno Setup 6:
+`VELA_MPV_LIBRARY` can point to a compatible local libmpv library instead. Its
+native dependencies must also be available to the operating system's loader.
+The normal packaged app discovers its bundled runtime automatically.
+
+## Existing libraries and backups
+
+On first launch, Rust Vela looks for the Flutter `vela_catalog.sqlite` in the
+Documents directory and the macOS app container. It uses SQLite's backup API,
+including committed WAL data, to create a separate native catalog. It validates
+the schema, table counts, integrity, and provider references, then upgrades the
+copy when needed. **The original Flutter database remains untouched.**
+
+Providers and credentials, favorites, category ordering, history, resume
+positions, volume/mute, and per-item track preferences are retained. Stable
+catalog IDs are checked against fixtures generated by the real Dart parsers.
+Once adopted, the two databases are independent; later changes in Flutter are
+not continuously synchronized into Rust.
+
+If multiple legacy catalogs are found or the source is invalid, Vela stops
+migration and lets you choose the existing catalog. For an explicit first-run
+source, set `VELA_LEGACY_DATABASE` to its full file path. `VELA_DATA_DIR` selects a
+separate native data directory, useful for isolated testing.
+
+Settings can export a complete SQLite backup. **Database backups include private
+provider credentials and stream URLs.** Keep them private. The earlier Flutter
+JSON export redacts secrets and is not a complete replacement for the original
+SQLite catalog.
+
+## Reproducible performance check
+
+Run the synthetic native benchmark with an optimized build:
+
+```bash
+cargo run --manifest-path rust/Cargo.toml --locked --release -p vela-core --example benchmark_import
+```
+
+The default input contains 50,000 episodes in 10,000 series. An optional trailing
+`-- 20000` changes the series count. The example reports parser medians over five
+runs after warmup, a real initial SQLite import, five transactional refreshes,
+and paged search timings. It verifies stored row counts, page bounds, integrity,
+and foreign keys, then removes its temporary database. It makes no network
+requests and never opens installed Vela data. Timings depend on the machine,
+build profile, storage, and other running work.
+
+Imports and database work run outside the UI paint loop; catalog queries return
+bounded pages. Volume is stored globally with the last audible level, and
+pending preference/progress writes are flushed when the app closes.
+
+## Native packages
+
+Build packages on their target operating system. On macOS:
+
+```bash
+scripts/package-rust-macos.sh
+```
+
+This creates a universal Apple Silicon/Intel `Vela.app` and
+`release/vela-macos-v0.5.0.dmg`, stages the pinned runtime, verifies both
+architectures and signatures, and writes `SHA256SUMS-macos-v0.5.0.txt`.
+
+On Windows, install Inno Setup 6 and 7-Zip, then run:
 
 ```powershell
-winget install JRSoftware.InnoSetup
-.\scripts\package-windows.ps1
+.\scripts\package-rust-windows.ps1
 ```
 
-Or run the manual `Build Windows Installer` GitHub workflow. It builds on a Windows runner and uploads `vela-windows-vX.Y.Z-setup.exe` as a workflow artifact.
+This creates `release/vela-windows-v0.5.0-setup.exe` and
+`SHA256SUMS-windows-v0.5.0.txt`. It retains Vela's installer identity for upgrades.
+The [Rust Desktop workflow](.github/workflows/rust-desktop.yml) builds both
+packages and runs tests on their native runners. Versioned filenames follow
+`rust/Cargo.toml`; the names above refer to the current candidate.
 
-## Manual Updates And Release Upload
+macOS packages have an ad hoc integrity signature; Developer ID signing,
+notarization, and Windows publisher signing are not configured. Operating
+systems may show trust warnings. Release publication and updates remain manual.
 
-Flutter desktop apps are built on the target operating system. Build macOS on macOS, build Windows on Windows or the manual GitHub workflow, then upload the artifacts to the GitHub Release.
+## Release publication
 
-The app checks `https://api.github.com/repos/Fouadktb/vela/releases/latest`. Keep release tags aligned with `pubspec.yaml` using `vX.Y.Z`; otherwise installed apps cannot compare versions correctly.
+Use `rust/Cargo.toml` as the native release version and tag it `vX.Y.Z`. After all
+release checks pass, upload both installers and their checksum files to GitHub
+Releases. Vela uses the repository's public latest-release endpoint for update
+checks; downloading or packaging a candidate does not publish it.
 
-Expected release assets:
+## Legacy provenance
 
-- `vela-macos-vX.Y.Z.dmg`
-- `vela-windows-vX.Y.Z-setup.exe`
-- `SHA256SUMS-vX.Y.Z.txt`
+The previous Flutter sources, platform projects, dependencies, build workflows,
+and package scripts have been removed from the active tree. Their history and
+original visual design remain available in [legacy commit 2829911](https://github.com/Fouadktb/vela/tree/2829911a167bdc8e185c3b62938c1f94b53f295e).
 
-Example upload:
-
-```bash
-gh release upload vX.Y.Z release/vela-macos-vX.Y.Z.dmg release/SHA256SUMS-vX.Y.Z.txt --clobber
-```
-
-Code signing, notarization, and automatic updates are intentionally out of scope. Users will see OS warnings for unsigned builds and install updates manually from GitHub Releases.
-
-## Playback preferences and import performance
-
-Volume and mute are saved globally in the app settings database, including the
-last audible level used when unmuting. Playback restores the saved level before
-opening a stream, and closing playback flushes pending changes.
-
-M3U imports use a set to track series catalog entries, avoiding repeated scans of
-the growing catalog. XMLTV imports filter by the requested time window before
-decoding programme descriptions. Run the repeatable parser benchmark with:
-
-```bash
-dart run scripts/benchmark_m3u.dart
-```
-
-The app remains Flutter/Dart. A Rust migration requires a separately validated
-native playback, storage migration, and macOS/Windows packaging path; these
-performance fixes do not introduce a second implementation.
-
-Desktop checks build both supported targets in GitHub Actions on every push to
-`main` and on pull requests.
+Synthetic SQLite and parser fixtures remain under
+[`rust/crates/vela-core/tests/fixtures`](rust/crates/vela-core/tests/fixtures).
+They protect migration and stable catalog identities. The retained Dart fixture
+generator is a historical test tool that runs against the archived checkout; it
+is not an application target or a dependency of the Rust build. See
+[fixture provenance and reproduction](rust/crates/vela-core/tests/fixtures/README.md).

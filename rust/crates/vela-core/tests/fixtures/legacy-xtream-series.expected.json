@@ -1,0 +1,82 @@
+{
+  "series": {
+    "title": "The Show",
+    "overview": "A series plot.",
+    "poster": "https://example.test/cover.jpg",
+    "backdrop": "https://example.test/backdrop.jpg"
+  },
+  "seasons": [
+    {
+      "id": "1",
+      "series_id": "legacy:series:99",
+      "number": 1,
+      "title": "First Season",
+      "overview": "Season overview",
+      "poster": "https://example.test/season.jpg"
+    },
+    {
+      "id": "2",
+      "series_id": "legacy:series:99",
+      "number": 2,
+      "title": "Second Season",
+      "overview": null,
+      "poster": null
+    }
+  ],
+  "episodes": [
+    {
+      "id": "legacy:episode:42",
+      "series_id": "legacy:series:99",
+      "season_id": "1",
+      "season": 1,
+      "number": 1,
+      "title": "Pilot",
+      "description": "Episode plot",
+      "duration": 3723,
+      "artwork": "https://example.test/episode.jpg",
+      "external": "42",
+      "stream_json": {
+        "providerType": "xtream",
+        "streamId": "42",
+        "containerExtension": "mkv"
+      },
+      "url": "https://example.test/base/series/u%2Fname/p%3F&word/42.mkv"
+    },
+    {
+      "id": "legacy:episode:43",
+      "series_id": "legacy:series:99",
+      "season_id": "1",
+      "season": 1,
+      "number": 2,
+      "title": "Episode 2",
+      "description": null,
+      "duration": 1800,
+      "artwork": null,
+      "external": "43",
+      "stream_json": {
+        "providerType": "xtream",
+        "streamId": "43",
+        "containerExtension": "mp4"
+      },
+      "url": "https://example.test/base/series/u%2Fname/p%3F&word/43.mp4"
+    },
+    {
+      "id": "legacy:episode:44",
+      "series_id": "legacy:series:99",
+      "season_id": "2",
+      "season": 2,
+      "number": 1,
+      "title": "Return",
+      "description": null,
+      "duration": 1530,
+      "artwork": null,
+      "external": "44",
+      "stream_json": {
+        "providerType": "xtream",
+        "streamId": "44",
+        "containerExtension": "mkv"
+      },
+      "url": "https://example.test/base/series/u%2Fname/p%3F&word/44.mkv"
+    }
+  ]
+}

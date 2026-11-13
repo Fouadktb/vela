@@ -1,0 +1,3 @@
+# Preserve upstream license and notice text verbatim, including its whitespace.
+rust/assets/fonts/*LICENSE* -whitespace
+rust/packaging/licenses/* -whitespace

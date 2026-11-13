@@ -15,3 +15,6 @@ coverage/
 !.env.example
 .DS_Store
 *.log
+
+# Rust desktop build output.
+rust/target/

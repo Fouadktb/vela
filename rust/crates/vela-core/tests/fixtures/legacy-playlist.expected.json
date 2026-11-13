@@ -1,0 +1,151 @@
+{
+  "items": [
+    {
+      "id": "legacy:live:news-one",
+      "kind": "live",
+      "title": "News, World",
+      "category": "Live TV",
+      "artwork": "https://example.test/news.png",
+      "url": "https://example.test/live/1.ts",
+      "external": "news/one",
+      "epg": "news/one",
+      "extension": "ts"
+    },
+    {
+      "id": "legacy:live:news-one-2",
+      "kind": "live",
+      "title": "Café News",
+      "category": "Café & News",
+      "artwork": null,
+      "url": "https://example.test/live/2.m3u8",
+      "external": "news/one",
+      "epg": "news/one",
+      "extension": "m3u8"
+    },
+    {
+      "id": "legacy:movie:film-one",
+      "kind": "movie",
+      "title": "Film One",
+      "category": "Films",
+      "artwork": null,
+      "url": "https://example.test/movie/3.MKV?token=1",
+      "external": "film-one",
+      "epg": null,
+      "extension": "mkv"
+    },
+    {
+      "id": "legacy:series:example",
+      "kind": "series",
+      "title": "Example",
+      "category": "TV Series",
+      "artwork": "https://example.test/first.png",
+      "url": null,
+      "external": "example",
+      "epg": null,
+      "extension": null
+    },
+    {
+      "id": "legacy:live:trailer",
+      "kind": "live",
+      "title": "Trailer",
+      "category": "Series",
+      "artwork": null,
+      "url": "https://example.test/trailer.mp4",
+      "external": "trailer",
+      "epg": null,
+      "extension": "mp4"
+    },
+    {
+      "id": "legacy:live:item",
+      "kind": "live",
+      "title": "أخبار",
+      "category": "Uncategorized",
+      "artwork": null,
+      "url": "https://example.test/live/7.ts",
+      "external": "item",
+      "epg": null,
+      "extension": "ts"
+    }
+  ],
+  "categories": [
+    {
+      "id": "legacy:live:caf%C3%A9%20%26%20news",
+      "name": "Café & News"
+    },
+    {
+      "id": "legacy:live:live%20tv",
+      "name": "Live TV"
+    },
+    {
+      "id": "legacy:live:series",
+      "name": "Series"
+    },
+    {
+      "id": "legacy:live:uncategorized",
+      "name": "Uncategorized"
+    },
+    {
+      "id": "legacy:movie:films",
+      "name": "Films"
+    },
+    {
+      "id": "legacy:series:tv%20series",
+      "name": "TV Series"
+    }
+  ],
+  "series": [
+    {
+      "id": "legacy:series:example",
+      "catalog_id": "legacy:series:example",
+      "title": "Example",
+      "poster": null
+    }
+  ],
+  "seasons": [
+    {
+      "id": "1",
+      "series_id": "legacy:series:example",
+      "number": 1
+    },
+    {
+      "id": "2",
+      "series_id": "legacy:series:example",
+      "number": 2
+    }
+  ],
+  "episodes": [
+    {
+      "id": "legacy:series:ep-1",
+      "series_id": "legacy:series:example",
+      "season_id": "1",
+      "season": 1,
+      "number": 1,
+      "title": "Example S01E01 - Pilot",
+      "url": "https://example.test/series/4.mp4",
+      "artwork": "https://example.test/first.png",
+      "external": "ep.1"
+    },
+    {
+      "id": "legacy:series:example-s01e02",
+      "series_id": "legacy:series:example",
+      "season_id": "1",
+      "season": 1,
+      "number": 2,
+      "title": "Example S01E02",
+      "url": "https://example.test/series/5.mp4",
+      "artwork": "https://example.test/second.png",
+      "external": "example-s01e02"
+    },
+    {
+      "id": "legacy:series:example-s02e01",
+      "series_id": "legacy:series:example",
+      "season_id": "2",
+      "season": 2,
+      "number": 1,
+      "title": "Example S02E01",
+      "url": "https://example.test/series/6.mp4",
+      "artwork": null,
+      "external": "example-s02e01"
+    }
+  ]
+}

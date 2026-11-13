@@ -1,5 +1,9 @@
 # Player feedback pass design
 
+Historical behavior/design reference from [legacy commit 2829911](https://github.com/Fouadktb/vela/tree/2829911a167bdc8e185c3b62938c1f94b53f295e).
+Flutter class names below describe that archived implementation; the active app
+is Rust. Preserve the user-facing behavior while validating the native port.
+
 ## Goal
 
 Address tester feedback around live playback switching, playback speed gestures, category readability, category sidebar sizing, and Windows fullscreen window chrome.
@@ -22,7 +26,5 @@ Fullscreen handling stays inside `PlaybackController`. On Windows, entering full
 
 ## Verification
 
-- `dart format --set-exit-if-changed .`
-- `flutter analyze`
-- `flutter build macos`
+- Follow the native [release checklist](../../release-checklist.md).
 - Manual smoke: open a live channel, confirm recent rail is visible/collapsible, switch to a recent channel, hold/release Space on a movie/episode, resize the category sidebar, and confirm category names wrap.

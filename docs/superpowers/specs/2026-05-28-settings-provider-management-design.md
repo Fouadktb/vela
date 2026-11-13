@@ -1,5 +1,9 @@
 # Settings provider management design
 
+Historical behavior/design reference from [legacy commit 2829911](https://github.com/Fouadktb/vela/tree/2829911a167bdc8e185c3b62938c1f94b53f295e).
+Flutter class names below describe that archived implementation; the active app
+is Rust. Preserve the user-facing behavior while validating the native port.
+
 ## Goal
 
 Make Settings a clear provider management surface again. Users must be able to edit existing playlists/providers, including Xtream server URL, username, password, M3U URL, local file path, provider name, enabled state, and auto-refresh interval.
@@ -34,4 +38,4 @@ Provider health cards should not expose secrets. Full provider data is only load
 
 ## Verification
 
-Run formatting, `flutter analyze`, and a macOS build. Manual smoke path: open Settings, select a provider, confirm source/credentials fields are present, save, refresh, switch to Add provider mode, and return to the edited provider.
+Follow the native [release checklist](../../release-checklist.md). Manual smoke path: open Settings, select a provider, confirm source/credentials fields are present, save, refresh, switch to Add provider mode, and return to the edited provider.

@@ -1,0 +1,773 @@
+//! Integration tests of the real command queue and SQLite worker. No native
+//! window, installed library, environment mutation, or public network needed.
+use crate::worker::{Command, Event, PlaybackTarget, ViewData, Worker};
+use anyhow::Result;
+use eframe::egui;
+use std::{
+    io::{Read, Write},
+    net::TcpListener,
+    path::Path,
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
+use vela_core::*;
+
+fn provider(id: &str) -> Provider {
+    Provider {
+        id: id.into(),
+        name: format!("Test {id}"),
+        kind: "m3u".into(),
+        source: "https://fixture.invalid/list.m3u".into(),
+        is_enabled: true,
+        auto_refresh_enabled: false,
+        auto_refresh_interval_minutes: 1440,
+        ..Default::default()
+    }
+}
+fn start(path: &Path) -> Worker {
+    let worker = Worker::test_new(egui::Context::default(), path.to_owned());
+    match worker
+        .rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("worker must report startup")
+    {
+        Event::Ready(actual) => assert_eq!(actual, path),
+        Event::Fatal(error) | Event::Error(error) => panic!("worker startup failed: {error}"),
+        _ => panic!("first worker event must be Ready"),
+    }
+    worker
+}
+fn until(worker: &Worker, predicate: impl Fn(&Event) -> bool) -> Event {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let event = worker
+            .rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .expect("worker response timed out");
+        if predicate(&event) {
+            return event;
+        }
+        if let Event::Fatal(error) | Event::Error(error) = event {
+            panic!("unexpected worker error: {error}");
+        }
+    }
+}
+fn load(worker: &Worker, token: u64, query: CatalogQuery) -> ViewData {
+    worker.send(Command::Load(token, query));
+    match until(
+        worker,
+        |event| matches!(event,Event::View(actual,_) if *actual==token),
+    ) {
+        Event::View(_, data) => data,
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn ordered_shutdown_flushes_latest_volume_mute_settings_and_progress() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("worker.sqlite");
+    let mut worker = start(&path);
+    worker.send(Command::SaveProvider(provider("p")));
+    worker.send(Command::Setting("language".into(), "de".into()));
+    for value in 1..=100 {
+        worker.send(Command::Volume(VolumePreferences {
+            volume: f64::from(value),
+            last_audible_volume: f64::from(value),
+        }));
+    }
+    worker.send(Command::Volume(VolumePreferences {
+        volume: 0.0,
+        last_audible_volume: 37.0,
+    }));
+    worker.send(Command::Progress(PlaybackProgress {
+        provider_id: "p".into(),
+        item_id: "film".into(),
+        item_type: "movie".into(),
+        title: "Film".into(),
+        position_seconds: 133,
+        duration_seconds: Some(1000),
+        ..Default::default()
+    }));
+    // No acknowledgement waits: shutdown itself must drain earlier commands.
+    worker.shutdown();
+    let store = Store::open(&path)?;
+    let volume = store.volume()?;
+    assert_eq!(volume.volume, 0.0);
+    assert_eq!(volume.last_audible_volume, 37.0);
+    assert_eq!(store.setting("language")?.as_deref(), Some("de"));
+    assert_eq!(
+        store
+            .resume("p", "movie", "film", None, None)?
+            .unwrap()
+            .position_seconds,
+        133
+    );
+    drop(store);
+    let reopened = start(&path);
+    let data = load(&reopened, 1, CatalogQuery::default());
+    let restored: VolumePreferences = serde_json::from_str(
+        data.settings
+            .get("playback_output_volume")
+            .expect("saved volume setting"),
+    )?;
+    assert_eq!(restored.volume, 0.0);
+    assert_eq!(restored.last_audible_volume, 37.0);
+    assert_eq!(data.history[0].position_seconds, 133);
+    Ok(())
+}
+
+#[test]
+fn dropping_worker_preserves_pending_last_volume_choice() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("worker.sqlite");
+    {
+        let worker = start(&path);
+        worker.send(Command::Volume(VolumePreferences {
+            volume: 24.0,
+            last_audible_volume: 24.0,
+        }));
+        worker.send(Command::Volume(VolumePreferences {
+            volume: 62.0,
+            last_audible_volume: 62.0,
+        }));
+    }
+    assert_eq!(Store::open(&path)?.volume()?.volume, 62.0);
+    Ok(())
+}
+
+#[test]
+fn worker_pagination_and_episode_history_keep_scoped_identity() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("worker.sqlite");
+    let store = Store::open(&path)?;
+    store.upsert_provider(&provider("p"))?;
+    let movies = (0..3)
+        .map(|index| CatalogItem {
+            id: format!("film-{index}"),
+            provider_id: "p".into(),
+            content_type: "movie".into(),
+            title: format!("Film {index}"),
+            ..Default::default()
+        })
+        .collect();
+    let mut snapshot = ImportSnapshot {
+        provider_id: "p".into(),
+        items: movies,
+        ..Default::default()
+    };
+    for show in ["show:a", "show/b"] {
+        snapshot.items.push(CatalogItem {
+            id: show.into(),
+            provider_id: "p".into(),
+            content_type: "series".into(),
+            title: show.into(),
+            ..Default::default()
+        });
+    }
+    store.replace_catalog(&snapshot)?;
+    let mut expected_history = None;
+    for (show, position) in [("show:a", 10), ("show/b", 80)] {
+        let episode = Episode {
+            id: "shared:episode".into(),
+            provider_id: "p".into(),
+            series_id: show.into(),
+            season_id: "1".into(),
+            season_number: 1,
+            episode_number: 1,
+            title: format!("Episode from {show}"),
+            stream_url: Some(format!("https://fixture.invalid/{position}.ts")),
+            ..Default::default()
+        };
+        store.replace_series_details(&SeriesDetails {
+            series: Series {
+                id: show.into(),
+                provider_id: "p".into(),
+                catalog_item_id: Some(show.into()),
+                title: show.into(),
+                ..Default::default()
+            },
+            seasons: vec![Season {
+                provider_id: "p".into(),
+                series_id: show.into(),
+                season_number: 1,
+                ..Default::default()
+            }],
+            episodes: vec![episode],
+        })?;
+        let progress = PlaybackProgress {
+            provider_id: "p".into(),
+            item_id: "shared:episode".into(),
+            item_type: "episode".into(),
+            series_id: Some(show.into()),
+            season_id: Some("1".into()),
+            title: format!("Episode from {show}"),
+            position_seconds: position,
+            last_watched_at: 1700000000000 + position,
+            ..Default::default()
+        };
+        store.save_progress(&progress)?;
+        if show == "show/b" {
+            expected_history = Some(progress);
+        }
+    }
+    drop(store);
+    let worker = start(&path);
+    let data = load(
+        &worker,
+        42,
+        CatalogQuery {
+            content_type: Some("movie".into()),
+            limit: 1,
+            offset: 1,
+            ..Default::default()
+        },
+    );
+    assert_eq!(data.page.total, 3);
+    assert_eq!(data.page.items.len(), 1);
+    assert_eq!(data.page.items[0].id, "film-1");
+    assert_eq!(data.history.len(), 2);
+    let mut history = expected_history.unwrap();
+    // A history row retained by the UI can predate newer persisted progress.
+    // Resuming must consult SQLite rather than replaying the stale UI snapshot.
+    history.position_seconds = 3;
+    worker.send(Command::ResumeHistory(history));
+    match until(&worker, |event| matches!(event, Event::Prepared(..))) {
+        Event::Prepared(target, Some(progress)) => {
+            assert_eq!(target.series_id.as_deref(), Some("show/b"));
+            assert_eq!(target.season_id.as_deref(), Some("1"));
+            assert_eq!(target.key(), "show%2Fb:1:shared%3Aepisode");
+            assert_eq!(
+                target.item.stream_url.as_deref(),
+                Some("https://fixture.invalid/80.ts")
+            );
+            assert_eq!(progress.position_seconds, 80);
+            worker.send(Command::Prepare(PlaybackTarget {
+                generation: 0,
+                item: target.item,
+                series_id: Some("show:a".into()),
+                season_id: Some("1".into()),
+            }));
+        }
+        _ => panic!("expected a resumable episode target"),
+    }
+    match until(&worker, |event| matches!(event, Event::Prepared(..))) {
+        Event::Prepared(_, Some(progress)) => assert_eq!(progress.position_seconds, 10),
+        _ => panic!("expected the other series' independent resume position"),
+    }
+    Ok(())
+}
+
+#[test]
+fn failed_http_refresh_keeps_catalog_and_records_persisted_failure() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("worker.sqlite");
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?;
+    let (stop_tx, stop_rx) = mpsc::channel();
+    listener.set_nonblocking(true)?;
+    let server = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .unwrap();
+                    let mut buffer = [0u8; 4096];
+                    let _ = stream.read(&mut buffer);
+                    stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if stop_rx.recv_timeout(Duration::from_millis(5)).is_ok() {
+                        return;
+                    }
+                }
+                Err(error) => panic!("fixture server failed: {error}"),
+            }
+        }
+    });
+    let mut p = provider("p");
+    p.source = format!("http://{address}/playlist.m3u");
+    let store = Store::open(&path)?;
+    store.upsert_provider(&p)?;
+    store.replace_catalog(&ImportSnapshot {
+        provider_id: "p".into(),
+        items: vec![CatalogItem {
+            id: "kept".into(),
+            provider_id: "p".into(),
+            content_type: "live".into(),
+            title: "Existing channel".into(),
+            stream_url: Some("https://fixture.invalid/kept.ts".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    })?;
+    drop(store);
+    let mut worker = start(&path);
+    worker.send(Command::Refresh(p));
+    let error = match until(&worker, |event| matches!(event, Event::Error(_))) {
+        Event::Error(error) => error,
+        _ => unreachable!(),
+    };
+    assert!(!error.is_empty());
+    let data = load(&worker, 9, CatalogQuery::default());
+    assert_eq!(data.page.total, 1);
+    assert_eq!(data.page.items[0].id, "kept");
+    worker.shutdown();
+    let _ = stop_tx.send(());
+    server.join().expect("fixture server must exit");
+    let raw = rusqlite::Connection::open(&path)?;
+    let result:(String,i64,Option<String>)=raw.query_row("SELECT status,item_count,error_message FROM provider_refresh_runs ORDER BY started_at DESC LIMIT 1",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?;
+    assert_eq!(result.0, "failed");
+    assert_eq!(result.1, 0);
+    assert!(result.2.is_some());
+    Ok(())
+}
+
+#[test]
+fn invalid_existing_database_reports_fatal_and_remains_untouched() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("unreadable.sqlite");
+    let original = b"invalid existing catalog must never become an empty library";
+    std::fs::write(&path, original)?;
+    let mut worker = Worker::test_new(egui::Context::default(), path.clone());
+    match worker.rx.recv_timeout(Duration::from_secs(10))? {
+        Event::Fatal(error) => assert!(error.contains("left untouched")),
+        _ => panic!("an invalid catalog must block worker startup"),
+    }
+    worker.shutdown();
+    assert_eq!(std::fs::read(&path)?, original);
+    Ok(())
+}
+
+#[test]
+fn play_series_resumes_scoped_season_then_advances_and_wraps_without_rewriting_history()
+-> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("series-worker.sqlite");
+    let store = Store::open(&path)?;
+    store.upsert_provider(&provider("p"))?;
+    let show = CatalogItem {
+        id: "show:scoped".into(),
+        provider_id: "p".into(),
+        content_type: "series".into(),
+        title: "Scoped Show".into(),
+        ..Default::default()
+    };
+    store.replace_catalog(&ImportSnapshot {
+        provider_id: "p".into(),
+        items: vec![show.clone()],
+        ..Default::default()
+    })?;
+    let seasons = (1..=2)
+        .map(|season| Season {
+            provider_id: "p".into(),
+            series_id: show.id.clone(),
+            season_number: season,
+            ..Default::default()
+        })
+        .collect();
+    let mut episodes = Vec::new();
+    for season in 1..=2 {
+        for (number, id) in [(1, "shared:episode"), (2, "shared:next")] {
+            episodes.push(Episode {
+                id: id.into(),
+                provider_id: "p".into(),
+                series_id: show.id.clone(),
+                season_id: season.to_string(),
+                season_number: season,
+                episode_number: number,
+                title: format!("Season {season} episode {number}"),
+                stream_url: Some(format!("https://fixture.invalid/s{season}e{number}.ts")),
+                ..Default::default()
+            });
+        }
+    }
+    store.replace_series_details(&SeriesDetails {
+        series: Series {
+            id: show.id.clone(),
+            provider_id: "p".into(),
+            catalog_item_id: Some(show.id.clone()),
+            title: show.title.clone(),
+            ..Default::default()
+        },
+        seasons,
+        episodes,
+    })?;
+    for (season, position, watched) in [("1", 12, 1700000000010), ("2", 45, 1700000000020)] {
+        store.save_progress(&PlaybackProgress {
+            provider_id: "p".into(),
+            item_id: "shared:episode".into(),
+            item_type: "episode".into(),
+            series_id: Some(show.id.clone()),
+            season_id: Some(season.into()),
+            title: format!("Season {season} episode 1"),
+            position_seconds: position,
+            last_watched_at: watched,
+            ..Default::default()
+        })?;
+    }
+    drop(store);
+    let mut worker = start(&path);
+    worker.send(Command::PlaySeries(show.clone()));
+    match until(&worker, |event| matches!(event, Event::PlaybackQueue(..))) {
+        Event::PlaybackQueue(_, queue) => {
+            assert_eq!(queue.len(), 4);
+            assert_eq!(queue[0].season_id, "1");
+            assert_eq!(queue[2].season_id, "2");
+        }
+        _ => unreachable!(),
+    }
+    let mut current = match until(&worker, |event| matches!(event, Event::Prepared(..))) {
+        Event::Prepared(target, Some(progress)) => {
+            assert_eq!(target.series_id.as_deref(), Some("show:scoped"));
+            assert_eq!(target.season_id.as_deref(), Some("2"));
+            assert_eq!(target.item.id, "shared:episode");
+            assert_eq!(
+                target.item.stream_url.as_deref(),
+                Some("https://fixture.invalid/s2e1.ts")
+            );
+            assert_eq!(target.key(), "show%3Ascoped:2:shared%3Aepisode");
+            assert_eq!(progress.catalog_key, target.key());
+            assert_eq!(progress.position_seconds, 45);
+            progress
+        }
+        _ => panic!("PlaySeries must emit the saved second-season episode and resume"),
+    };
+    current.completed = true;
+    current.last_watched_at += 10;
+    worker.send(Command::Progress(current));
+    worker.send(Command::PlaySeries(show.clone()));
+    match until(&worker, |event| matches!(event, Event::Prepared(..))) {
+        Event::Prepared(target, resume) => {
+            assert_eq!(target.season_id.as_deref(), Some("2"));
+            assert_eq!(target.item.id, "shared:next");
+            assert_eq!(
+                target.item.stream_url.as_deref(),
+                Some("https://fixture.invalid/s2e2.ts")
+            );
+            assert!(resume.is_none());
+        }
+        _ => unreachable!(),
+    }
+    worker.send(Command::Progress(PlaybackProgress {
+        provider_id: "p".into(),
+        item_id: "shared:next".into(),
+        item_type: "episode".into(),
+        series_id: Some(show.id.clone()),
+        season_id: Some("2".into()),
+        title: "Season 2 episode 2".into(),
+        completed: true,
+        last_watched_at: 1700000000040,
+        ..Default::default()
+    }));
+    worker.send(Command::PlaySeries(show));
+    match until(&worker, |event| matches!(event, Event::Prepared(..))) {
+        Event::Prepared(target, resume) => {
+            assert_eq!(target.season_id.as_deref(), Some("1"));
+            assert_eq!(target.item.id, "shared:episode");
+            assert_eq!(
+                target.item.stream_url.as_deref(),
+                Some("https://fixture.invalid/s1e1.ts")
+            );
+            assert_eq!(resume.unwrap().position_seconds, 12);
+        }
+        _ => unreachable!(),
+    }
+    worker.shutdown();
+    let store = Store::open(&path)?;
+    let history = store.recent_history(20)?;
+    assert_eq!(
+        history.len(),
+        3,
+        "choosing playback must not rewrite the history to a series-level identity"
+    );
+    assert!(
+        history
+            .iter()
+            .all(|p| p.item_type == "episode" && p.series_id.as_deref() == Some("show:scoped"))
+    );
+    assert!(
+        history
+            .iter()
+            .any(|p| p.catalog_key == "show%3Ascoped:1:shared%3Aepisode"
+                && !p.completed
+                && p.position_seconds == 12)
+    );
+    assert!(
+        history
+            .iter()
+            .any(|p| p.catalog_key == "show%3Ascoped:2:shared%3Aepisode" && p.completed)
+    );
+    Ok(())
+}
+
+#[test]
+fn home_continue_resolves_older_series_and_movies_outside_loaded_catalog_pages() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("home-worker.sqlite");
+    let store = Store::open(&path)?;
+    store.upsert_provider(&provider("p"))?;
+    let mut items = (0..80)
+        .map(|index| CatalogItem {
+            id: format!("film-{index:03}"),
+            provider_id: "p".into(),
+            content_type: "movie".into(),
+            title: format!("A Movie {index:03}"),
+            ..Default::default()
+        })
+        .collect::<Vec<_>>();
+    items.extend((0..40).map(|index| CatalogItem {
+        id: format!("series-{index:03}"),
+        provider_id: "p".into(),
+        content_type: "series".into(),
+        title: format!("B Series {index:03}"),
+        ..Default::default()
+    }));
+    items.push(CatalogItem {
+        id: "old-film".into(),
+        provider_id: "p".into(),
+        content_type: "movie".into(),
+        title: "Z Old Movie".into(),
+        stream_url: Some("https://fixture.invalid/old-movie.ts".into()),
+        ..Default::default()
+    });
+    items.push(CatalogItem {
+        id: "old:series".into(),
+        provider_id: "p".into(),
+        content_type: "series".into(),
+        title: "Z Old Series".into(),
+        description: Some("Resolved series metadata".into()),
+        ..Default::default()
+    });
+    store.replace_catalog(&ImportSnapshot {
+        provider_id: "p".into(),
+        items,
+        ..Default::default()
+    })?;
+    store.replace_series_details(&SeriesDetails {
+        series: Series {
+            id: "old:series".into(),
+            provider_id: "p".into(),
+            catalog_item_id: Some("old:series".into()),
+            title: "Z Old Series".into(),
+            ..Default::default()
+        },
+        seasons: vec![Season {
+            provider_id: "p".into(),
+            series_id: "old:series".into(),
+            season_number: 2,
+            ..Default::default()
+        }],
+        episodes: vec![Episode {
+            id: "old:episode".into(),
+            provider_id: "p".into(),
+            series_id: "old:series".into(),
+            season_id: "2".into(),
+            season_number: 2,
+            episode_number: 1,
+            title: "Old Series Pilot".into(),
+            ..Default::default()
+        }],
+    })?;
+    store.save_progress(&PlaybackProgress {
+        provider_id: "p".into(),
+        item_id: "old-film".into(),
+        item_type: "movie".into(),
+        title: "Old movie history title".into(),
+        position_seconds: 17,
+        last_watched_at: 1700000000010,
+        ..Default::default()
+    })?;
+    store.save_progress(&PlaybackProgress {
+        provider_id: "p".into(),
+        item_id: "old:episode".into(),
+        item_type: "episode".into(),
+        series_id: Some("old:series".into()),
+        season_id: Some("2".into()),
+        title: "Old episode history title".into(),
+        position_seconds: 61,
+        last_watched_at: 1700000000020,
+        ..Default::default()
+    })?;
+    // Simulate entries imported long before the rest of this library. Series
+    // metadata enrichment above legitimately updates its timestamp, so the
+    // fixture must set both import and metadata dates to their old values.
+    rusqlite::Connection::open(&path)?.execute("UPDATE catalog_items SET created_at=1700000000000,updated_at=1700000000000 WHERE id IN ('old-film','old:series')",[])?;
+    drop(store);
+    let worker = start(&path);
+    let data = load(
+        &worker,
+        500,
+        CatalogQuery {
+            limit: 60,
+            ..Default::default()
+        },
+    );
+    assert_eq!(data.page.items.len(), 60);
+    assert!(
+        data.page
+            .items
+            .iter()
+            .all(|i| i.id != "old:series" && i.id != "old-film")
+    );
+    assert!(data.latest_movies.iter().all(|i| i.id != "old-film"));
+    assert!(data.latest_series.iter().all(|i| i.id != "old:series"));
+    assert_eq!(data.home_continue.len(), 2);
+    let (series, progress) = &data.home_continue[0];
+    assert_eq!(series.content_type, "series");
+    assert_eq!(series.id, "old:series");
+    assert_eq!(series.title, "Z Old Series");
+    assert_eq!(
+        series.description.as_deref(),
+        Some("Resolved series metadata")
+    );
+    assert_eq!(progress.item_type, "episode");
+    assert_eq!(progress.item_id, "old:episode");
+    assert_eq!(progress.series_id.as_deref(), Some("old:series"));
+    assert_eq!(progress.season_id.as_deref(), Some("2"));
+    assert_eq!(progress.position_seconds, 61);
+    let (movie, progress) = &data.home_continue[1];
+    assert_eq!(movie.id, "old-film");
+    assert_eq!(movie.title, "Z Old Movie");
+    assert_eq!(
+        movie.stream_url.as_deref(),
+        Some("https://fixture.invalid/old-movie.ts")
+    );
+    assert_eq!(progress.position_seconds, 17);
+    Ok(())
+}
+
+#[test]
+fn late_series_playback_cannot_replace_a_newer_movie_or_canceled_request() -> Result<()> {
+    use crate::worker::Origin;
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("worker.sqlite");
+    let store = Store::open(&path)?;
+    let p = provider("p");
+    store.upsert_provider(&p)?;
+    drop(store);
+    let worker = start(&path);
+    let old_generation = worker.generation();
+    worker.send(Command::Prepare(PlaybackTarget::catalog(CatalogItem {
+        id: "new-movie".into(),
+        provider_id: "p".into(),
+        content_type: "movie".into(),
+        ..Default::default()
+    })));
+    // A network failure from the superseded series must also be discarded.
+    worker.complete_for_test(
+        old_generation,
+        Command::PlaySeriesFetched(
+            Origin {
+                provider: p.clone(),
+                revision: 0,
+            },
+            Err(anyhow::anyhow!("stale series request")),
+        ),
+    );
+    match until(&worker, |event| matches!(event, Event::Prepared(..))) {
+        Event::Prepared(target, _) => {
+            assert_eq!(target.item.id, "new-movie");
+            assert_eq!(target.generation, worker.generation());
+        }
+        _ => unreachable!(),
+    }
+    load(&worker, 801, CatalogQuery::default()); // fence behind stale completion
+    let canceled_generation = worker.generation();
+    worker.send(Command::CancelPlayback);
+    worker.complete_for_test(
+        canceled_generation,
+        Command::PlaySeriesFetched(
+            Origin {
+                provider: p,
+                revision: 0,
+            },
+            Err(anyhow::anyhow!("canceled request")),
+        ),
+    );
+    load(&worker, 802, CatalogQuery::default());
+    Ok(())
+}
+
+#[test]
+fn stale_provider_results_are_discarded_even_after_source_changes_back() -> Result<()> {
+    use crate::worker::Origin;
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("worker.sqlite");
+    let store = Store::open(&path)?;
+    let p = provider("p");
+    store.upsert_provider(&p)?;
+    store.replace_epg(
+        "p",
+        &[EpgProgram {
+            provider_id: "p".into(),
+            channel_id: "channel".into(),
+            start_at: 100,
+            end_at: 200,
+            title: "Current programme".into(),
+            ..Default::default()
+        }],
+    )?;
+    drop(store);
+    let mut worker = start(&path);
+    let mut changed = p.clone();
+    changed.source = "https://fixture.invalid/new-account.m3u".into();
+    worker.send(Command::SaveProvider(changed));
+    worker.send(Command::SaveProvider(p.clone()));
+    let origin = Origin {
+        provider: p.clone(),
+        revision: 0,
+    };
+    worker.send(Command::SeriesFetched(
+        origin.clone(),
+        "old-show".into(),
+        Ok(SeriesDetails {
+            series: Series {
+                id: "old-show".into(),
+                provider_id: "p".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }),
+    ));
+    worker.send(Command::MovieFetched(
+        origin.clone(),
+        Err(anyhow::anyhow!("old metadata failure")),
+    ));
+    worker.send(Command::EpgFetched(origin.clone(), Ok(vec![])));
+    worker.send(Command::PlaySeriesFetched(
+        origin.clone(),
+        Err(anyhow::anyhow!("old series playback")),
+    ));
+    load(&worker, 803, CatalogQuery::default());
+    worker.send(Command::Guide("p".into(), vec!["channel".into()], 0, 300));
+    match until(&worker, |event| matches!(event, Event::Epg(_))) {
+        Event::Epg(programmes) => {
+            assert_eq!(programmes.len(), 1);
+            assert_eq!(programmes[0].title, "Current programme");
+        }
+        _ => unreachable!(),
+    }
+    {
+        let raw = rusqlite::Connection::open(&path)?;
+        let count: i64 = raw.query_row("SELECT count(*) FROM series", [], |r| r.get(0))?;
+        assert_eq!(count, 0);
+    }
+    worker.send(Command::DeleteProvider("p".into()));
+    worker.send(Command::SaveProvider(p));
+    worker.send(Command::EpgFetched(
+        origin,
+        Err(anyhow::anyhow!("deleted provider result")),
+    ));
+    load(&worker, 804, CatalogQuery::default());
+    worker.shutdown();
+    let store = Store::open(&path)?;
+    assert!(store.episodes("p", "old-show")?.is_empty());
+    let raw = rusqlite::Connection::open(path)?;
+    let count: i64 = raw.query_row("SELECT count(*) FROM series", [], |r| r.get(0))?;
+    assert_eq!(count, 0);
+    Ok(())
+}
