@@ -205,6 +205,8 @@ impl VelaApp {
     fn navigate(&mut self, section: Section) {
         self.worker.send(Command::CancelPlayback);
         self.selected_catalog = None;
+        self.page = CatalogPage::default();
+        self.categories.clear();
         self.section = section;
         self.query.content_type = section.kind();
         self.query.category_id = None;
@@ -251,6 +253,17 @@ impl VelaApp {
                     self.settings = settings;
                     self.loading = false;
                     if !self.initialized {
+                        self.sidebar_pinned = self
+                            .settings
+                            .get("sidebar_pinned")
+                            .is_some_and(|value| value == "true");
+                        self.category_sidebar_width = self
+                            .settings
+                            .get("category_sidebar_width")
+                            .and_then(|value| value.parse::<f32>().ok())
+                            .filter(|value| value.is_finite())
+                            .unwrap_or(280.0)
+                            .clamp(220.0, 420.0);
                         self.volume = self
                             .settings
                             .get("playback_output_volume")

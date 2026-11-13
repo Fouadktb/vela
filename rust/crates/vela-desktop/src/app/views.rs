@@ -11,11 +11,46 @@ fn title(text: impl Into<String>, size: f32) -> RichText {
         .color(TEXT)
 }
 fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str) -> egui::Response {
-    ui.add_sized(
-        [38.0, 38.0],
-        egui::Button::new(theme::icon(icon).size(18.0)).frame(false),
-    )
-    .on_hover_text(tooltip)
+    let (rect, response) = ui.allocate_exact_size(vec2(38.0, 38.0), Sense::click());
+    let pressed = response.is_pointer_button_down_on();
+    if response.hovered() || pressed || response.has_focus() {
+        ui.painter().rect_filled(
+            rect,
+            8.0,
+            if pressed {
+                theme::SELECTED_BG
+            } else {
+                SURFACE_HIGH
+            },
+        );
+    }
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            8.0,
+            Stroke::new(1.0_f32, ACCENT),
+            egui::StrokeKind::Inside,
+        );
+    }
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        glyph(icon),
+        FontId::new(18.0, egui::FontFamily::Name("Vela Lucide".into())),
+        if !ui.is_enabled() {
+            MUTED.gamma_multiply(0.45)
+        } else if pressed || response.hovered() {
+            ACCENT
+        } else {
+            TEXT
+        },
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
+    });
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(tooltip)
 }
 fn icon_label(icon: &str, label: &str, color: Color32) -> egui::text::LayoutJob {
     let mut text = egui::text::LayoutJob::default();
@@ -40,20 +75,48 @@ fn icon_label(icon: &str, label: &str, color: Color32) -> egui::text::LayoutJob 
     text
 }
 fn action(ui: &mut Ui, icon: &str, label: &str, primary: bool) -> egui::Response {
-    ui.add(
-        egui::Button::new(icon_label(icon, label, if primary { BG } else { TEXT }))
-            .min_size(vec2(44.0, 40.0))
-            .fill(if primary {
-                ACCENT
-            } else {
-                Color32::TRANSPARENT
-            })
-            .stroke(if primary {
+    ui.scope(|ui| {
+        let widgets = &mut ui.style_mut().visuals.widgets;
+        for (visual, fill) in [
+            (
+                &mut widgets.inactive,
+                if primary {
+                    ACCENT
+                } else {
+                    Color32::TRANSPARENT
+                },
+            ),
+            (
+                &mut widgets.hovered,
+                if primary {
+                    Color32::from_rgb(244, 202, 115)
+                } else {
+                    SURFACE_HIGH
+                },
+            ),
+            (
+                &mut widgets.active,
+                if primary {
+                    Color32::from_rgb(206, 158, 70)
+                } else {
+                    theme::SELECTED_BG
+                },
+            ),
+        ] {
+            visual.weak_bg_fill = fill;
+            visual.bg_stroke = if primary {
                 Stroke::NONE
             } else {
                 Stroke::new(1.0_f32, OUTLINE)
-            }),
-    )
+            };
+        }
+        ui.add(
+            egui::Button::new(icon_label(icon, label, if primary { BG } else { TEXT }))
+                .min_size(vec2(44.0, 40.0)),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+    })
+    .inner
 }
 fn field(ui: &mut Ui, icon: &str, label: &str, value: &mut String, password: bool) {
     let response = ui.allocate_ui_with_layout(
@@ -153,6 +216,10 @@ impl VelaApp {
                                 .clicked()
                                 {
                                     self.sidebar_pinned = !self.sidebar_pinned;
+                                    self.worker.send(Command::Setting(
+                                        "sidebar_pinned".into(),
+                                        self.sidebar_pinned.to_string(),
+                                    ));
                                 }
                             });
                         }
@@ -176,6 +243,13 @@ impl VelaApp {
                         let response = ui
                             .allocate_rect(row, Sense::click())
                             .on_hover_text(section.label());
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Button,
+                                true,
+                                section.label(),
+                            )
+                        });
                         if selected || response.hovered() {
                             ui.painter().rect_filled(
                                 row,
@@ -512,9 +586,11 @@ impl VelaApp {
             );
         }
         let drag = ui.interact(drag_rect, ui.id().with("category-resize"), Sense::drag());
-        if drag.dragged() {
-            self.category_sidebar_width =
-                (category_width + drag.drag_delta().x).clamp(220.0, 420.0);
+        if has_categories
+            && drag.dragged()
+            && let Some(pointer) = drag.interact_pointer_pos()
+        {
+            self.category_sidebar_width = (pointer.x - body.left()).clamp(220.0, 420.0);
         }
         if drag.drag_stopped() {
             self.worker.send(Command::Setting(
@@ -543,7 +619,8 @@ impl VelaApp {
                 self.catalog_items(ui);
             }
         });
-        if self.selected_catalog.is_none()
+        if !self.loading
+            && self.selected_catalog.is_none()
             && let Some(first) = self.page.items.first().cloned()
         {
             self.select_catalog(first);
@@ -587,8 +664,65 @@ impl VelaApp {
                     );
                 });
             });
-        ui.add_space(12.0);
-        let all = self.categories.iter().map(|c| c.item_count).sum::<i64>();
+        ui.add_space(8.0);
+        let kind = self.query.content_type.as_deref().unwrap_or("live");
+        let sort_key = format!("category_sort:{kind}");
+        let favorites_key = format!("category_favorites_only:{kind}");
+        let mut sort = self
+            .settings
+            .get(&sort_key)
+            .cloned()
+            .filter(|value| ["my_order", "a_z", "z_a", "count"].contains(&value.as_str()))
+            .unwrap_or_else(|| "my_order".into());
+        let mut favorites_only = self
+            .settings
+            .get(&favorites_key)
+            .is_some_and(|value| value == "true");
+        let old_sort = sort.clone();
+        let old_favorites = favorites_only;
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt(("category-sort", kind))
+                .width((ui.available_width() - 6.0).max(100.0))
+                .selected_text(match sort.as_str() {
+                    "a_z" => "A–Z",
+                    "z_a" => "Z–A",
+                    "count" => "Most items",
+                    _ => "My order",
+                })
+                .show_ui(ui, |ui| {
+                    for (value, label) in [
+                        ("my_order", "My order"),
+                        ("a_z", "A–Z"),
+                        ("z_a", "Z–A"),
+                        ("count", "Most items"),
+                    ] {
+                        ui.selectable_value(&mut sort, value.into(), label);
+                    }
+                });
+        });
+        ui.horizontal(|ui| {
+            ui.label(theme::icon("star").size(16.0).color(if favorites_only {
+                ACCENT
+            } else {
+                MUTED
+            }));
+            ui.checkbox(&mut favorites_only, "Favorite categories");
+        });
+        for (key, value, changed) in [
+            (sort_key, sort.clone(), sort != old_sort),
+            (
+                favorites_key,
+                favorites_only.to_string(),
+                favorites_only != old_favorites,
+            ),
+        ] {
+            if changed {
+                self.settings.insert(key.clone(), value.clone());
+                self.worker.send(Command::Setting(key, value));
+            }
+        }
+        ui.add_space(8.0);
+        let all = self.categories.iter().map(|c| c.item_count).sum();
         if self
             .category_row(ui, "All", all, self.query.category_id.is_none(), false)
             .clicked()
@@ -599,76 +733,227 @@ impl VelaApp {
             self.reload();
         }
         ui.add_space(8.0);
-        let search = self.category_search.to_lowercase();
-        let categories = self.categories.clone();
+        let search = self.category_search.trim().to_lowercase();
+        let ordered = ordered_categories(&self.categories, &sort, favorites_only, &search);
+        let reorder_disabled = !search.is_empty() || sort != "my_order";
         egui::ScrollArea::vertical()
             .id_salt("category-list")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                for category in categories
-                    .iter()
-                    .filter(|c| c.name.to_lowercase().contains(&search))
-                {
-                    let response = self.category_row(
-                        ui,
-                        &category.name,
-                        category.item_count,
-                        self.query.category_id.as_deref() == Some(&category.id),
-                        category.is_favorite,
+                if ordered.is_empty() {
+                    ui.label(
+                        RichText::new(if favorites_only {
+                            "No favorite categories."
+                        } else {
+                            "No matching categories."
+                        })
+                        .size(12.0)
+                        .color(MUTED),
                     );
-                    if response.clicked() {
+                }
+                for (index, category) in ordered.iter().enumerate() {
+                    let same_scope = |other: &Category| {
+                        other.provider_id == category.provider_id
+                            && other.content_type == category.content_type
+                            && other.is_favorite == category.is_favorite
+                    };
+                    let can_up = !reorder_disabled && index > 0 && same_scope(&ordered[index - 1]);
+                    let can_down = !reorder_disabled
+                        && index + 1 < ordered.len()
+                        && same_scope(&ordered[index + 1]);
+                    let actions = self.category_action_row(
+                        ui,
+                        category,
+                        self.query.category_id.as_deref() == Some(&category.id),
+                        can_up,
+                        can_down,
+                        reorder_disabled,
+                    );
+                    if actions.0 {
                         self.query.category_id = Some(category.id.clone());
                         self.query.offset = 0;
                         self.selected_catalog = None;
                         self.reload();
                     }
-                    response.context_menu(|ui| {
-                        if ui
-                            .button(if category.is_favorite {
-                                "Unfavorite category"
-                            } else {
-                                "Favorite category"
-                            })
-                            .clicked()
-                        {
-                            self.worker.send(Command::CategoryFavorite(
-                                category.provider_id.clone(),
-                                category.content_type.clone(),
-                                category.id.clone(),
-                            ));
-                            ui.close();
+                    if actions.1 {
+                        self.worker.send(Command::CategoryFavorite(
+                            category.provider_id.clone(),
+                            category.content_type.clone(),
+                            category.id.clone(),
+                        ));
+                        if let Some(current) = self.categories.iter_mut().find(|c| {
+                            c.provider_id == category.provider_id
+                                && c.content_type == category.content_type
+                                && c.id == category.id
+                        }) {
+                            current.is_favorite = !current.is_favorite;
                         }
-                        for (label, delta) in [("Move up", -1isize), ("Move down", 1)] {
-                            if ui
-                                .add_enabled(search.is_empty(), egui::Button::new(label))
-                                .clicked()
-                            {
-                                let mut ids: Vec<_> = categories
-                                    .iter()
-                                    .filter(|c| {
+                    }
+                    if actions.2 != 0 {
+                        let mut ids = ordered_categories(&self.categories, "my_order", false, "")
+                            .iter()
+                            .filter(|c| {
+                                c.provider_id == category.provider_id
+                                    && c.content_type == category.content_type
+                            })
+                            .map(|c| c.id.clone())
+                            .collect::<Vec<_>>();
+                        if let Some(at) = ids.iter().position(|id| id == &category.id) {
+                            let next = at as isize + actions.2;
+                            if next >= 0 && (next as usize) < ids.len() {
+                                ids.swap(at, next as usize);
+                                self.worker.send(Command::ReorderCategories(
+                                    category.provider_id.clone(),
+                                    category.content_type.clone(),
+                                    ids.clone(),
+                                ));
+                                for (position, id) in ids.iter().enumerate() {
+                                    if let Some(current) = self.categories.iter_mut().find(|c| {
                                         c.provider_id == category.provider_id
                                             && c.content_type == category.content_type
-                                    })
-                                    .map(|c| c.id.clone())
-                                    .collect();
-                                if let Some(index) = ids.iter().position(|id| id == &category.id) {
-                                    let next = index as isize + delta;
-                                    if next >= 0 && (next as usize) < ids.len() {
-                                        ids.swap(index, next as usize);
-                                        self.worker.send(Command::ReorderCategories(
-                                            category.provider_id.clone(),
-                                            category.content_type.clone(),
-                                            ids,
-                                        ));
+                                            && c.id == *id
+                                    }) {
+                                        current.sort_order = Some(position as i64);
                                     }
                                 }
-                                ui.close();
                             }
                         }
-                    });
-                    ui.add_space(4.0);
+                    }
+                    ui.add_space(6.0);
                 }
             });
+    }
+    fn category_action_row(
+        &self,
+        ui: &mut Ui,
+        category: &Category,
+        selected: bool,
+        can_up: bool,
+        can_down: bool,
+        reorder_disabled: bool,
+    ) -> (bool, bool, isize) {
+        let foreground = if selected {
+            ACCENT
+        } else {
+            Color32::from_rgb(215, 208, 198)
+        };
+        let label_width = (ui.available_width() - 134.0).max(36.0);
+        let mut job = egui::text::LayoutJob::simple(
+            theme::display_text(&category.name),
+            theme::bold(14.0),
+            foreground,
+            label_width,
+        );
+        job.wrap.max_rows = 3;
+        job.wrap.break_anywhere = true;
+        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+        let height = (galley.size().y + 14.0).max(46.0);
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+        let selection = ui
+            .interact(
+                Rect::from_min_max(rect.min, pos2(rect.right() - 84.0, rect.bottom())),
+                ui.id().with((
+                    "select-category",
+                    &category.provider_id,
+                    &category.content_type,
+                    &category.id,
+                )),
+                Sense::click(),
+            )
+            .on_hover_text(&category.name);
+        selection.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!("{}: {} items", category.name, category.item_count),
+            )
+        });
+        if selected || selection.hovered() {
+            ui.painter().rect_filled(
+                rect,
+                8.0,
+                if selected {
+                    Color32::from_rgb(37, 33, 26)
+                } else {
+                    SURFACE_HIGH
+                },
+            );
+        }
+        ui.painter().galley(
+            pos2(rect.left() + 10.0, rect.center().y - galley.size().y / 2.0),
+            galley,
+            foreground,
+        );
+        ui.painter().text(
+            pos2(rect.right() - 89.0, rect.center().y),
+            Align2::RIGHT_CENTER,
+            category.item_count.to_string(),
+            FontId::proportional(11.0),
+            Color32::from_rgb(142, 137, 128),
+        );
+        let mut favorite = false;
+        let mut movement = 0;
+        for (index, (icon, tooltip, enabled)) in [
+            (
+                "star",
+                if category.is_favorite {
+                    "Unfavorite category"
+                } else {
+                    "Favorite category"
+                },
+                true,
+            ),
+            (
+                "chevronUp",
+                if reorder_disabled {
+                    "Select My order and clear category search to reorder"
+                } else {
+                    "Move up"
+                },
+                can_up,
+            ),
+            (
+                "chevronDown",
+                if reorder_disabled {
+                    "Select My order and clear category search to reorder"
+                } else {
+                    "Move down"
+                },
+                can_down,
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let button = Rect::from_center_size(
+                pos2(rect.right() - 70.0 + 28.0 * index as f32, rect.center().y),
+                vec2(28.0, 36.0),
+            );
+            let response = category_control_button(
+                ui,
+                button,
+                ui.id().with((
+                    "category-action",
+                    &category.provider_id,
+                    &category.content_type,
+                    &category.id,
+                    index,
+                )),
+                icon,
+                tooltip,
+                enabled,
+                index == 0 && category.is_favorite,
+            );
+            let clicked = enabled && response.clicked();
+            if clicked {
+                if index == 0 {
+                    favorite = true;
+                } else {
+                    movement = if index == 1 { -1 } else { 1 };
+                }
+            }
+        }
+        (selection.clicked(), favorite, movement)
     }
     fn category_row(
         &self,
@@ -2917,4 +3202,234 @@ fn provider_field(
     });
     ui.painter()
         .hline(rect.x_range(), rect.bottom(), Stroke::new(1.0_f32, OUTLINE));
+}
+
+fn category_control_button(
+    ui: &mut Ui,
+    rect: Rect,
+    id: egui::Id,
+    icon: &str,
+    tooltip: &str,
+    enabled: bool,
+    selected: bool,
+) -> egui::Response {
+    let enabled = enabled && ui.is_enabled();
+    let response = ui.interact(
+        rect,
+        id,
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    let pressed = enabled && response.is_pointer_button_down_on();
+    if enabled && (response.hovered() || pressed || response.has_focus()) {
+        ui.painter().rect_filled(
+            rect,
+            8.0,
+            if pressed {
+                theme::SELECTED_BG
+            } else {
+                SURFACE_HIGH
+            },
+        );
+    }
+    if enabled && response.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            8.0,
+            Stroke::new(1.0_f32, ACCENT),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let color = if !enabled {
+        Color32::from_rgb(76, 74, 69)
+    } else if selected || pressed || response.hovered() {
+        ACCENT
+    } else {
+        Color32::from_rgb(113, 109, 102)
+    };
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        glyph(icon),
+        FontId::new(15.0, egui::FontFamily::Name("Vela Lucide".into())),
+        color,
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tooltip));
+    response
+        .on_hover_cursor(if enabled {
+            egui::CursorIcon::PointingHand
+        } else {
+            egui::CursorIcon::Default
+        })
+        .on_hover_text(tooltip)
+}
+
+fn ordered_categories(
+    categories: &[Category],
+    sort: &str,
+    favorites_only: bool,
+    search: &str,
+) -> Vec<Category> {
+    let normalized = search.trim().to_lowercase();
+    let mut result = categories
+        .iter()
+        .filter(|c| {
+            (!favorites_only || c.is_favorite) && c.name.to_lowercase().contains(&normalized)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    result.sort_by(|a, b| {
+        let pinned = b.is_favorite.cmp(&a.is_favorite);
+        if pinned != std::cmp::Ordering::Equal {
+            return pinned;
+        }
+        let name = || {
+            a.name
+                .trim()
+                .to_lowercase()
+                .cmp(&b.name.trim().to_lowercase())
+        };
+        let ordering = match sort {
+            "a_z" => name(),
+            "z_a" => name().reverse(),
+            "count" => b.item_count.cmp(&a.item_count).then_with(name),
+            _ => a
+                .sort_order
+                .is_none()
+                .cmp(&b.sort_order.is_none())
+                .then(a.sort_order.cmp(&b.sort_order))
+                .then_with(name),
+        };
+        ordering
+            .then(a.provider_id.cmp(&b.provider_id))
+            .then(a.id.cmp(&b.id))
+    });
+    result
+}
+
+#[cfg(test)]
+mod category_control_tests {
+    use super::ordered_categories;
+    use anyhow::Result;
+    use vela_core::{CatalogItem, CatalogSnapshot, Provider, Store, migration, store::category_id};
+
+    #[test]
+    fn category_controls_read_real_migrated_favorite_and_order_rows() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let source = temporary.path().join("flutter.sqlite");
+        let target = temporary.path().join("rust.sqlite");
+        std::fs::write(
+            &source,
+            include_bytes!("../../../vela-core/tests/fixtures/flutter_schema4.sqlite"),
+        )?;
+        migration::migrate_if_needed(&target, std::slice::from_ref(&source))?;
+        let store = Store::open(&target)?;
+        let categories = store.categories(Some("fixture"), "movie")?;
+        let visible = ordered_categories(&categories, "my_order", true, "");
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].name, "Films & More");
+        assert!(visible[0].is_favorite);
+        assert_eq!(visible[0].sort_order, Some(0));
+        assert_eq!(visible[0].id, "fixture:movie:films%20%26%20more");
+        assert_eq!(
+            std::fs::read(&source)?,
+            include_bytes!("../../../vela-core/tests/fixtures/flutter_schema4.sqlite")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn visible_category_favorites_order_and_filter_preferences_survive_restart_and_refresh()
+    -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let path = temporary.path().join("categories.sqlite");
+        let snapshot = CatalogSnapshot {
+            provider_id: "p".into(),
+            items: ["Alpha", "Beta", "Charlie", "Zulu"]
+                .into_iter()
+                .map(|name| CatalogItem {
+                    id: name.to_lowercase(),
+                    provider_id: "p".into(),
+                    content_type: "live".into(),
+                    title: format!("{name} channel"),
+                    category_name: Some(name.into()),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        {
+            let store = Store::open(&path)?;
+            store.upsert_provider(&Provider {
+                id: "p".into(),
+                name: "Test".into(),
+                kind: "m3u".into(),
+                source: "https://fixture.invalid/playlist".into(),
+                auto_refresh_interval_minutes: 1440,
+                ..Default::default()
+            })?;
+            store.replace_catalog(&snapshot)?;
+            for name in ["Alpha", "Beta"] {
+                assert!(store.toggle_category_favorite(
+                    "p",
+                    "live",
+                    &category_id("p", "live", name)
+                )?);
+            }
+            store.reorder_categories(
+                "p",
+                "live",
+                &["Zulu", "Beta", "Alpha", "Charlie"].map(|name| category_id("p", "live", name)),
+            )?;
+            store.set_setting("category_sort:live", "my_order")?;
+            store.set_setting("category_favorites_only:live", "true")?;
+        }
+        let store = Store::open(&path)?;
+        // A refreshed catalog retains user favorites and positions.
+        store.replace_catalog(&snapshot)?;
+        let rows = store.categories(Some("p"), "live")?;
+        let sort = store.setting("category_sort:live")?.unwrap();
+        let favorite_only =
+            store.setting("category_favorites_only:live")?.as_deref() == Some("true");
+        let names = |categories: Vec<vela_core::Category>| {
+            categories
+                .into_iter()
+                .map(|category| category.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(ordered_categories(&rows, &sort, favorite_only, "")),
+            ["Beta", "Alpha"]
+        );
+        assert_eq!(
+            names(ordered_categories(&rows, &sort, false, "")),
+            ["Beta", "Alpha", "Zulu", "Charlie"]
+        );
+        assert_eq!(
+            names(ordered_categories(&rows, "a_z", false, "")),
+            ["Alpha", "Beta", "Charlie", "Zulu"]
+        );
+        assert_eq!(
+            names(ordered_categories(&rows, "z_a", false, "")),
+            ["Beta", "Alpha", "Zulu", "Charlie"]
+        );
+        assert_eq!(
+            names(ordered_categories(&rows, "my_order", true, "ALP")),
+            ["Alpha"]
+        );
+        assert!(!store.toggle_category_favorite("p", "live", &category_id("p", "live", "Beta"))?);
+        assert_eq!(
+            names(ordered_categories(
+                &store.categories(Some("p"), "live")?,
+                "my_order",
+                true,
+                ""
+            )),
+            ["Alpha"]
+        );
+        Ok(())
+    }
 }

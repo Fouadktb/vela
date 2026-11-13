@@ -112,12 +112,16 @@ impl VelaApp {
             || state.error.is_some()
             || self.controls_last_activity.elapsed() < Duration::from_secs(3)
             || ctx.wants_keyboard_input();
+        let screen = ctx.content_rect();
         let mut video_response = None;
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(Color32::BLACK))
             .show(ctx, |ui| {
                 if let Some(player) = &self.player {
                     video_response = Some(player.show(ui));
+                }
+                if visible {
+                    paint_player_gradients(ui, screen);
                 }
             });
         if let Some(response) = video_response
@@ -136,27 +140,7 @@ impl VelaApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
             }
         }
-        let screen = ctx.content_rect();
         if visible {
-            let painter = ctx.layer_painter(egui::LayerId::new(
-                egui::Order::Foreground,
-                egui::Id::new("player-gradients"),
-            ));
-            gradient(
-                &painter,
-                egui::Rect::from_min_size(screen.min, egui::vec2(screen.width(), 180.0)),
-                Color32::from_black_alpha(176),
-                Color32::TRANSPARENT,
-            );
-            gradient(
-                &painter,
-                egui::Rect::from_min_size(
-                    egui::pos2(screen.left(), screen.bottom() - 190.0),
-                    egui::vec2(screen.width(), 190.0),
-                ),
-                Color32::TRANSPARENT,
-                Color32::from_black_alpha(217),
-            );
             egui::Area::new(egui::Id::new("player-top-controls"))
                 .order(egui::Order::Foreground)
                 .fixed_pos(screen.min + egui::vec2(24.0, 18.0))
@@ -325,14 +309,18 @@ impl VelaApp {
                         if icon_button(ui, "rotateCw", "Forward 10 seconds", false).clicked() {
                             self.seek_relative(10.0);
                         }
-                        let (volume_rect, _) =
+                        let (volume_rect, volume_response) =
                             ui.allocate_exact_size(egui::vec2(172.0, 44.0), egui::Sense::hover());
-                        ui.painter()
-                            .rect_filled(volume_rect, 22.0, Color32::from_black_alpha(102));
+                        let (volume_fill, volume_stroke) = control_appearance(
+                            ui,
+                            &volume_response,
+                            Color32::from_black_alpha(102),
+                        );
+                        ui.painter().rect_filled(volume_rect, 22.0, volume_fill);
                         ui.painter().rect_stroke(
                             volume_rect,
                             22.0,
-                            egui::Stroke::new(1.0_f32, Color32::from_white_alpha(46)),
+                            volume_stroke,
                             egui::StrokeKind::Inside,
                         );
                         let mute_rect = egui::Rect::from_min_size(
@@ -344,6 +332,8 @@ impl VelaApp {
                             ui.id().with("player-volume-mute"),
                             egui::Sense::click(),
                         );
+                        paint_icon_feedback(ui, &mute, mute_rect);
+                        let mute_focused = mute.has_focus();
                         paint_icon(
                             ui,
                             mute_rect.center(),
@@ -361,7 +351,11 @@ impl VelaApp {
                                 "Mute / unmute",
                             )
                         });
-                        if mute.on_hover_text("Mute / unmute").clicked() {
+                        if mute
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text("Mute / unmute")
+                            .clicked()
+                        {
                             self.toggle_mute();
                         }
                         let mut volume_ui =
@@ -372,7 +366,7 @@ impl VelaApp {
                                 ),
                             ));
                         let mut volume = self.volume.volume;
-                        if white_slider(
+                        let volume_slider = white_slider(
                             &mut volume_ui,
                             &mut volume,
                             100.0,
@@ -380,10 +374,17 @@ impl VelaApp {
                             5.0,
                             "Volume",
                             true,
-                        )
-                        .changed()
-                        {
+                        );
+                        if volume_slider.changed() {
                             self.set_volume(volume);
+                        }
+                        if mute_focused || volume_slider.has_focus() {
+                            ui.painter().rect_stroke(
+                                volume_rect,
+                                22.0,
+                                egui::Stroke::new(2.0_f32, theme::ACCENT),
+                                egui::StrokeKind::Inside,
+                            );
                         }
                         for (kind, icon, label) in &track_labels {
                             let tracks: Vec<_> =
@@ -567,29 +568,15 @@ fn icon_button(ui: &mut egui::Ui, name: &str, tooltip: &str, primary: bool) -> e
     } else {
         Color32::WHITE
     };
-    ui.painter().circle_filled(
-        rect.center(),
-        22.0,
-        if primary {
-            Color32::WHITE
-        } else if response.hovered() {
-            Color32::from_black_alpha(160)
-        } else {
-            Color32::from_black_alpha(102)
-        },
-    );
-    ui.painter().circle_stroke(
-        rect.center(),
-        21.5,
-        egui::Stroke::new(
-            1.0_f32,
-            if response.has_focus() {
-                theme::ACCENT
-            } else {
-                Color32::from_white_alpha(46)
-            },
-        ),
-    );
+    let base = if primary {
+        Color32::WHITE
+    } else {
+        Color32::from_black_alpha(102)
+    };
+    let (fill, stroke) = control_appearance(ui, &response, base);
+    ui.painter().circle_filled(rect.center(), 22.0, fill);
+    ui.painter()
+        .circle_stroke(rect.center(), 22.0 - stroke.width / 2.0, stroke);
     paint_icon(ui, rect.center(), name, foreground);
     if matches!(name, "rotateCcw" | "rotateCw") {
         ui.painter().text(
@@ -601,7 +588,9 @@ fn icon_button(ui: &mut egui::Ui, name: &str, tooltip: &str, primary: bool) -> e
         );
     }
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tooltip));
-    response.on_hover_text(tooltip)
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(tooltip)
 }
 fn pill_width(ui: &egui::Ui, label: &str) -> f32 {
     (ui.painter()
@@ -619,30 +608,18 @@ fn pill_button(ui: &mut egui::Ui, icon: &str, label: &str, primary: bool) -> egu
     } else {
         Color32::WHITE
     };
-    ui.painter().rect_filled(
-        rect,
-        22.0,
+    let (fill, stroke) = control_appearance(
+        ui,
+        &response,
         if primary {
             theme::ACCENT
-        } else if response.hovered() {
-            Color32::from_black_alpha(160)
         } else {
             Color32::from_black_alpha(102)
         },
     );
-    ui.painter().rect_stroke(
-        rect,
-        22.0,
-        egui::Stroke::new(
-            1.0_f32,
-            if response.has_focus() {
-                theme::ACCENT
-            } else {
-                Color32::from_white_alpha(46)
-            },
-        ),
-        egui::StrokeKind::Inside,
-    );
+    ui.painter().rect_filled(rect, 22.0, fill);
+    ui.painter()
+        .rect_stroke(rect, 22.0, stroke, egui::StrokeKind::Inside);
     paint_icon(
         ui,
         egui::pos2(rect.left() + 22.0, rect.center().y),
@@ -657,7 +634,7 @@ fn pill_button(ui: &mut egui::Ui, icon: &str, label: &str, primary: bool) -> egu
         color,
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
-    response
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 fn white_slider(
     ui: &mut egui::Ui,
@@ -717,12 +694,35 @@ fn white_slider(
         0.0
     };
     let center = egui::pos2(egui::lerp(left..=right, fraction), rect.center().y);
+    let pressed = response.dragged() || control_pressed(ui, &response);
+    if enabled && (response.hovered() || pressed || response.has_focus()) {
+        let halo = if response.has_focus() {
+            theme::ACCENT.gamma_multiply(0.25)
+        } else {
+            Color32::from_white_alpha(if pressed { 64 } else { 36 })
+        };
+        ui.painter().circle_filled(center, thumb + 7.0, halo);
+        if response.has_focus() {
+            ui.painter().circle_stroke(
+                center,
+                thumb + 4.0,
+                egui::Stroke::new(2.0_f32, theme::ACCENT),
+            );
+        }
+    }
     ui.painter().line_segment(
         [
             egui::pos2(left, rect.center().y),
             egui::pos2(right, rect.center().y),
         ],
-        egui::Stroke::new(3.0_f32, Color32::from_white_alpha(85)),
+        egui::Stroke::new(
+            3.0_f32,
+            Color32::from_white_alpha(if enabled && (response.hovered() || pressed) {
+                130
+            } else {
+                85
+            }),
+        ),
     );
     ui.painter().line_segment(
         [egui::pos2(left, rect.center().y), center],
@@ -747,7 +747,102 @@ fn white_slider(
             }
         }
     });
-    response
+    if enabled {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    }
+}
+fn control_pressed(ui: &egui::Ui, response: &egui::Response) -> bool {
+    response.is_pointer_button_down_on()
+        || (response.has_focus()
+            && ui.input(|i| i.key_down(egui::Key::Space) || i.key_down(egui::Key::Enter)))
+}
+fn control_appearance(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    base: Color32,
+) -> (Color32, egui::Stroke) {
+    let pressed = control_pressed(ui, response);
+    let hover = response.hovered() || response.contains_pointer();
+    let fill = if base == Color32::WHITE {
+        if pressed {
+            Color32::from_gray(205)
+        } else if hover {
+            Color32::from_gray(235)
+        } else {
+            base
+        }
+    } else if base == theme::ACCENT {
+        if pressed {
+            Color32::from_rgb(205, 155, 65)
+        } else if hover {
+            Color32::from_rgb(245, 202, 110)
+        } else {
+            base
+        }
+    } else if pressed {
+        Color32::from_rgba_unmultiplied(58, 63, 69, 235)
+    } else if hover || response.has_focus() {
+        Color32::from_rgba_unmultiplied(42, 46, 51, 204)
+    } else {
+        base
+    };
+    let stroke = if response.has_focus() {
+        egui::Stroke::new(2.0_f32, theme::ACCENT)
+    } else {
+        egui::Stroke::new(
+            1.0_f32,
+            Color32::from_white_alpha(if pressed {
+                190
+            } else if hover {
+                130
+            } else {
+                46
+            }),
+        )
+    };
+    (fill, stroke)
+}
+fn paint_icon_feedback(ui: &egui::Ui, response: &egui::Response, rect: egui::Rect) {
+    if response.hovered() || control_pressed(ui, response) || response.has_focus() {
+        ui.painter().circle_filled(
+            rect.center(),
+            18.0,
+            Color32::from_white_alpha(if control_pressed(ui, response) {
+                56
+            } else {
+                28
+            }),
+        );
+        if response.has_focus() {
+            ui.painter().circle_stroke(
+                rect.center(),
+                19.0,
+                egui::Stroke::new(2.0_f32, theme::ACCENT),
+            );
+        }
+    }
+}
+/// Decoration stays in the video's own paint list, after the video callback.
+/// It creates no Area or input widget; Foreground controls always paint above it.
+fn paint_player_gradients(ui: &egui::Ui, screen: egui::Rect) {
+    let painter = ui.painter();
+    gradient(
+        painter,
+        egui::Rect::from_min_size(screen.min, egui::vec2(screen.width(), 180.0)),
+        Color32::from_black_alpha(176),
+        Color32::TRANSPARENT,
+    );
+    gradient(
+        painter,
+        egui::Rect::from_min_size(
+            egui::pos2(screen.left(), screen.bottom() - 190.0),
+            egui::vec2(screen.width(), 190.0),
+        ),
+        Color32::TRANSPARENT,
+        Color32::from_black_alpha(217),
+    );
 }
 fn gradient(painter: &egui::Painter, rect: egui::Rect, top: Color32, bottom: Color32) {
     let mut mesh = egui::Mesh::default();
@@ -810,5 +905,153 @@ mod slider_tests {
             });
             assert_eq!(value, expected);
         }
+    }
+}
+
+#[cfg(test)]
+mod player_feedback_tests {
+    use super::*;
+
+    struct Frame {
+        output: egui::FullOutput,
+        button: egui::Response,
+        video_clicked: bool,
+    }
+    fn render(ctx: &egui::Context, events: Vec<egui::Event>) -> Frame {
+        let mut button = None;
+        let mut video_clicked = false;
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(600.0, 400.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                let screen = ctx.content_rect();
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::NONE)
+                    .show(ctx, |ui| {
+                        let video = ui.allocate_rect(screen, egui::Sense::click());
+                        video_clicked = video.clicked();
+                        ui.painter().rect_filled(screen, 0.0, Color32::RED);
+                        paint_player_gradients(ui, screen);
+                    });
+                egui::Area::new(egui::Id::new("feedback-test-controls"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(egui::pos2(100.0, 300.0))
+                    .show(ctx, |ui| {
+                        button = Some(icon_button(ui, "play", "Play", true));
+                    });
+            },
+        );
+        Frame {
+            output,
+            button: button.unwrap(),
+            video_clicked,
+        }
+    }
+    fn pointer_button(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+    fn button_fill(frame: &Frame) -> Color32 {
+        frame
+            .output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Circle(circle)
+                    if circle.center == frame.button.rect.center()
+                        && circle.fill != Color32::TRANSPARENT =>
+                {
+                    Some(circle.fill)
+                }
+                _ => None,
+            })
+            .expect("the actual button must paint its face")
+    }
+    fn assert_controls_above_gradients(frame: &Frame) {
+        let last_gradient = frame
+            .output
+            .shapes
+            .iter()
+            .rposition(|shape| match &shape.shape {
+                egui::Shape::Mesh(mesh) => {
+                    mesh.vertices.len() == 4
+                        && mesh.vertices.iter().any(|vertex| vertex.color.a() == 217)
+                }
+                _ => false,
+            })
+            .expect("the bottom video gradient must be present");
+        let button = frame
+            .output
+            .shapes
+            .iter()
+            .position(|shape| {
+                matches!(&shape.shape, egui::Shape::Circle(circle) if circle.center == frame.button.rect.center() && circle.fill != Color32::TRANSPARENT)
+            })
+            .unwrap();
+        assert!(
+            last_gradient < button,
+            "video dimming must paint before interactive controls, including after Area reordering"
+        );
+    }
+    #[test]
+    fn gradients_remain_behind_controls_and_do_not_capture_video_clicks() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let _ = render(&ctx, vec![]);
+        let frame = render(&ctx, vec![]);
+        assert_controls_above_gradients(&frame);
+        let point = frame.button.rect.center();
+        let pressed = render(
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(point),
+                pointer_button(point, true),
+            ],
+        );
+        assert_controls_above_gradients(&pressed);
+        let clicked = render(&ctx, vec![pointer_button(point, false)]);
+        assert!(clicked.button.clicked());
+        assert!(!clicked.video_clicked);
+        assert_controls_above_gradients(&clicked);
+        // This point remains under the bottom gradient, outside the controls.
+        let video_point = egui::pos2(30.0, 370.0);
+        let _ = render(
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(video_point),
+                pointer_button(video_point, true),
+            ],
+        );
+        assert!(render(&ctx, vec![pointer_button(video_point, false)]).video_clicked);
+    }
+    #[test]
+    fn primary_button_paints_distinct_hover_pressed_and_keyboard_focus_states() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let _ = render(&ctx, vec![]);
+        let normal = render(&ctx, vec![]);
+        let point = normal.button.rect.center();
+        let hovered = render(&ctx, vec![egui::Event::PointerMoved(point)]);
+        assert_ne!(button_fill(&normal), button_fill(&hovered));
+        let pressed = render(&ctx, vec![pointer_button(point, true)]);
+        assert_ne!(button_fill(&hovered), button_fill(&pressed));
+        let _ = render(&ctx, vec![pointer_button(point, false)]);
+        ctx.memory_mut(|memory| memory.request_focus(normal.button.id));
+        let _ = render(&ctx, vec![egui::Event::PointerGone]);
+        let focused = render(&ctx, vec![]);
+        assert!(focused.button.has_focus());
+        assert!(focused.output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::Circle(circle) if circle.center == focused.button.rect.center() && circle.stroke.width >= 2.0 && circle.stroke.color == theme::ACCENT)
+        }));
     }
 }
