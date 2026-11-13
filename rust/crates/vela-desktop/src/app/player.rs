@@ -260,7 +260,12 @@ impl VelaApp {
             ctx.request_repaint_after(Duration::from_millis(20));
         }
     }
-    fn recent_live_popover(&mut self, ctx: &egui::Context, screen: egui::Rect) {
+    fn recent_live_popover(
+        &mut self,
+        ctx: &egui::Context,
+        screen: egui::Rect,
+        trigger: egui::Rect,
+    ) {
         egui::Area::new(egui::Id::new("recent-live-channels"))
             .order(egui::Order::Foreground)
             .fixed_pos(screen.min + egui::vec2(24.0, 78.0))
@@ -285,40 +290,10 @@ impl VelaApp {
                         ui.set_width((screen.width() - 72.0).max(220.0));
                         ui.set_height(120.0);
                         ui.spacing_mut().item_spacing = egui::vec2(8.0, 0.0);
-                        ui.horizontal(|ui| {
-                            ui.label(theme::icon("history").size(18.0).color(theme::ACCENT));
-                            ui.label(
-                                RichText::new("Recent channels")
-                                    .font(theme::black(14.0))
-                                    .color(Color32::WHITE),
-                            );
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    let (rect, response) = ui.allocate_exact_size(
-                                        egui::vec2(34.0, 34.0),
-                                        egui::Sense::click(),
-                                    );
-                                    paint_icon_feedback(ui, &response, rect);
-                                    paint_icon(ui, rect.center(), "chevronUp", Color32::WHITE);
-                                    response.widget_info(|| {
-                                        egui::WidgetInfo::labeled(
-                                            egui::WidgetType::Button,
-                                            true,
-                                            "Hide recent channels",
-                                        )
-                                    });
-                                    if response
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                        .on_hover_text("Hide recent channels")
-                                        .clicked()
-                                    {
-                                        self.recent_live_expanded = false;
-                                        self.show_player_controls();
-                                    }
-                                },
-                            );
-                        });
+                        if recent_header(ui, ui.available_width(), trigger).clicked() {
+                            self.recent_live_expanded = false;
+                            self.show_player_controls();
+                        }
                         ui.add_space(8.0);
                         if self.recent_live_loading {
                             recent_message(ui, "loaderCircle", "Loading recent channels");
@@ -517,6 +492,7 @@ impl VelaApp {
             }
         }
         if visible {
+            let mut recent_trigger_rect = None;
             egui::Area::new(egui::Id::new("player-top-controls"))
                 .order(egui::Order::Foreground)
                 .fixed_pos(screen.min + egui::vec2(24.0, 18.0))
@@ -526,8 +502,8 @@ impl VelaApp {
                         if icon_button(ui, "arrowLeft", "Back", false).clicked() {
                             self.close_player(ctx);
                         }
-                        if target.item.content_type == "live"
-                            && icon_button(
+                        if target.item.content_type == "live" {
+                            let response = icon_button(
                                 ui,
                                 "history",
                                 if self.recent_live_expanded {
@@ -536,14 +512,15 @@ impl VelaApp {
                                     "Show recent channels"
                                 },
                                 false,
-                            )
-                            .clicked()
-                        {
-                            self.recent_live_expanded = !self.recent_live_expanded;
-                            if self.recent_live_expanded {
-                                self.watch_recent_live();
+                            );
+                            recent_trigger_rect = Some(response.rect);
+                            if response.clicked() {
+                                self.recent_live_expanded = !self.recent_live_expanded;
+                                if self.recent_live_expanded {
+                                    self.watch_recent_live();
+                                }
+                                self.show_player_controls();
                             }
-                            self.show_player_controls();
                         }
                         ui.add_space(4.0);
                         ui.vertical(|ui| {
@@ -563,8 +540,10 @@ impl VelaApp {
                         });
                     });
                 });
-            if target.item.content_type == "live" && self.recent_live_expanded {
-                self.recent_live_popover(ctx, screen);
+            if self.recent_live_expanded
+                && let Some(trigger) = recent_trigger_rect
+            {
+                self.recent_live_popover(ctx, screen, trigger);
             }
             egui::Area::new(egui::Id::new("player-bottom-controls"))
                 .order(egui::Order::Foreground)
@@ -643,21 +622,9 @@ impl VelaApp {
                     .collect();
                     let speed_label = format!("{}x", state.speed);
                     let next = self.next_episode().is_some();
-                    let controls_width = 44.0 * 4.0
-                        + 172.0
-                        + track_labels
-                            .iter()
-                            .map(|(_, _, label)| pill_width(ui, label))
-                            .sum::<f32>()
-                        + pill_width(ui, &speed_label)
-                        + 80.0
-                        + if next {
-                            pill_width(ui, "Next Episode") + 10.0
-                        } else {
-                            0.0
-                        };
-                    ui.horizontal(|ui| {
-                        ui.add_space(((ui.available_width() - controls_width) / 2.0).max(0.0));
+                    let controls_width =
+                        control_cluster_width(ui, &track_labels, &speed_label, next);
+                    centered_controls(ui, controls_width, |ui| {
                         if icon_button(
                             ui,
                             if state.paused || state.ended {
@@ -826,34 +793,14 @@ impl VelaApp {
                                     }
                                 });
                         }
-                        let response = pill_button(ui, "gauge", &speed_label, false)
-                            .on_hover_text("Playback speed");
-                        egui::Popup::menu(&response)
-                            .frame(
-                                egui::Frame::popup(ui.style()).fill(Color32::from_rgb(23, 25, 28)),
-                            )
-                            .align(egui::RectAlign::TOP_START)
-                            .show(|ui| {
-                                for speed in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0] {
-                                    if ui
-                                        .selectable_label(
-                                            (state.speed - speed).abs() < 0.01,
-                                            if speed == 1.0 {
-                                                "Normal".into()
-                                            } else {
-                                                format!("{speed}x")
-                                            },
-                                        )
-                                        .clicked()
-                                    {
-                                        self.speed = speed;
-                                        if let Some(player) = &self.player {
-                                            let _ = player.set_speed(speed);
-                                        }
-                                        ui.close();
-                                    }
-                                }
-                            });
+                        if let (_, Some(speed)) =
+                            speed_menu(ui, state.speed, target.item.content_type != "live")
+                        {
+                            self.speed = speed;
+                            if let Some(player) = &self.player {
+                                let _ = player.set_speed(speed);
+                            }
+                        }
                         if next && pill_button(ui, "chevronsRight", "Next Episode", true).clicked()
                         {
                             self.advance_episode();
@@ -1117,6 +1064,156 @@ fn paint_episode_tile(
     }
 }
 
+fn recent_header(ui: &mut egui::Ui, width: f32, trigger: egui::Rect) -> egui::Response {
+    let (header, _) = ui.allocate_exact_size(egui::vec2(width, 34.0), egui::Sense::hover());
+    let center = egui::pos2(
+        trigger
+            .center()
+            .x
+            .clamp(header.left() + 17.0, header.right() - 17.0),
+        header.center().y,
+    );
+    let rect = egui::Rect::from_center_size(center, egui::vec2(34.0, 34.0));
+    let response = ui.interact(
+        rect,
+        ui.id().with("recent-channels-collapse"),
+        egui::Sense::click(),
+    );
+    ui.painter().text(
+        egui::pos2(header.left() + 9.0, header.center().y),
+        egui::Align2::CENTER_CENTER,
+        theme::icon("history").text(),
+        egui::FontId::new(18.0, egui::FontFamily::Name("Vela Lucide".into())),
+        theme::ACCENT,
+    );
+    paint_icon_feedback(ui, &response, rect);
+    paint_icon(ui, rect.center(), "chevronUp", Color32::WHITE);
+    let title = text_lines(
+        ui,
+        "Recent channels",
+        theme::black(14.0),
+        Color32::WHITE,
+        (header.right() - rect.right() - 8.0).max(1.0),
+        1,
+    );
+    ui.painter().galley(
+        egui::pos2(rect.right() + 8.0, header.center().y - title.size().y / 2.0),
+        title,
+        Color32::WHITE,
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Hide recent channels")
+    });
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Hide recent channels")
+}
+fn control_cluster_width(
+    ui: &egui::Ui,
+    tracks: &[(&str, &str, String)],
+    speed: &str,
+    next: bool,
+) -> f32 {
+    44.0 * 4.0
+        + 172.0
+        + tracks
+            .iter()
+            .map(|(_, _, label)| pill_width(ui, label))
+            .sum::<f32>()
+        + pill_width(ui, speed)
+        + 80.0
+        + if next {
+            pill_width(ui, "Next Episode") + 10.0
+        } else {
+            0.0
+        }
+}
+fn centered_controls(ui: &mut egui::Ui, width: f32, draw: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        // The centering spacer is outside the row and must not add another gap.
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, 44.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                draw(ui);
+            },
+        );
+    });
+}
+fn speed_menu(ui: &mut egui::Ui, speed: f64, enabled: bool) -> (egui::Response, Option<f64>) {
+    let response = ui
+        .add_enabled_ui(enabled, |ui| {
+            pill_button(ui, "gauge", &format!("{speed}x"), false)
+        })
+        .inner
+        .on_hover_text(if enabled {
+            "Playback speed"
+        } else {
+            "Playback speed is unavailable for Live TV"
+        });
+    if !enabled {
+        egui::Popup::close_id(ui.ctx(), egui::Popup::default_response_id(&response));
+        return (response, None);
+    }
+    let mut selected = None;
+    egui::Popup::menu(&response)
+        .frame(egui::Frame::popup(ui.style()).fill(Color32::from_rgb(23, 25, 28)))
+        .align(egui::RectAlign::TOP_START)
+        .show(|ui| {
+            for option in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0] {
+                if ui
+                    .selectable_label(
+                        (speed - option).abs() < 0.01,
+                        if option == 1.0 {
+                            "Normal".into()
+                        } else {
+                            format!("{option}x")
+                        },
+                    )
+                    .clicked()
+                {
+                    selected = Some(option);
+                    ui.close();
+                }
+            }
+        });
+    (response, selected)
+}
+fn paint_seek_icon(ui: &egui::Ui, center: egui::Pos2, clockwise: bool, color: Color32) {
+    let mirror = if clockwise { -1.0 } else { 1.0 };
+    let point = |x: f32, y: f32| center + egui::vec2(x * mirror, y);
+    let radius = 8.0;
+    let mut arc = (0..=40)
+        .map(|i| {
+            let angle = std::f32::consts::PI - (std::f32::consts::PI + 2.3) * i as f32 / 40.0;
+            point(radius * angle.cos(), radius * angle.sin())
+        })
+        .collect::<Vec<_>>();
+    arc.push(point(-radius, -5.0));
+    ui.painter()
+        .add(egui::Shape::line(arc, egui::Stroke::new(1.65_f32, color)));
+    ui.painter().add(egui::Shape::line(
+        vec![
+            point(-radius, -radius),
+            point(-radius, -3.2),
+            point(-3.2, -3.2),
+        ],
+        egui::Stroke::new(1.65_f32, color),
+    ));
+    let number = ui
+        .painter()
+        .layout_no_wrap("10".into(), theme::bold(8.5), color);
+    // Center actual digit ink, not the font line box/baseline.
+    ui.painter().galley(
+        center - number.mesh_bounds.center().to_vec2(),
+        number,
+        color,
+    );
+}
+
 fn paint_icon(ui: &egui::Ui, center: egui::Pos2, name: &str, color: Color32) {
     ui.painter().text(
         center,
@@ -1144,15 +1241,10 @@ fn icon_button(ui: &mut egui::Ui, name: &str, tooltip: &str, primary: bool) -> e
     ui.painter().circle_filled(rect.center(), 22.0, fill);
     ui.painter()
         .circle_stroke(rect.center(), 22.0 - stroke.width / 2.0, stroke);
-    paint_icon(ui, rect.center(), name, foreground);
     if matches!(name, "rotateCcw" | "rotateCw") {
-        ui.painter().text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "10",
-            theme::bold(9.0),
-            foreground,
-        );
+        paint_seek_icon(ui, rect.center(), name == "rotateCw", foreground);
+    } else {
+        paint_icon(ui, rect.center(), name, foreground);
     }
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
@@ -1172,7 +1264,9 @@ fn pill_width(ui: &egui::Ui, label: &str) -> f32 {
 fn pill_button(ui: &mut egui::Ui, icon: &str, label: &str, primary: bool) -> egui::Response {
     let width = pill_width(ui, label);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 44.0), egui::Sense::click());
-    let color = if primary {
+    let color = if !ui.is_enabled() {
+        Color32::from_gray(100)
+    } else if primary {
         Color32::BLACK
     } else {
         Color32::WHITE
@@ -1202,8 +1296,18 @@ fn pill_button(ui: &mut egui::Ui, icon: &str, label: &str, primary: bool) -> egu
         theme::bold(12.0),
         color,
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+    });
+    if ui.is_enabled() {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_disabled();
+            node.clear_actions();
+        });
+        response
+    }
 }
 fn white_slider(
     ui: &mut egui::Ui,
@@ -1332,6 +1436,12 @@ fn control_appearance(
     response: &egui::Response,
     base: Color32,
 ) -> (Color32, egui::Stroke) {
+    if !ui.is_enabled() {
+        return (
+            base,
+            egui::Stroke::new(1.0_f32, Color32::from_white_alpha(24)),
+        );
+    }
     let pressed = control_pressed(ui, response);
     let hover = response.hovered() || response.contains_pointer();
     let fill = if base == Color32::WHITE {
@@ -1729,5 +1839,220 @@ mod live_timeline_tests {
         assert!(can_seek("movie", 3600.0));
         assert!(!can_seek("episode", 0.0));
         assert_eq!(timeline_label("movie", 3600.0), "1:00:00");
+    }
+}
+
+#[cfg(test)]
+mod corrected_player_layout_tests {
+    use super::*;
+    fn input(events: Vec<egui::Event>) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1404.0, 400.0),
+            )),
+            events,
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn recent_collapse_is_directly_below_actual_trigger_without_a_persistent_app_field() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut trigger = egui::Rect::NOTHING;
+        let mut collapse = egui::Rect::NOTHING;
+        let mut desktop = input(vec![]);
+        desktop.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1404.0, 900.0),
+        ));
+        let _ = ctx.run(desktop, |ctx| {
+            egui::Area::new(egui::Id::new("top-layout-test"))
+                .fixed_pos(egui::pos2(24.0, 18.0))
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        icon_button(ui, "arrowLeft", "Back", false);
+                        trigger = icon_button(ui, "history", "Recent channels", false).rect;
+                    });
+                });
+            egui::Area::new(egui::Id::new("recent-layout-test"))
+                .fixed_pos(egui::pos2(24.0, 78.0))
+                .show(ctx, |ui| {
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin {
+                            left: 12,
+                            right: 12,
+                            top: 10,
+                            bottom: 12,
+                        })
+                        .show(ui, |ui| {
+                            collapse = recent_header(ui, 1300.0, trigger).rect;
+                        });
+                });
+        });
+        assert!((collapse.center().x - trigger.center().x).abs() < 0.01);
+        assert!(
+            collapse.top() > trigger.bottom(),
+            "trigger {trigger:?}, collapse {collapse:?}"
+        );
+    }
+    #[test]
+    fn seek_digits_have_one_ink_centered_label_without_an_overlaid_font_icon() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut bounds = Vec::new();
+        let output = ctx.run(input(vec![]), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    for icon in ["rotateCcw", "rotateCw"] {
+                        bounds.push(icon_button(ui, icon, "Seek", false).rect);
+                    }
+                });
+            });
+        });
+        for rect in bounds {
+            let texts = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text)
+                        if rect.contains(text.pos + text.galley.mesh_bounds.center().to_vec2()) =>
+                    {
+                        Some(text)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                texts.len(),
+                1,
+                "seek icon must not stack a Lucide font glyph under its digits"
+            );
+            assert_eq!(texts[0].galley.job.text, "10");
+            let ink_center = texts[0].pos + texts[0].galley.mesh_bounds.center().to_vec2();
+            assert!((ink_center - rect.center()).length() < 0.01);
+        }
+    }
+    #[test]
+    fn measured_control_cluster_stays_centered_for_live_vod_and_next_episode() {
+        for (live, next) in [(true, false), (false, false), (false, true)] {
+            let ctx = egui::Context::default();
+            theme::install(&ctx);
+            let mut span = egui::Rect::NOTHING;
+            let mut expected = 0.0;
+            let _ = ctx.run(input(vec![]), |ctx| {
+                egui::Area::new(egui::Id::new("cluster-layout-test"))
+                    .fixed_pos(egui::pos2(48.0, 20.0))
+                    .show(ctx, |ui| {
+                        ui.set_width(1308.0);
+                        ui.spacing_mut().item_spacing = egui::vec2(10.0, 0.0);
+                        let labels = vec![
+                            ("audio", "audioLines", "Auto".into()),
+                            ("sub", "subtitles", "Off".into()),
+                            ("video", "monitorPlay", "Auto".into()),
+                        ];
+                        expected = control_cluster_width(ui, &labels, "1x", next);
+                        centered_controls(ui, expected, |ui| {
+                            span |= icon_button(ui, "play", "Play", true).rect;
+                            for icon in ["rotateCcw", "rotateCw"] {
+                                span |= ui
+                                    .add_enabled_ui(!live, |ui| {
+                                        icon_button(ui, icon, "Seek", false)
+                                    })
+                                    .inner
+                                    .rect;
+                            }
+                            span |= ui
+                                .allocate_exact_size(egui::vec2(172.0, 44.0), egui::Sense::hover())
+                                .0;
+                            for (_, icon, label) in &labels {
+                                span |= pill_button(ui, icon, label, false).rect;
+                            }
+                            span |= speed_menu(ui, 1.0, !live).0.rect;
+                            if next {
+                                span |= pill_button(ui, "chevronsRight", "Next Episode", true).rect;
+                            }
+                            span |= icon_button(ui, "maximize", "Fullscreen", false).rect;
+                        });
+                    });
+            });
+            assert!(
+                (span.width() - expected).abs() < 1.0,
+                "actual {:?} width {}, expected {}",
+                (live, next),
+                span.width(),
+                expected
+            );
+            assert!(
+                (span.center().x - 702.0).abs() < 1.0,
+                "control group {:?} center {}, expected viewport center",
+                (live, next),
+                span.center().x
+            );
+        }
+    }
+    #[test]
+    fn live_speed_is_disabled_for_pointer_and_accessibility_and_vod_still_opens() {
+        use egui::accesskit::{Action, ActionRequest};
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ctx.enable_accesskit();
+        let render = |enabled: bool, events: Vec<egui::Event>| {
+            let mut response = None;
+            let mut choice = None;
+            let output = ctx.run(input(events), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let (r, c) = speed_menu(ui, 1.0, enabled);
+                    response = Some(r);
+                    choice = c;
+                });
+            });
+            (output, response.unwrap(), choice)
+        };
+        let _ = render(false, vec![]);
+        let (output, response, _) = render(false, vec![]);
+        let point = response.rect.center();
+        let node = output
+            .platform_output
+            .accesskit_update
+            .unwrap()
+            .nodes
+            .into_iter()
+            .find(|(id, _)| *id == response.id.value().into())
+            .unwrap()
+            .1;
+        assert!(node.is_disabled());
+        assert!(!node.supports_action(Action::Click));
+        assert!(!node.supports_action(Action::Focus));
+        let event = |pressed| egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = render(false, vec![egui::Event::PointerMoved(point), event(true)]);
+        assert_eq!(render(false, vec![event(false)]).2, None);
+        assert!(!egui::Popup::is_any_open(&ctx));
+        let _ = render(
+            false,
+            vec![egui::Event::AccessKitActionRequest(ActionRequest {
+                action: Action::Click,
+                target: response.id.value().into(),
+                data: None,
+            })],
+        );
+        assert!(!egui::Popup::is_any_open(&ctx));
+        let _ = render(true, vec![]);
+        let _ = render(true, vec![egui::Event::PointerMoved(point), event(true)]);
+        let _ = render(true, vec![event(false)]);
+        assert!(
+            egui::Popup::is_any_open(&ctx),
+            "movie/episode speed menu must remain available"
+        );
+        let _ = render(false, vec![]);
+        assert!(
+            !egui::Popup::is_any_open(&ctx),
+            "switching to Live must close any old speed popup"
+        );
     }
 }

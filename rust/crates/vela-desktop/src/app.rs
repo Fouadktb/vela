@@ -90,7 +90,6 @@ pub struct VelaApp {
     settings_selected_provider: Option<String>,
     settings_adding_provider: bool,
     settings: BTreeMap<String, String>,
-    message: Option<String>,
     error: Option<String>,
     importing: bool,
     search_changed: Option<Instant>,
@@ -178,7 +177,6 @@ impl VelaApp {
             settings_selected_provider: None,
             settings_adding_provider: false,
             settings: BTreeMap::new(),
-            message: None,
             error: None,
             importing: false,
             search_changed: None,
@@ -346,7 +344,8 @@ impl VelaApp {
                 }
                 Event::View(_, _) => {}
                 Event::Message(message) => {
-                    self.message = Some(message);
+                    // Success events refresh the library without an inline banner.
+                    drop(message);
                     self.error = None;
                     self.reload();
                 }
@@ -356,6 +355,7 @@ impl VelaApp {
                 }
                 Event::Busy(busy) => self.importing = busy,
                 Event::ResetComplete(backup) => {
+                    drop(backup);
                     self.volume = VolumePreferences::default();
                     self.initialized = false;
                     self.home_selected = None;
@@ -375,10 +375,6 @@ impl VelaApp {
                     self.search_changed = None;
                     self.restore_selection = false;
                     self.reload();
-                    self.message = Some(format!(
-                        "App data reset. A recovery backup was saved to {}",
-                        backup.display()
-                    ));
                 }
                 Event::Series(provider, series, episodes) => {
                     if self

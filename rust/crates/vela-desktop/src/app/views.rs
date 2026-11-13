@@ -514,15 +514,6 @@ impl VelaApp {
                     });
                 });
         }
-        if let Some(message) = self.message.clone() {
-            ui.add_space(6.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(message).color(ACCENT));
-                if ui.small_button("Dismiss").clicked() {
-                    self.message = None;
-                }
-            });
-        }
     }
 
     pub(super) fn catalog(&mut self, ui: &mut Ui) {
@@ -1472,7 +1463,6 @@ impl VelaApp {
                         if let Some(item)=&hero {
                             if (hero_progress.is_some()||item.content_type!="series")&&action(ui,"play",if hero_progress.is_some(){"Resume"}else{"Play"},true).clicked(){if let Some(progress)=&hero_progress{self.worker.send(Command::ResumeHistory(progress.clone()));}else{self.prepare(item.clone());}}
                             if action(ui,"info","Details",false).clicked(){self.open_detail(item.clone());}
-                            if ui.add(egui::Button::new(icon_label("arrowRight","Open in catalog",ACCENT)).frame(false)).clicked(){self.navigate(match item.content_type.as_str(){"live"=>Section::Live,"series"=>Section::Series,_=>Section::Movies});self.select_catalog(item.clone());}
                         }
                     });
                     ui.add_space(18.0);
@@ -1483,7 +1473,7 @@ impl VelaApp {
                     } else {ui.label(title("Your home screen is waiting",24.0));ui.label(RichText::new("Add a provider or refresh your catalog to fill this screen.").color(MUTED));}
                 });
             });
-            egui::Frame::new().inner_margin(egui::Margin{left:24,right:24,top:6,bottom:0}).show(ui,|ui|{ui.label(RichText::new("Pick up where you left off or browse what is new.").size(14.0).color(MUTED));self.notices(ui);});
+            if self.error.is_some() {egui::Frame::new().inner_margin(egui::Margin{left:24,right:24,top:6,bottom:0}).show(ui,|ui|{self.notices(ui);});}
             let continued=self.home_continue.clone();
             if !continued.is_empty(){ui.add_space(22.0);self.rail_heading(ui,"Continue Watching");egui::ScrollArea::horizontal().id_salt("home-continue").show(ui,|ui|{ui.horizontal_top(|ui|{ui.add_space(24.0);ui.spacing_mut().item_spacing.x=12.0;for (item,progress) in &continued{if self.home_card(ui,item,Some(progress.completion_percentage)).double_clicked(){self.worker.send(Command::ResumeHistory(progress.clone()));}}});});}
             for (name,items) in [("Latest Movies",self.latest_movies.clone()),("Latest Series",self.latest_series.clone()),("Favorites",self.home_favorites.clone())] {
@@ -3604,8 +3594,7 @@ impl VelaApp {
                 .max_by_key(|position| position.last_watched_at);
             let current =
                 series_action.filter(|action| detail_same_episode(&action.episode, episode));
-            if self
-                .detail_episode_tile(ui, episode, position, current.map(|action| action.kind))
+            if Self::detail_episode_tile(ui, episode, position, current.map(|action| action.kind))
                 .clicked()
             {
                 self.worker
@@ -3615,21 +3604,25 @@ impl VelaApp {
         }
     }
     fn detail_episode_tile(
-        &self,
         ui: &mut Ui,
         episode: &Episode,
         position: Option<&PlaybackProgress>,
         action: Option<DetailSeriesActionKind>,
     ) -> egui::Response {
-        let mut response = egui::Frame::new()
+        let frame = egui::Frame::new()
             .fill(PANEL)
             .stroke(Stroke::new(
                 1.0_f32,
                 if action.is_some() { ACCENT } else { BORDER },
             ))
             .corner_radius(8)
-            .inner_margin(14.0)
+            .inner_margin(14.0);
+        let margin = frame.total_margin().sum();
+        let inner_size = vec2((ui.available_width() - margin.x).max(1.0), 156.0 - margin.y);
+        let mut response = frame
             .show(ui, |ui| {
+                ui.set_min_size(inner_size);
+                ui.set_max_size(inner_size);
                 ui.horizontal_top(|ui| {
                     ui.allocate_ui_with_layout(
                         vec2(44.0, 24.0),
@@ -3646,6 +3639,7 @@ impl VelaApp {
                         vec2((ui.available_width() - 42.0).max(140.0), 1.0),
                         Layout::top_down(Align::LEFT),
                         |ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
                             ui.add(
                                 egui::Label::new(
                                     RichText::new(theme::display_text(&episode.title))
@@ -3712,8 +3706,9 @@ impl VelaApp {
                                     MUTED,
                                     ui.available_width(),
                                 );
-                                job.wrap.max_rows = 3;
-                                ui.label(job);
+                                job.wrap.max_rows = 1;
+                                ui.add(egui::Label::new(job).truncate())
+                                    .on_hover_text(theme::display_text(description));
                             }
                         },
                     );
@@ -4514,5 +4509,69 @@ mod provider_settings_tests {
         assert_eq!(page.total, 1);
         assert_eq!(page.items[0].title, "New channel");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod episode_size_tests {
+    use super::*;
+    #[test]
+    fn episode_rows_keep_full_width_and_equal_height_for_all_watch_states() {
+        let context = egui::Context::default();
+        theme::install(&context);
+        let episode = Episode {
+            title: "Short title".into(),
+            episode_number: 1,
+            season_number: 3,
+            ..Default::default()
+        };
+        let watched = PlaybackProgress {
+            completed: true,
+            position_seconds: 3600,
+            duration_seconds: Some(3600),
+            ..Default::default()
+        };
+        let resume = PlaybackProgress {
+            position_seconds: 1800,
+            duration_seconds: Some(3600),
+            ..Default::default()
+        };
+        let long_episode = Episode {
+            title: "A long episode title which must not determine the width of the card".repeat(3),
+            description: Some(
+                "An episode description with enough text to wrap over multiple lines. ".repeat(5),
+            ),
+            ..episode.clone()
+        };
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 900.0))),
+            ..Default::default()
+        };
+        let _ = context.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let width = ui.available_width();
+                let rows = [
+                    VelaApp::detail_episode_tile(ui, &episode, None, None).rect,
+                    VelaApp::detail_episode_tile(
+                        ui,
+                        &long_episode,
+                        Some(&resume),
+                        Some(DetailSeriesActionKind::Resume),
+                    )
+                    .rect,
+                    VelaApp::detail_episode_tile(ui, &episode, Some(&watched), None).rect,
+                ];
+                for row in rows {
+                    assert!(
+                        (row.width() - width).abs() < 0.5,
+                        "card width must fill the same column: {row:?}"
+                    );
+                    assert!(
+                        (row.height() - 156.0).abs() < 0.5,
+                        "card height must not depend on watch state: {row:?}"
+                    );
+                }
+            });
+        });
     }
 }
