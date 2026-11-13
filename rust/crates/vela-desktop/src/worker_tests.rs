@@ -272,6 +272,7 @@ fn failed_http_refresh_keeps_catalog_and_records_persisted_failure() -> Result<(
         while Instant::now() < deadline {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    stream.set_nonblocking(false).unwrap();
                     stream
                         .set_read_timeout(Some(Duration::from_secs(2)))
                         .unwrap();
