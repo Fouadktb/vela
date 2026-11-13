@@ -187,7 +187,13 @@ fn dark(alpha: u8) -> Color32 {
 fn import_progress_text(progress: &imports::ImportProgress) -> String {
     let amount = |count: u64| {
         if progress.unit == "bytes" {
-            format!("{:.1} MiB", count as f64 / 1_048_576.0)
+            if count < 1024 {
+                format!("{count} B")
+            } else if count < 1_048_576 {
+                format!("{:.1} KiB", count as f64 / 1024.0)
+            } else {
+                format!("{:.1} MiB", count as f64 / 1_048_576.0)
+            }
         } else {
             format!("{count} {}", progress.unit)
         }
@@ -4707,6 +4713,11 @@ mod import_progress_tests {
             unit: "bytes".into(),
         };
         assert_eq!(import_progress_text(&p), "Downloading movies · 2.0 MiB");
+        p.completed = 512;
+        assert_eq!(import_progress_text(&p), "Downloading movies · 512 B");
+        p.completed = 2048;
+        assert_eq!(import_progress_text(&p), "Downloading movies · 2.0 KiB");
+        p.completed = 2_097_152;
         p.total = Some(4_194_304);
         assert_eq!(
             import_progress_text(&p),
