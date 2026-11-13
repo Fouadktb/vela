@@ -141,6 +141,9 @@ mod tests {
     }
     #[test]
     fn compares_releases_without_downgrades_or_build_metadata_updates() {
+        assert!(parse("v0.5.1", "0.4.8").has_update);
+        assert!(parse("v0.5.1", "0.5.0").has_update);
+        assert!(!parse("v0.5.1", "0.5.1").has_update);
         assert!(parse("v0.6.0", "0.5.0").has_update);
         assert!(!parse("v0.4.8", "0.5.0").has_update);
         assert!(!parse("V0.5.0", "0.5.0").has_update);

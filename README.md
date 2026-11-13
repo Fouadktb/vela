@@ -1,7 +1,7 @@
 # Vela
 
-Vela is an IPTV player for **macOS and Windows desktop only**. The next release,
-**0.5.0**, uses a native Rust application and UI with embedded libmpv playback and
+Vela is an IPTV player for **macOS and Windows desktop only**. Release
+**0.5.1** uses a native Rust application and UI with embedded libmpv playback and
 SQLite storage. It preserves the existing Vela layout, charcoal and gold theme,
 Roboto typography, Lucide icons, and logo. There are no browser, phone, or TV app
 targets.
@@ -9,8 +9,8 @@ targets.
 This repository contains one application implementation: the native Rust desktop
 app. The previous Flutter implementation is archived in
 [legacy commit 2829911](https://github.com/Fouadktb/vela/tree/2829911a167bdc8e185c3b62938c1f94b53f295e) and is not an active build target.
-The 0.5.0 candidate must pass [the release checklist](docs/release-checklist.md)
-before publication; source cutover alone does not mean a release has shipped.
+Follow [the release checklist](docs/release-checklist.md) for validation and
+publication. See the GitHub release notes for the checks performed and known limitations.
 
 ## Native architecture
 
@@ -114,8 +114,8 @@ scripts/package-rust-macos.sh
 ```
 
 This creates a universal Apple Silicon/Intel `Vela.app` and
-`release/vela-macos-v0.5.0.dmg`, stages the pinned runtime, verifies both
-architectures and signatures, and writes `SHA256SUMS-macos-v0.5.0.txt`.
+`release/vela-macos-v0.5.1.dmg`, stages the pinned runtime, verifies both
+architectures and signatures, and writes `SHA256SUMS-macos-v0.5.1.txt`.
 
 On Windows, install Inno Setup 6 and 7-Zip, then run:
 
@@ -123,8 +123,8 @@ On Windows, install Inno Setup 6 and 7-Zip, then run:
 .\scripts\package-rust-windows.ps1
 ```
 
-This creates `release/vela-windows-v0.5.0-setup.exe` and
-`SHA256SUMS-windows-v0.5.0.txt`. It retains Vela's installer identity for upgrades.
+This creates `release/vela-windows-v0.5.1-setup.exe` and
+`SHA256SUMS-windows-v0.5.1.txt`. It retains Vela's installer identity for upgrades.
 The [Rust Desktop workflow](.github/workflows/rust-desktop.yml) builds both
 packages and runs tests on their native runners. Versioned filenames follow
 `rust/Cargo.toml`; the names above refer to the current candidate.

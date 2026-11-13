@@ -1,7 +1,7 @@
 # Release Checklist
 
 Use this checklist for every Vela release candidate before tagging or publishing.
-The native 0.5.0 candidate is the only application implementation in this tree
+The native desktop app is the only application implementation in this tree
 and targets macOS and Windows desktop only. The legacy visual and migration
 reference is [commit 2829911](https://github.com/Fouadktb/vela/tree/2829911a167bdc8e185c3b62938c1f94b53f295e). Source cutover does not waive these release gates.
 
