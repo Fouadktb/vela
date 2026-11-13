@@ -240,7 +240,12 @@ pub fn migrate_if_needed(target: &Path, candidates: &[PathBuf]) -> Result<Option
             ensure!(before == after, "Migration changed {table} row count");
         }
         adopted.close().map_err(|(_, error)| error)?;
-        std::fs::File::open(&stage)?.sync_all()?;
+        // FlushFileBuffers on Windows requires a writable handle. Reopen
+        // the finished copy without truncating or modifying its contents.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&stage)?
+            .sync_all()?;
         // Unlike rename(), hard_link() never replaces an existing target.
         std::fs::hard_link(&stage, target)
             .context("Cannot publish migrated catalog without replacing a file")?;

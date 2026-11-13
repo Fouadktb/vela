@@ -102,7 +102,12 @@ impl Store {
             )?;
             migration::validate(&backup)?;
             backup.close().map_err(|(_, error)| error)?;
-            std::fs::File::open(&staged)?.sync_all()?;
+            // FlushFileBuffers on Windows requires a writable handle. Reopen
+            // the finished copy without truncating or modifying its contents.
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&staged)?
+                .sync_all()?;
             std::fs::hard_link(&staged, destination)?;
             Ok(())
         })();
