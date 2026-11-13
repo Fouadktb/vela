@@ -1128,7 +1128,9 @@ fn paint_icon(ui: &egui::Ui, center: egui::Pos2, name: &str, color: Color32) {
 }
 fn icon_button(ui: &mut egui::Ui, name: &str, tooltip: &str, primary: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), egui::Sense::click());
-    let foreground = if primary {
+    let foreground = if !ui.is_enabled() {
+        Color32::from_gray(100)
+    } else if primary {
         Color32::BLACK
     } else {
         Color32::WHITE
@@ -1152,7 +1154,9 @@ fn icon_button(ui: &mut egui::Ui, name: &str, tooltip: &str, primary: bool) -> e
             foreground,
         );
     }
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tooltip));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
+    });
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(tooltip)
