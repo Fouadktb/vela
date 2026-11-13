@@ -1112,3 +1112,258 @@ fn live_channels_never_resume_old_positions_when_reopened_from_history() -> Resu
     );
     Ok(())
 }
+
+struct HeldImport {
+    provider: Provider,
+    started: mpsc::Receiver<()>,
+    release: Option<mpsc::Sender<()>>,
+    join: Option<thread::JoinHandle<()>>,
+}
+impl HeldImport {
+    fn new(id: &str, status: u16) -> Result<Self> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let address = listener.local_addr()?;
+        let (started_tx, started) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let join = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "Import did not start");
+                        thread::sleep(Duration::from_millis(2));
+                    }
+                    Err(error) => panic!("Synthetic import failed: {error}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            use std::io::{BufRead, BufReader};
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut request = String::new();
+            loop {
+                request.clear();
+                assert!(reader.read_line(&mut request).unwrap() > 0);
+                if request == "\r\n" {
+                    break;
+                }
+            }
+            started_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(15)).unwrap();
+            let body = "#EXTM3U\n#EXTINF:-1,Imported channel\nhttps://fixture.invalid/live.ts\n";
+            write!(
+                stream,
+                "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        let mut provider = provider(id);
+        provider.source = format!("http://{address}/playlist");
+        Ok(Self {
+            provider,
+            started,
+            release: Some(release_tx),
+            join: Some(join),
+        })
+    }
+    fn start(&self, worker: &Worker) -> Result<()> {
+        worker.send(Command::Refresh(self.provider.clone()));
+        self.started.recv_timeout(Duration::from_secs(10))?;
+        Ok(())
+    }
+    fn release(&mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+    }
+}
+impl Drop for HeldImport {
+    fn drop(&mut self) {
+        self.release();
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+fn while_importing(worker: &Worker, predicate: impl Fn(&Event) -> bool) -> Event {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let event = worker
+            .rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .expect("Foreground work must finish while imports are held");
+        assert!(
+            !matches!(event, Event::Busy(false)),
+            "Import status ended while an import was still held"
+        );
+        if predicate(&event) {
+            return event;
+        }
+        if let Event::Error(error) | Event::Fatal(error) = event {
+            panic!("Foreground work was blocked: {error}");
+        }
+    }
+}
+
+#[test]
+fn foreground_content_loads_while_two_imports_are_held() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("concurrent.sqlite");
+    let mut first = HeldImport::new("background-one", 200)?;
+    let mut second = HeldImport::new("background-two", 200)?;
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?;
+    let metadata = thread::spawn(move || {
+        use std::io::{BufRead, BufReader};
+        for _ in 0..3 {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let target = line.split_whitespace().nth(1).unwrap();
+            let url = url::Url::parse(&format!("http://localhost{target}")).unwrap();
+            let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+            loop {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
+            }
+            let body = if query["action"] == "get_vod_info" {
+                serde_json::json!({"info":{"name":"Movie","plot":"Ready during import","movie_image":"https://fixture.invalid/poster.jpg"},"movie_data":{"container_extension":"mp4"}})
+            } else {
+                serde_json::json!({"info":{"name":"Series"},"episodes":{"1":[{"id":format!("{}-episode",query["series_id"]),"title":"Episode one","episode_num":1}]}})
+            }.to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+    });
+    let mut foreground = provider("foreground");
+    foreground.kind = "xtream".into();
+    foreground.source = format!("http://{address}");
+    foreground.username = Some("synthetic".into());
+    foreground.password = Some("synthetic".into());
+    let item = |kind: &str, id: &str| CatalogItem {
+        id: id.into(),
+        provider_id: foreground.id.clone(),
+        content_type: kind.into(),
+        title: id.into(),
+        external_id: Some(id.into()),
+        ..Default::default()
+    };
+    let movie = item("movie", "movie");
+    let details = item("series", "details");
+    let playback = item("series", "playback");
+    {
+        let store = Store::open(&path)?;
+        for p in [&first.provider, &second.provider, &foreground] {
+            store.upsert_provider(p)?;
+        }
+        store.replace_catalog(&ImportSnapshot {
+            provider_id: foreground.id.clone(),
+            items: vec![movie.clone(), details.clone(), playback.clone()],
+            ..Default::default()
+        })?;
+    }
+    let worker = start(&path);
+    first.start(&worker)?;
+    second.start(&worker)?;
+    worker.send(Command::Movie(foreground.clone(), movie));
+    match while_importing(
+        &worker,
+        |event| matches!(event,Event::Metadata(item) if item.artwork_url.is_some()),
+    ) {
+        Event::Metadata(item) => {
+            assert_eq!(item.description.as_deref(), Some("Ready during import"))
+        }
+        _ => unreachable!(),
+    }
+    worker.send(Command::Series(foreground, details));
+    while_importing(
+        &worker,
+        |event| matches!(event,Event::Series(_,_,episodes) if !episodes.is_empty()),
+    );
+    worker.send(Command::PlaySeries(playback));
+    match while_importing(&worker, |event| matches!(event, Event::Prepared(..))) {
+        Event::Prepared(target, _) => assert_eq!(target.series_id.as_deref(), Some("playback")),
+        _ => unreachable!(),
+    }
+    metadata.join().unwrap();
+    first.release();
+    while_importing(
+        &worker,
+        |event| matches!(event,Event::Message(message) if message.starts_with("Imported ")),
+    );
+    while_importing(&worker, |event| matches!(event, Event::Busy(true)));
+    // Busy(true) after the first completion is published only after its commit.
+    assert_eq!(
+        Store::open(&path)?
+            .catalog(&CatalogQuery {
+                provider_id: Some(first.provider.id.clone()),
+                ..Default::default()
+            })?
+            .total,
+        1
+    );
+    second.release();
+    until(&worker, |event| matches!(event, Event::Busy(false)));
+    assert_eq!(
+        Store::open(path)?
+            .catalog(&CatalogQuery {
+                provider_id: Some(second.provider.id.clone()),
+                ..Default::default()
+            })?
+            .total,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn failed_and_deleted_imports_release_busy_only_when_all_jobs_finish() -> Result<()> {
+    for deleted in [false, true] {
+        let temporary = tempfile::tempdir()?;
+        let path = temporary.path().join("busy.sqlite");
+        let mut first = HeldImport::new("first", if deleted { 200 } else { 500 })?;
+        let mut second = HeldImport::new("second", 200)?;
+        {
+            let store = Store::open(&path)?;
+            store.upsert_provider(&first.provider)?;
+            store.upsert_provider(&second.provider)?;
+        }
+        let worker = start(&path);
+        first.start(&worker)?;
+        second.start(&worker)?;
+        // Drain both start notifications before examining completion status.
+        while_importing(&worker, |e| matches!(e, Event::Busy(true)));
+        while_importing(&worker, |e| matches!(e, Event::Busy(true)));
+        if deleted {
+            worker.send(Command::DeleteProvider(first.provider.id.clone()));
+            while_importing(
+                &worker,
+                |e| matches!(e,Event::Message(message) if message.starts_with("Provider and")),
+            );
+        }
+        first.release();
+        while_importing(&worker, |e| matches!(e, Event::Busy(true)));
+        if !deleted {
+            until(&worker, |e| matches!(e, Event::Error(_)));
+        }
+        second.release();
+        until(&worker, |e| matches!(e, Event::Busy(false)));
+    }
+    Ok(())
+}

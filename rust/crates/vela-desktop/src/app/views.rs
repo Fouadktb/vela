@@ -75,7 +75,17 @@ fn icon_label(icon: &str, label: &str, color: Color32) -> egui::text::LayoutJob 
     text
 }
 fn action(ui: &mut Ui, icon: &str, label: &str, primary: bool) -> egui::Response {
-    ui.scope(|ui| {
+    action_enabled(ui, icon, label, primary, true)
+}
+fn action_enabled(
+    ui: &mut Ui,
+    icon: &str,
+    label: &str,
+    primary: bool,
+    enabled: bool,
+) -> egui::Response {
+    let previous_style = ui.style().clone();
+    {
         let widgets = &mut ui.style_mut().visuals.widgets;
         for (visual, fill) in [
             (
@@ -110,13 +120,17 @@ fn action(ui: &mut Ui, icon: &str, label: &str, primary: bool) -> egui::Response
                 Stroke::new(1.0_f32, OUTLINE)
             };
         }
-        ui.add(
+    }
+    let response = ui
+        .add_enabled(
+            enabled,
             egui::Button::new(icon_label(icon, label, if primary { BG } else { TEXT }))
+                .wrap_mode(egui::TextWrapMode::Extend)
                 .min_size(vec2(44.0, 40.0)),
         )
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-    })
-    .inner
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    ui.set_style(previous_style);
+    response
 }
 fn field(ui: &mut Ui, icon: &str, label: &str, value: &mut String, password: bool) {
     let response = ui.allocate_ui_with_layout(
@@ -171,6 +185,33 @@ fn dark(alpha: u8) -> Color32 {
 }
 
 impl VelaApp {
+    pub(super) fn import_status(&self, ctx: &egui::Context) {
+        if !self.importing {
+            return;
+        }
+        egui::TopBottomPanel::top("global-library-refresh")
+            .frame(
+                egui::Frame::new()
+                    .fill(PANEL)
+                    .inner_margin(egui::Margin::symmetric(18, 8)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spinner();
+                    ui.label(
+                        RichText::new("Updating library…")
+                            .color(ACCENT)
+                            .font(theme::bold(14.0)),
+                    );
+                    ui.label(
+                        RichText::new(
+                            "Importing providers. New content and artwork will appear when ready.",
+                        )
+                        .color(MUTED),
+                    );
+                });
+            });
+    }
     pub(super) fn sidebar(&mut self, ctx: &egui::Context) {
         let screen = ctx.content_rect();
         let hovered = ctx
@@ -2600,9 +2641,11 @@ impl VelaApp {
         let mut save = false;
         let mut refresh = false;
         let mut save_and_refresh = false;
-        let width = ui
-            .available_width()
-            .min(if embedded { 520.0 } else { 640.0 });
+        let width = if embedded {
+            ui.available_width()
+        } else {
+            ui.available_width().min(640.0)
+        };
         egui::Frame::new()
             .fill(PANEL)
             .stroke(Stroke::new(1.0_f32, BORDER))
@@ -2782,24 +2825,24 @@ impl VelaApp {
                         save = true;
                     }
                     if !adding {
-                        if ui
-                            .add_enabled_ui(valid && !self.importing, |ui| {
-                                action(ui, "refreshCw", "Save and refresh", false)
-                            })
-                            .inner
-                            .clicked()
+                        if action_enabled(
+                            ui,
+                            "refreshCw",
+                            "Save and refresh",
+                            false,
+                            valid && !self.importing,
+                        )
+                        .clicked()
                         {
                             save = true;
                             save_and_refresh = true;
                         }
-                        if action(ui, "refreshCw", "Refresh", false).clicked() {
+                        if action_enabled(ui, "refreshCw", "Refresh", false, !self.importing)
+                            .clicked()
+                        {
                             refresh = true;
                         }
-                        if ui
-                            .add_enabled_ui(!self.importing, |ui| {
-                                action(ui, "history", "Clear recent", false)
-                            })
-                            .inner
+                        if action_enabled(ui, "history", "Clear recent", false, !self.importing)
                             .clicked()
                         {
                             self.confirm_clear_provider_history = Some(form.id.clone());
@@ -2827,9 +2870,11 @@ impl VelaApp {
         let Some(mut form) = self.provider_form.clone() else {
             return;
         };
-        let width = ui
-            .available_width()
-            .min(if embedded { 520.0 } else { 640.0 });
+        let width = if embedded {
+            ui.available_width()
+        } else {
+            ui.available_width().min(640.0)
+        };
         let extra = if self.error.is_some() || self.importing {
             58.0
         } else {
@@ -4573,5 +4618,47 @@ mod episode_size_tests {
                 }
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod provider_action_layout_tests {
+    use super::*;
+    #[test]
+    fn provider_actions_wrap_as_whole_buttons_without_squeezing_labels() {
+        for width in [440.0, 600.0, 920.0] {
+            let ctx = egui::Context::default();
+            theme::install(&ctx);
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 600.0))),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let available = ui.available_rect_before_wrap();
+                        ui.horizontal_wrapped(|ui| {
+                            for label in [
+                                "Save changes",
+                                "Save and refresh",
+                                "Refresh",
+                                "Clear recent",
+                            ] {
+                                let response = action_enabled(ui, "refreshCw", label, false, true);
+                                assert!(
+                                    response.rect.height() <= 42.0,
+                                    "label must remain on one line: {label} {:?}",
+                                    response.rect
+                                );
+                                assert!(
+                                    response.rect.right() <= available.right() + 1.0,
+                                    "button must wrap to next row: {label}"
+                                );
+                            }
+                        });
+                    });
+                },
+            );
+        }
     }
 }

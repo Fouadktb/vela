@@ -4,8 +4,8 @@ use std::{
     collections::BTreeMap,
     path::PathBuf,
     sync::{
-        Arc,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        Arc, Condvar, Mutex,
+        atomic::{AtomicU64, Ordering},
         mpsc,
     },
     thread,
@@ -130,6 +130,59 @@ impl NetworkSender {
     }
 }
 
+// Each foreground operation has a reserved worker and at most one queued job.
+// Replacing obsolete queued requests keeps rapid navigation bounded and lets
+// playback discovery proceed even while full provider imports are running.
+type NetworkJob = Box<dyn FnOnce() + Send + 'static>;
+#[derive(Default)]
+struct LaneState {
+    pending: Option<NetworkJob>,
+    closed: bool,
+}
+struct LatestNetworkLane {
+    shared: Arc<(Mutex<LaneState>, Condvar)>,
+}
+impl LatestNetworkLane {
+    fn new() -> Self {
+        let shared = Arc::new((Mutex::new(LaneState::default()), Condvar::new()));
+        let receiver = shared.clone();
+        thread::spawn(move || {
+            loop {
+                let job = {
+                    let (mutex, ready) = &*receiver;
+                    let mut state = mutex.lock().unwrap_or_else(|error| error.into_inner());
+                    while state.pending.is_none() && !state.closed {
+                        state = ready.wait(state).unwrap_or_else(|error| error.into_inner());
+                    }
+                    if state.closed {
+                        return;
+                    }
+                    state.pending.take().expect("pending network job")
+                };
+                job();
+            }
+        });
+        Self { shared }
+    }
+    fn submit(&self, job: impl FnOnce() + Send + 'static) {
+        let (mutex, ready) = &*self.shared;
+        let mut state = mutex.lock().unwrap_or_else(|error| error.into_inner());
+        if !state.closed {
+            state.pending = Some(Box::new(job));
+            ready.notify_one();
+        }
+    }
+}
+impl Drop for LatestNetworkLane {
+    fn drop(&mut self) {
+        let (mutex, ready) = &*self.shared;
+        let mut state = mutex.lock().unwrap_or_else(|error| error.into_inner());
+        state.closed = true;
+        state.pending = None;
+        ready.notify_one();
+    }
+}
+
 pub enum Command {
     Load(u64, CatalogQuery),
     SaveProvider(Provider),
@@ -231,7 +284,10 @@ impl Worker {
                 }
             };
             emit(Event::Ready(store.path().to_owned()));
-            let active = Arc::new(AtomicUsize::new(0));
+            let mut active_imports = 0usize;
+            let playback_network = LatestNetworkLane::new();
+            let detail_network = LatestNetworkLane::new();
+            let guide_network = LatestNetworkLane::new();
             let mut revisions = std::collections::HashMap::<String, u64>::new();
             let mut refreshing = std::collections::HashSet::new();
             let mut refresh_runs = std::collections::HashMap::<String, String>::new();
@@ -247,7 +303,7 @@ impl Worker {
                             providers,
                             &refreshing,
                             &last_attempt,
-                            2usize.saturating_sub(active.load(Ordering::Relaxed)),
+                            2usize.saturating_sub(active_imports),
                             chrono::Utc::now().timestamp_millis(),
                         ) {
                             let _ = network_tx.send(Command::Refresh(provider));
@@ -506,57 +562,73 @@ impl Worker {
                             }
                             refreshing.insert(provider.id.clone());
                             last_attempt.insert(provider.id.clone(), std::time::Instant::now());
-                            if active.load(Ordering::Relaxed) >= 2 {
+                            if active_imports >= 2 {
                                 refreshing.remove(&provider.id);
                                 anyhow::bail!(
                                     "Two imports are already running. Wait for one to finish."
                                 );
                             }
-                            let run_id = store.record_refresh_start(&provider.id)?;
+                            let run_id = match store.record_refresh_start(&provider.id) {
+                                Ok(run) => run,
+                                Err(error) => {
+                                    refreshing.remove(&provider.id);
+                                    return Err(error);
+                                }
+                            };
                             refresh_runs.insert(provider.id.clone(), run_id);
-                            active.fetch_add(1, Ordering::Relaxed);
+                            active_imports += 1;
                             emit(Event::Busy(true));
                             let mut tx = network_tx.clone();
                             tx.generation = generation;
-                            let counter = active.clone();
                             thread::spawn(move || {
                                 let result = imports::import_provider(&provider);
-                                counter.fetch_sub(1, Ordering::Relaxed);
                                 let _ = tx.send(Command::Imported(origin, result));
                             });
                         }
                         Command::Imported(origin, result) => {
                             let provider = &origin.provider;
-                            refreshing.remove(&provider.id);
-                            emit(Event::Busy(active.load(Ordering::Relaxed) > 0));
-                            let Some(current) = store.provider(&provider.id)? else {
-                                return Ok(());
-                            };
-                            if !origin.is_current(&store, &revisions)? {
-                                if let Some(run) = refresh_runs.remove(&provider.id) {
-                                    store.finish_refresh(
-                                        &run,
-                                        0,
-                                        Some("Provider changed during import"),
-                                    )?;
+                            let was_active = refreshing.remove(&provider.id);
+                            let completed = (|| -> Result<()> {
+                                let Some(current) = store.provider(&provider.id)? else {
+                                    return Ok(());
+                                };
+                                if !origin.is_current(&store, &revisions)? {
+                                    if let Some(run) = refresh_runs.remove(&provider.id) {
+                                        store.finish_refresh(
+                                            &run,
+                                            0,
+                                            Some("Provider changed during import"),
+                                        )?;
+                                    }
+                                    let _ = network_tx.send(Command::Refresh(current));
+                                    return Ok(());
                                 }
-                                let _ = network_tx.send(Command::Refresh(current));
-                                return Ok(());
-                            }
-                            let result=result.and_then(|snapshot|{anyhow::ensure!(!snapshot.items.is_empty(),"Provider returned no playable items; your previous library was kept");store.replace_catalog(&snapshot)?;Ok(snapshot.items.len())});
-                            if let Some(run) = refresh_runs.remove(&provider.id) {
-                                match &result {
-                                    Ok(count) => store.finish_refresh(&run, *count as i64, None)?,
-                                    Err(error) => {
-                                        store.finish_refresh(&run, 0, Some(&error.to_string()))?
+                                let result=result.and_then(|snapshot|{anyhow::ensure!(!snapshot.items.is_empty(),"Provider returned no playable items; your previous library was kept");store.replace_catalog(&snapshot)?;Ok(snapshot.items.len())});
+                                if let Some(run) = refresh_runs.remove(&provider.id) {
+                                    match &result {
+                                        Ok(count) => {
+                                            store.finish_refresh(&run, *count as i64, None)?
+                                        }
+                                        Err(error) => store.finish_refresh(
+                                            &run,
+                                            0,
+                                            Some(&error.to_string()),
+                                        )?,
                                     }
                                 }
+                                let count = result?;
+                                emit(Event::Message(format!(
+                                    "Imported {count} items from {}",
+                                    provider.name
+                                )));
+                                Ok(())
+                            })();
+                            refresh_runs.remove(&provider.id);
+                            if was_active {
+                                active_imports = active_imports.saturating_sub(1);
                             }
-                            let count = result?;
-                            emit(Event::Message(format!(
-                                "Imported {count} items from {}",
-                                provider.name
-                            )));
+                            emit(Event::Busy(active_imports > 0));
+                            completed?;
                         }
                         Command::PlaySeries(item) => {
                             let provider = store
@@ -592,21 +664,18 @@ impl Worker {
                                     provider.kind == "xtream",
                                     "No playable episodes are available. Refresh the provider first."
                                 );
-                                anyhow::ensure!(
-                                    active.load(Ordering::Relaxed) < 2,
-                                    "An import is running; try playing the series again shortly."
-                                );
-                                active.fetch_add(1, Ordering::Relaxed);
                                 let mut tx = network_tx.clone();
                                 tx.generation = generation;
-                                let counter = active.clone();
-                                thread::spawn(move || {
+                                let current_playback = current_generation.clone();
+                                playback_network.submit(move || {
+                                    if generation != current_playback.load(Ordering::SeqCst) {
+                                        return;
+                                    }
                                     let result = imports::fetch_series(
                                         &provider,
                                         item.external_id.as_deref().unwrap_or(""),
                                         &item.id,
                                     );
-                                    counter.fetch_sub(1, Ordering::Relaxed);
                                     let _ = tx.send(Command::PlaySeriesFetched(origin, result));
                                 });
                             }
@@ -667,10 +736,6 @@ impl Worker {
                                     ));
                                     return Ok(());
                                 }
-                                anyhow::ensure!(
-                                    active.load(Ordering::Relaxed) < 2,
-                                    "An import is still running; try opening this series again shortly."
-                                );
                                 emit(Event::DetailStatus(
                                     identity.0.clone(),
                                     identity.1.clone(),
@@ -682,17 +747,14 @@ impl Worker {
                                     provider: provider.clone(),
                                     revision: *revisions.get(&provider.id).unwrap_or(&0),
                                 };
-                                active.fetch_add(1, Ordering::Relaxed);
                                 let mut tx = network_tx.clone();
                                 tx.generation = generation;
-                                let counter = active.clone();
-                                thread::spawn(move || {
+                                detail_network.submit(move || {
                                     let result = imports::fetch_series(
                                         &provider,
                                         item.external_id.as_deref().unwrap_or(""),
                                         &item.id,
                                     );
-                                    counter.fetch_sub(1, Ordering::Relaxed);
                                     let _ =
                                         tx.send(Command::SeriesFetched(origin, item.id, result));
                                 });
@@ -769,10 +831,6 @@ impl Worker {
                                     ));
                                     return Ok(());
                                 }
-                                anyhow::ensure!(
-                                    active.load(Ordering::Relaxed) < 2,
-                                    "An import is still running; try opening the movie again shortly."
-                                );
                                 emit(Event::DetailStatus(
                                     identity.0.clone(),
                                     identity.1.clone(),
@@ -784,17 +842,14 @@ impl Worker {
                                     provider: provider.clone(),
                                     revision: *revisions.get(&provider.id).unwrap_or(&0),
                                 };
-                                active.fetch_add(1, Ordering::Relaxed);
                                 let mut tx = network_tx.clone();
                                 tx.generation = generation;
-                                let counter = active.clone();
-                                thread::spawn(move || {
+                                detail_network.submit(move || {
                                     let result = imports::fetch_movie(
                                         &provider,
                                         item.external_id.as_deref().unwrap_or(""),
                                         &item.id,
                                     );
-                                    counter.fetch_sub(1, Ordering::Relaxed);
                                     let _ = tx.send(Command::MovieFetched(origin, item.id, result));
                                 });
                                 Ok(())
@@ -857,18 +912,10 @@ impl Worker {
                                 provider: provider.clone(),
                                 revision: *revisions.get(&provider.id).unwrap_or(&0),
                             };
-                            if active.load(Ordering::Relaxed) >= 2 {
-                                anyhow::bail!(
-                                    "An import is still running; try the guide refresh again shortly."
-                                );
-                            }
-                            active.fetch_add(1, Ordering::Relaxed);
                             let mut tx = network_tx.clone();
                             tx.generation = generation;
-                            let counter = active.clone();
-                            thread::spawn(move || {
+                            guide_network.submit(move || {
                                 let result = imports::fetch_epg(&provider);
-                                counter.fetch_sub(1, Ordering::Relaxed);
                                 let _ = tx.send(Command::EpgFetched(origin, result));
                             });
                         }
@@ -1598,5 +1645,34 @@ mod live_player_tests {
         assert_eq!(target.item.id, "episode");
         assert_eq!(resume.unwrap().position_seconds, 37);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod foreground_lane_tests {
+    use super::*;
+    #[test]
+    fn rapid_navigation_keeps_only_the_newest_pending_network_request() {
+        let lane = LatestNetworkLane::new();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        lane.submit(move || {
+            started_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        for selected_item in 0..500 {
+            let finished = finished_tx.clone();
+            lane.submit(move || {
+                let _ = finished.send(selected_item);
+            });
+        }
+        release_tx.send(()).unwrap();
+        assert_eq!(
+            finished_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            499
+        );
+        assert!(finished_rx.try_recv().is_err());
     }
 }

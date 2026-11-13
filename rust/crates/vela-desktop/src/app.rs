@@ -790,6 +790,7 @@ impl eframe::App for VelaApp {
                 if ui.button("Choose existing Vela library…").clicked()&& let Some(path)=rfd::FileDialog::new().add_filter("SQLite catalog",&["sqlite","db"]).pick_file(){self.worker.shutdown();self.worker=Worker::with_legacy(ctx.clone(),path);self.fatal=None;self.loading=true;}});
             return;
         }
+        self.import_status(ctx);
         if self.playing.is_some() {
             self.player_ui(ctx);
             return;
