@@ -226,7 +226,7 @@ impl VelaApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.spinner();
+                    ui.add(egui::Spinner::new().size(16.0));
                     ui.label(
                         RichText::new("Updating library…")
                             .color(ACCENT)
@@ -243,7 +243,9 @@ impl VelaApp {
                                     (progress.completed as f64 / total as f64).clamp(0.0, 1.0)
                                         as f32,
                                 )
-                                .desired_width(160.0),
+                                .desired_width(160.0)
+                                .desired_height(6.0)
+                                .fill(ACCENT),
                             );
                         }
                     });
