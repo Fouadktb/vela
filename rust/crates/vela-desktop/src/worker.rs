@@ -141,7 +141,9 @@ pub enum Command {
     Series(Provider, CatalogItem),
     SeriesFetched(Origin, String, Result<SeriesDetails>),
     Movie(Provider, CatalogItem),
-    MovieFetched(Origin, Result<CatalogItem>),
+    MovieFetched(Origin, String, Result<CatalogItem>),
+    DetailPositions(String, String, String),
+    WatchRecentLive(Option<(String, String)>),
     Epg(Provider),
     EpgFetched(Origin, Result<Vec<EpgProgram>>),
     Guide(String, Vec<String>, i64, i64),
@@ -152,11 +154,13 @@ pub enum Command {
     Volume(VolumePreferences),
     Progress(PlaybackProgress),
     Prepare(PlaybackTarget),
+    Restart(PlaybackTarget),
     CancelPlayback,
     ResumeHistory(PlaybackProgress),
     Backup(PathBuf),
     Diagnostics(PathBuf),
     ClearHistory,
+    ClearProviderHistory(String),
     ClearCache,
     ResetData,
     CheckUpdates,
@@ -171,11 +175,15 @@ pub enum Event {
     Fatal(String),
     Series(String, String, Vec<Episode>),
     Metadata(CatalogItem),
+    DetailPositions(String, String, String, Result<Vec<PlaybackProgress>>),
+    DetailStatus(String, String, String, bool, Option<String>),
+    RecentLiveChannels(u64, String, String, Result<Vec<CatalogItem>>),
     Epg(Vec<EpgProgram>),
     Prepared(Box<PlaybackTarget>, Option<PlaybackProgress>),
     Busy(bool),
     ResetComplete(PathBuf),
     PlaybackQueue(u64, Vec<Episode>),
+    PlaybackPositions(u64, Vec<PlaybackProgress>),
     Updates(Result<vela_core::updates::ReleaseInfo>),
 }
 
@@ -229,6 +237,8 @@ impl Worker {
             let mut refresh_runs = std::collections::HashMap::<String, String>::new();
             let mut last_attempt = std::collections::HashMap::<String, std::time::Instant>::new();
             let mut last_schedule = std::time::Instant::now() - Duration::from_secs(60);
+            let mut recent_live: Option<(u64, String, String)> = None;
+            let mut playback_series: Option<(u64, String, String)> = None;
             loop {
                 if last_schedule.elapsed() >= Duration::from_secs(30) {
                     last_schedule = std::time::Instant::now();
@@ -255,6 +265,7 @@ impl Worker {
                 if matches!(
                     &command,
                     Command::Prepare(_)
+                        | Command::Restart(_)
                         | Command::ResumeHistory(_)
                         | Command::PlaySeries(_)
                         | Command::PlaySeriesFetched(..)
@@ -262,8 +273,31 @@ impl Worker {
                 {
                     continue;
                 }
+                let refresh_recent = matches!(
+                    &command,
+                    Command::WatchRecentLive(_)
+                        | Command::Progress(_)
+                        | Command::SaveProvider(_)
+                        | Command::DeleteProvider(_)
+                        | Command::Imported(..)
+                        | Command::ClearCache
+                        | Command::ResetData
+                        | Command::ClearHistory
+                        | Command::ClearProviderHistory(_)
+                );
+                let restart = matches!(&command, Command::Restart(_));
                 let result: Result<()> = (|| {
                     match command {
+                        Command::DetailPositions(provider, kind, id) => {
+                            let positions = store.detail_positions(&provider, &kind, &id);
+                            emit(Event::DetailPositions(provider, kind, id, positions));
+                        }
+                        Command::WatchRecentLive(current) => {
+                            if generation == current_generation.load(Ordering::SeqCst) {
+                                recent_live =
+                                    current.map(|(provider, id)| (generation, provider, id));
+                            }
+                        }
                         Command::Load(token, query) => {
                             let history = store.recent_history(200)?;
                             let mut home_continue = Vec::new();
@@ -363,7 +397,17 @@ impl Worker {
                         }
                         Command::Setting(key, value) => store.set_setting(&key, &value)?,
                         Command::Volume(volume) => store.save_volume(volume)?,
-                        Command::Progress(progress) => store.save_progress(&progress)?,
+                        Command::Progress(progress) => {
+                            store.save_progress(&progress)?;
+                            if let Some((watch_generation, provider, series)) = &playback_series
+                                && *watch_generation == current_generation.load(Ordering::SeqCst)
+                            {
+                                emit(Event::PlaybackPositions(
+                                    *watch_generation,
+                                    store.detail_positions(provider, "series", series)?,
+                                ));
+                            }
+                        }
                         Command::ResumeHistory(progress) => {
                             let mut target = if progress.item_type == "episode" {
                                 let series = progress.series_id.as_deref().ok_or_else(|| {
@@ -374,37 +418,75 @@ impl Worker {
                             } else {
                                 PlaybackTarget::catalog(store.item(&progress.provider_id,&progress.item_type,&progress.item_id)?.ok_or_else(||anyhow::anyhow!("This item is not in the current catalog. Refresh its provider first."))?)
                             };
-                            let resume = store.resume(
-                                &target.item.provider_id,
-                                &target.item.content_type,
-                                &target.item.id,
-                                target.series_id.as_deref(),
-                                target.season_id.as_deref(),
-                            )?;
+                            let resume = if target.item.content_type == "live" {
+                                None
+                            } else {
+                                store.resume(
+                                    &target.item.provider_id,
+                                    &target.item.content_type,
+                                    &target.item.id,
+                                    target.series_id.as_deref(),
+                                    target.season_id.as_deref(),
+                                )?
+                            };
                             target.generation = generation;
+                            playback_series = target.series_id.as_ref().map(|series| {
+                                (generation, target.item.provider_id.clone(), series.clone())
+                            });
                             emit(Event::PlaybackQueue(
                                 generation,
                                 if let Some(series) = &target.series_id {
-                                    store.episodes(&target.item.provider_id, series)?
+                                    playback_queue(&store, &target.item.provider_id, series)?
+                                } else {
+                                    vec![]
+                                },
+                            ));
+                            emit(Event::PlaybackPositions(
+                                generation,
+                                if let Some(series) = &target.series_id {
+                                    store.detail_positions(
+                                        &target.item.provider_id,
+                                        "series",
+                                        series,
+                                    )?
                                 } else {
                                     vec![]
                                 },
                             ));
                             emit(Event::Prepared(Box::new(target), resume));
                         }
-                        Command::Prepare(mut target) => {
-                            let progress = store.resume(
-                                &target.item.provider_id,
-                                &target.item.content_type,
-                                &target.item.id,
-                                target.series_id.as_deref(),
-                                target.season_id.as_deref(),
-                            )?;
+                        Command::Prepare(mut target) | Command::Restart(mut target) => {
+                            let progress = if restart || target.item.content_type == "live" {
+                                None
+                            } else {
+                                store.resume(
+                                    &target.item.provider_id,
+                                    &target.item.content_type,
+                                    &target.item.id,
+                                    target.series_id.as_deref(),
+                                    target.season_id.as_deref(),
+                                )?
+                            };
                             target.generation = generation;
+                            playback_series = target.series_id.as_ref().map(|series| {
+                                (generation, target.item.provider_id.clone(), series.clone())
+                            });
                             emit(Event::PlaybackQueue(
                                 generation,
                                 if let Some(series) = &target.series_id {
-                                    store.episodes(&target.item.provider_id, series)?
+                                    playback_queue(&store, &target.item.provider_id, series)?
+                                } else {
+                                    vec![]
+                                },
+                            ));
+                            emit(Event::PlaybackPositions(
+                                generation,
+                                if let Some(series) = &target.series_id {
+                                    store.detail_positions(
+                                        &target.item.provider_id,
+                                        "series",
+                                        series,
+                                    )?
                                 } else {
                                     vec![]
                                 },
@@ -488,7 +570,22 @@ impl Worker {
                                 let (mut target, resume, episodes) =
                                     series_playback(&store, &item.provider_id, &item.id)?;
                                 target.generation = generation;
+                                playback_series = target.series_id.as_ref().map(|series| {
+                                    (generation, target.item.provider_id.clone(), series.clone())
+                                });
                                 emit(Event::PlaybackQueue(generation, episodes));
+                                emit(Event::PlaybackPositions(
+                                    generation,
+                                    if let Some(series) = &target.series_id {
+                                        store.detail_positions(
+                                            &target.item.provider_id,
+                                            "series",
+                                            series,
+                                        )?
+                                    } else {
+                                        vec![]
+                                    },
+                                ));
                                 emit(Event::Prepared(Box::new(target), resume));
                             } else {
                                 anyhow::ensure!(
@@ -526,35 +623,65 @@ impl Worker {
                                 &details.series.id,
                             )?;
                             target.generation = generation;
+                            playback_series = target.series_id.as_ref().map(|series| {
+                                (generation, target.item.provider_id.clone(), series.clone())
+                            });
                             emit(Event::PlaybackQueue(generation, episodes));
+                            emit(Event::PlaybackPositions(
+                                generation,
+                                if let Some(series) = &target.series_id {
+                                    store.detail_positions(
+                                        &target.item.provider_id,
+                                        "series",
+                                        series,
+                                    )?
+                                } else {
+                                    vec![]
+                                },
+                            ));
                             emit(Event::Prepared(Box::new(target), resume));
                         }
                         Command::Series(provider, item) => {
-                            let Some(provider) = store.provider(&provider.id)? else {
-                                return Ok(());
-                            };
-                            let origin = Origin {
-                                provider: provider.clone(),
-                                revision: *revisions.get(&provider.id).unwrap_or(&0),
-                            };
-                            let current = store.episodes(&item.provider_id, &item.id)?;
-                            if provider.kind != "xtream" || item.external_id.is_none() {
+                            let identity = (
+                                item.provider_id.clone(),
+                                "series".to_owned(),
+                                item.id.clone(),
+                            );
+                            let start = (|| -> Result<()> {
+                                let provider = store
+                                    .provider(&provider.id)?
+                                    .ok_or_else(|| anyhow::anyhow!("Provider was removed"))?;
+                                let current = store.episodes(&item.provider_id, &item.id)?;
                                 emit(Event::Series(
                                     item.provider_id.clone(),
                                     item.id.clone(),
                                     current,
                                 ));
-                            } else {
-                                emit(Event::Series(
-                                    item.provider_id.clone(),
-                                    item.id.clone(),
-                                    current,
-                                ));
-                                if active.load(Ordering::Relaxed) >= 2 {
-                                    anyhow::bail!(
-                                        "An import is still running; try opening this series again shortly."
-                                    );
+                                if provider.kind != "xtream" || item.external_id.is_none() {
+                                    emit(Event::DetailStatus(
+                                        identity.0.clone(),
+                                        identity.1.clone(),
+                                        identity.2.clone(),
+                                        false,
+                                        None,
+                                    ));
+                                    return Ok(());
                                 }
+                                anyhow::ensure!(
+                                    active.load(Ordering::Relaxed) < 2,
+                                    "An import is still running; try opening this series again shortly."
+                                );
+                                emit(Event::DetailStatus(
+                                    identity.0.clone(),
+                                    identity.1.clone(),
+                                    identity.2.clone(),
+                                    true,
+                                    None,
+                                ));
+                                let origin = Origin {
+                                    provider: provider.clone(),
+                                    revision: *revisions.get(&provider.id).unwrap_or(&0),
+                                };
                                 active.fetch_add(1, Ordering::Relaxed);
                                 let mut tx = network_tx.clone();
                                 tx.generation = generation;
@@ -569,60 +696,156 @@ impl Worker {
                                     let _ =
                                         tx.send(Command::SeriesFetched(origin, item.id, result));
                                 });
+                                Ok(())
+                            })();
+                            if let Err(error) = start {
+                                emit(Event::DetailStatus(
+                                    identity.0,
+                                    identity.1,
+                                    identity.2,
+                                    false,
+                                    Some(error.to_string()),
+                                ));
                             }
                         }
                         Command::SeriesFetched(origin, series, result) => {
-                            if !origin.is_current(&store, &revisions)? {
-                                return Ok(());
+                            let provider = origin.provider.id.clone();
+                            let fetched = (|| -> Result<Vec<Episode>> {
+                                anyhow::ensure!(
+                                    origin.is_current(&store, &revisions)?,
+                                    "Provider changed while loading this series; reopen it to refresh."
+                                );
+                                let details = result?;
+                                anyhow::ensure!(
+                                    details.series.provider_id == provider
+                                        && details.series.id == series,
+                                    "Series response did not match the requested item"
+                                );
+                                store.replace_series_details(&details)?;
+                                store.episodes(&provider, &series)
+                            })();
+                            match fetched {
+                                Ok(episodes) => {
+                                    emit(Event::Series(provider.clone(), series.clone(), episodes));
+                                    emit(Event::DetailStatus(
+                                        provider,
+                                        "series".into(),
+                                        series,
+                                        false,
+                                        None,
+                                    ));
+                                }
+                                Err(error) => emit(Event::DetailStatus(
+                                    provider,
+                                    "series".into(),
+                                    series,
+                                    false,
+                                    Some(error.to_string()),
+                                )),
                             }
-                            let provider = origin.provider.id;
-                            let details = result?;
-                            store.replace_series_details(&details)?;
-                            emit(Event::Series(
-                                provider.clone(),
-                                series.clone(),
-                                store.episodes(&provider, &series)?,
-                            ));
                         }
                         Command::Movie(provider, item) => {
-                            let Some(provider) = store.provider(&provider.id)? else {
-                                return Ok(());
-                            };
-                            let origin = Origin {
-                                provider: provider.clone(),
-                                revision: *revisions.get(&provider.id).unwrap_or(&0),
-                            };
-                            if active.load(Ordering::Relaxed) >= 2 {
-                                anyhow::bail!(
+                            let identity = (
+                                item.provider_id.clone(),
+                                "movie".to_owned(),
+                                item.id.clone(),
+                            );
+                            let start = (|| -> Result<()> {
+                                let provider = store
+                                    .provider(&provider.id)?
+                                    .ok_or_else(|| anyhow::anyhow!("Provider was removed"))?;
+                                if let Some(current) =
+                                    store.item(&item.provider_id, "movie", &item.id)?
+                                {
+                                    emit(Event::Metadata(current));
+                                }
+                                if provider.kind != "xtream" || item.external_id.is_none() {
+                                    emit(Event::DetailStatus(
+                                        identity.0.clone(),
+                                        identity.1.clone(),
+                                        identity.2.clone(),
+                                        false,
+                                        None,
+                                    ));
+                                    return Ok(());
+                                }
+                                anyhow::ensure!(
+                                    active.load(Ordering::Relaxed) < 2,
                                     "An import is still running; try opening the movie again shortly."
                                 );
+                                emit(Event::DetailStatus(
+                                    identity.0.clone(),
+                                    identity.1.clone(),
+                                    identity.2.clone(),
+                                    true,
+                                    None,
+                                ));
+                                let origin = Origin {
+                                    provider: provider.clone(),
+                                    revision: *revisions.get(&provider.id).unwrap_or(&0),
+                                };
+                                active.fetch_add(1, Ordering::Relaxed);
+                                let mut tx = network_tx.clone();
+                                tx.generation = generation;
+                                let counter = active.clone();
+                                thread::spawn(move || {
+                                    let result = imports::fetch_movie(
+                                        &provider,
+                                        item.external_id.as_deref().unwrap_or(""),
+                                        &item.id,
+                                    );
+                                    counter.fetch_sub(1, Ordering::Relaxed);
+                                    let _ = tx.send(Command::MovieFetched(origin, item.id, result));
+                                });
+                                Ok(())
+                            })();
+                            if let Err(error) = start {
+                                emit(Event::DetailStatus(
+                                    identity.0,
+                                    identity.1,
+                                    identity.2,
+                                    false,
+                                    Some(error.to_string()),
+                                ));
                             }
-                            active.fetch_add(1, Ordering::Relaxed);
-                            let mut tx = network_tx.clone();
-                            tx.generation = generation;
-                            let counter = active.clone();
-                            thread::spawn(move || {
-                                let result = imports::fetch_movie(
-                                    &provider,
-                                    item.external_id.as_deref().unwrap_or(""),
-                                    &item.id,
-                                );
-                                counter.fetch_sub(1, Ordering::Relaxed);
-                                let _ = tx.send(Command::MovieFetched(origin, result));
-                            });
                         }
-                        Command::MovieFetched(origin, result) => {
-                            if !origin.is_current(&store, &revisions)? {
-                                return Ok(());
-                            }
-                            let metadata = result?;
-                            store.update_item_metadata(&metadata)?;
-                            if let Some(item) = store.item(
-                                &metadata.provider_id,
-                                &metadata.content_type,
-                                &metadata.id,
-                            )? {
-                                emit(Event::Metadata(item));
+                        Command::MovieFetched(origin, id, result) => {
+                            let provider = origin.provider.id.clone();
+                            let fetched = (|| -> Result<Option<CatalogItem>> {
+                                anyhow::ensure!(
+                                    origin.is_current(&store, &revisions)?,
+                                    "Provider changed while loading this movie; reopen it to refresh."
+                                );
+                                let metadata = result?;
+                                anyhow::ensure!(
+                                    metadata.provider_id == provider
+                                        && metadata.id == id
+                                        && metadata.content_type == "movie",
+                                    "Movie response did not match the requested item"
+                                );
+                                store.update_item_metadata(&metadata)?;
+                                store.item(&provider, "movie", &id)
+                            })();
+                            match fetched {
+                                Ok(item) => {
+                                    if let Some(item) = item {
+                                        emit(Event::Metadata(item));
+                                    }
+                                    emit(Event::DetailStatus(
+                                        provider,
+                                        "movie".into(),
+                                        id,
+                                        false,
+                                        None,
+                                    ));
+                                }
+                                Err(error) => emit(Event::DetailStatus(
+                                    provider,
+                                    "movie".into(),
+                                    id,
+                                    false,
+                                    Some(error.to_string()),
+                                )),
                             }
                         }
 
@@ -706,6 +929,12 @@ impl Worker {
                                 "Watch history and resume positions cleared".into(),
                             ));
                         }
+                        Command::ClearProviderHistory(provider) => {
+                            store.clear_provider_history(Some(&provider))?;
+                            emit(Event::Message(
+                                "Provider watch history and resume positions cleared".into(),
+                            ));
+                        }
                         Command::CheckUpdates => {
                             let mut tx = network_tx.clone();
                             tx.generation = generation;
@@ -715,12 +944,26 @@ impl Worker {
                             });
                         }
                         Command::UpdatesFetched(result) => emit(Event::Updates(result)),
-                        Command::CancelPlayback | Command::Shutdown => return Ok(()),
+                        Command::CancelPlayback | Command::Shutdown => {
+                            recent_live = None;
+                            return Ok(());
+                        }
                     }
                     Ok(())
                 })();
                 if let Err(error) = result {
                     emit(Event::Error(format!("{error}")));
+                }
+                if refresh_recent
+                    && let Some((watch_generation, provider, id)) = &recent_live
+                    && *watch_generation == current_generation.load(Ordering::SeqCst)
+                {
+                    emit(Event::RecentLiveChannels(
+                        *watch_generation,
+                        provider.clone(),
+                        id.clone(),
+                        recent_live_channels(&store, provider, id),
+                    ));
                 }
             }
         });
@@ -735,6 +978,7 @@ impl Worker {
         let generation = if matches!(
             &command,
             Command::Prepare(_)
+                | Command::Restart(_)
                 | Command::ResumeHistory(_)
                 | Command::PlaySeries(_)
                 | Command::CancelPlayback
@@ -772,42 +1016,123 @@ impl Drop for Worker {
     }
 }
 
+fn recent_live_channels(
+    store: &Store,
+    current_provider: &str,
+    current_id: &str,
+) -> Result<Vec<CatalogItem>> {
+    let mut seen = std::collections::HashSet::new();
+    let mut channels = Vec::new();
+    for entry in store.recent_history(80)? {
+        if entry.item_type != "live"
+            || (entry.provider_id == current_provider && entry.item_id == current_id)
+            || !seen.insert((entry.provider_id.clone(), entry.item_id.clone()))
+        {
+            continue;
+        }
+        let Some(mut item) = store.item(&entry.provider_id, "live", &entry.item_id)? else {
+            continue;
+        };
+        let direct = item
+            .stream_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty() && !url.contains('\0'))
+            .map(str::to_owned);
+        let resolved = direct.or_else(|| {
+            let provider = store.provider(&item.provider_id).ok()??;
+            let json = item.stream_json.as_deref()?;
+            imports::resolve_stream_url(&provider, json, "live").ok()
+        });
+        let Some(url) = resolved.filter(|url| !url.trim().is_empty() && !url.contains('\0')) else {
+            continue;
+        };
+        item.stream_url = Some(url);
+        channels.push(item);
+        if channels.len() == 10 {
+            break;
+        }
+    }
+    Ok(channels)
+}
+
+fn playback_queue(store: &Store, provider: &str, series: &str) -> Result<Vec<Episode>> {
+    let credentials = store.provider(provider)?;
+    Ok(store
+        .episodes(provider, series)?
+        .into_iter()
+        .filter_map(|mut episode| {
+            let direct = episode
+                .stream_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty() && !value.contains('\0'))
+                .map(str::to_owned);
+            episode.stream_url = direct.or_else(|| {
+                imports::resolve_stream_url(
+                    credentials.as_ref()?,
+                    episode.stream_json.as_deref()?,
+                    "episode",
+                )
+                .ok()
+            });
+            episode.stream_url.as_ref()?;
+            Some(episode)
+        })
+        .collect())
+}
 fn series_playback(
     store: &Store,
     provider: &str,
     series: &str,
 ) -> Result<(PlaybackTarget, Option<PlaybackProgress>, Vec<Episode>)> {
-    let episodes = store.episodes(provider, series)?;
+    let episodes = playback_queue(store, provider, series)?;
     anyhow::ensure!(!episodes.is_empty(), "This series has no playable episodes");
-    let history = store.recent_history(1000)?;
-    let current = history.iter().find(|p| {
-        p.provider_id == provider
-            && p.series_id.as_deref() == Some(series)
-            && p.item_type == "episode"
-    });
-    let index = current
-        .and_then(|p| {
-            episodes
-                .iter()
-                .position(|e| e.id == p.item_id && Some(&e.season_id) == p.season_id.as_ref())
-                .map(|index| {
-                    if p.completed {
-                        (index + 1) % episodes.len()
-                    } else {
-                        index
-                    }
-                })
+    let positions = store.detail_positions(provider, "series", series)?;
+    let scoped_index = |position: &PlaybackProgress| {
+        if position.provider_id != provider
+            || position.item_type != "episode"
+            || position.series_id.as_deref() != Some(series)
+        {
+            return None;
+        }
+        episodes.iter().position(|episode| {
+            episode.id == position.item_id
+                && Some(episode.season_id.as_str()) == position.season_id.as_deref()
+        })
+    };
+    if let Some(position) = positions
+        .iter()
+        .filter(|position| {
+            !position.completed && position.position_seconds > 0 && scoped_index(position).is_some()
+        })
+        .max_by_key(|position| position.last_watched_at)
+    {
+        let index = scoped_index(position).expect("filtered valid position");
+        return Ok((
+            PlaybackTarget::episode(&episodes[index]),
+            Some(position.clone()),
+            episodes,
+        ));
+    }
+    let index = positions
+        .iter()
+        .filter(|position| {
+            (position.completed || position.position_seconds > 0)
+                && scoped_index(position).is_some()
+        })
+        .max_by_key(|position| position.last_watched_at)
+        .and_then(|position| {
+            scoped_index(position).map(|index| {
+                if position.completed {
+                    (index + 1).min(episodes.len() - 1)
+                } else {
+                    index
+                }
+            })
         })
         .unwrap_or(0);
-    let target = PlaybackTarget::episode(&episodes[index]);
-    let resume = store.resume(
-        provider,
-        "episode",
-        &target.item.id,
-        target.series_id.as_deref(),
-        target.season_id.as_deref(),
-    )?;
-    Ok((target, resume, episodes))
+    Ok((PlaybackTarget::episode(&episodes[index]), None, episodes))
 }
 
 impl Origin {
@@ -993,5 +1318,285 @@ mod scheduling_tests {
             ["c"]
         );
         assert!(scheduled_refreshes(providers, &running, &attempts, 0, 1000).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod live_player_tests {
+    use super::*;
+    fn provider(id: &str) -> Provider {
+        Provider {
+            id: id.into(),
+            kind: "m3u".into(),
+            name: id.into(),
+            source: "https://fixture.invalid/list".into(),
+            is_enabled: true,
+            auto_refresh_interval_minutes: 1440,
+            ..Default::default()
+        }
+    }
+    fn item(id: &str) -> CatalogItem {
+        CatalogItem {
+            id: id.into(),
+            provider_id: "p".into(),
+            content_type: "live".into(),
+            title: format!("Current {id}"),
+            stream_url: Some(format!("https://fixture.invalid/{id}.ts")),
+            ..Default::default()
+        }
+    }
+    fn progress(id: &str, updated: i64) -> PlaybackProgress {
+        PlaybackProgress {
+            provider_id: "p".into(),
+            item_id: id.into(),
+            item_type: "live".into(),
+            title: "Old history title".into(),
+            last_watched_at: updated,
+            ..Default::default()
+        }
+    }
+    fn next(worker: &Worker, accept: impl Fn(&Event) -> bool) -> Event {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let event = worker
+                .rx
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .expect("worker response");
+            if accept(&event) {
+                return event;
+            }
+            if let Event::Error(error) | Event::Fatal(error) = event {
+                panic!("{error}");
+            }
+        }
+    }
+    #[test]
+    fn recent_live_resolves_current_catalog_deduplicates_filters_and_refreshes_on_progress_and_switch()
+    -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("recent.sqlite");
+        let store = Store::open(&path)?;
+        store.upsert_provider(&provider("p"))?;
+        let mut items = (0..18).map(|i| item(&i.to_string())).collect::<Vec<_>>();
+        items[15].stream_url = None;
+        store.replace_catalog(&ImportSnapshot {
+            provider_id: "p".into(),
+            items: items.clone(),
+            ..Default::default()
+        })?;
+        for i in 0..18 {
+            store.save_progress(&progress(&i.to_string(), 1_700_000_000_000 + i))?;
+        }
+        items.retain(|item| item.id != "16");
+        store.replace_catalog(&ImportSnapshot {
+            provider_id: "p".into(),
+            items,
+            ..Default::default()
+        })?;
+        let mut xtream = provider("other");
+        xtream.kind = "xtream".into();
+        xtream.source = "https://fixture.invalid".into();
+        xtream.username = Some("u".into());
+        xtream.password = Some("p".into());
+        store.upsert_provider(&xtream)?;
+        let cross = CatalogItem {
+            provider_id: "other".into(),
+            stream_url: None,
+            stream_json: Some(
+                r#"{"providerType":"xtream","streamId":"42","containerExtension":"ts"}"#.into(),
+            ),
+            ..item("17")
+        };
+        store.replace_catalog(&ImportSnapshot {
+            provider_id: "other".into(),
+            items: vec![cross],
+            ..Default::default()
+        })?;
+        store.save_progress(&PlaybackProgress {
+            provider_id: "other".into(),
+            ..progress("17", 1_700_000_005_000)
+        })?;
+        let connection = rusqlite::Connection::open(&path)?;
+        connection.execute("INSERT INTO watch_history(catalog_key,item_id,item_type,provider_id,title,subtitle,artwork_url,series_id,season_id,position_seconds,duration_seconds,completion_percentage,completed,last_watched_at,watch_count) SELECT 'legacy-duplicate',item_id,item_type,provider_id,title,subtitle,artwork_url,series_id,season_id,position_seconds,duration_seconds,completion_percentage,completed,last_watched_at+2000,watch_count FROM watch_history WHERE provider_id='p' AND item_id='12'",[])?;
+        drop(connection);
+        let channels = recent_live_channels(&store, "p", "17")?;
+        assert_eq!(channels.len(), 10);
+        assert!(channels.iter().all(
+            |item| !(item.provider_id == "p" && ["17", "16", "15"].contains(&item.id.as_str()))
+        ));
+        assert_eq!(
+            channels
+                .iter()
+                .map(|item| (&item.provider_id, &item.id))
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            10
+        );
+        assert!(channels.iter().any(|item| item.provider_id == "other"
+            && item.id == "17"
+            && item.stream_url.as_deref() == Some("https://fixture.invalid/live/u/p/42.ts")));
+        assert!(
+            channels
+                .iter()
+                .all(|item| item.title.starts_with("Current"))
+        );
+        drop(store);
+        let mut worker = Worker::test_new(egui::Context::default(), path);
+        next(&worker, |event| matches!(event, Event::Ready(_)));
+        worker.send(Command::WatchRecentLive(Some(("p".into(), "17".into()))));
+        next(&worker, |event| {
+            matches!(event, Event::RecentLiveChannels(..))
+        });
+        worker.send(Command::Progress(progress("0", 1_700_000_010_000)));
+        match next(&worker, |event| {
+            matches!(event, Event::RecentLiveChannels(..))
+        }) {
+            Event::RecentLiveChannels(_, _, _, Ok(channels)) => assert_eq!(channels[0].id, "0"),
+            _ => panic!("recent list refresh"),
+        }
+        worker.send(Command::Prepare(PlaybackTarget::catalog(item("0"))));
+        next(&worker, |event| matches!(event, Event::Prepared(..)));
+        worker.send(Command::WatchRecentLive(Some(("p".into(), "0".into()))));
+        match next(&worker, |event| {
+            matches!(event, Event::RecentLiveChannels(..))
+        }) {
+            Event::RecentLiveChannels(generation, _, current, Ok(channels)) => {
+                assert_eq!(generation, worker.generation());
+                assert_eq!(current, "0");
+                assert!(
+                    !channels
+                        .iter()
+                        .any(|item| item.provider_id == "p" && item.id == "0")
+                );
+                assert!(
+                    channels
+                        .iter()
+                        .any(|item| item.provider_id == "p" && item.id == "17")
+                );
+            }
+            _ => panic!("switched recent list"),
+        }
+        worker.shutdown();
+        Ok(())
+    }
+    #[test]
+    fn restart_preserves_authoritative_progress_and_detail_failures_stay_scoped() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("restart.sqlite");
+        let store = Store::open(&path)?;
+        store.upsert_provider(&provider("p"))?;
+        let movie = CatalogItem {
+            content_type: "movie".into(),
+            ..item("film")
+        };
+        store.replace_catalog(&ImportSnapshot {
+            provider_id: "p".into(),
+            items: vec![movie.clone()],
+            ..Default::default()
+        })?;
+        store.save_progress(&PlaybackProgress {
+            item_type: "movie".into(),
+            position_seconds: 42,
+            ..progress("film", 1_700_000_000_000)
+        })?;
+        drop(store);
+        let mut worker = Worker::test_new(egui::Context::default(), path.clone());
+        next(&worker, |event| matches!(event, Event::Ready(_)));
+        worker.send(Command::Prepare(PlaybackTarget::catalog(movie.clone())));
+        assert!(
+            matches!(next(&worker,|event|matches!(event,Event::Prepared(..))),Event::Prepared(_,Some(progress)) if progress.position_seconds==42)
+        );
+        worker.send(Command::Restart(PlaybackTarget::catalog(movie)));
+        assert!(
+            matches!(next(&worker,|event|matches!(event,Event::Prepared(..))),Event::Prepared(target,None) if target.generation==worker.generation())
+        );
+        worker.send(Command::MovieFetched(
+            Origin {
+                provider: provider("p"),
+                revision: 0,
+            },
+            "film".into(),
+            Err(anyhow::anyhow!("metadata unavailable")),
+        ));
+        assert!(
+            matches!(next(&worker,|event|matches!(event,Event::DetailStatus(..))),Event::DetailStatus(provider,kind,id,false,Some(_)) if provider=="p"&&kind=="movie"&&id=="film")
+        );
+        worker.shutdown();
+        assert_eq!(
+            Store::open(&path)?
+                .resume("p", "movie", "film", None, None)?
+                .unwrap()
+                .position_seconds,
+            42
+        );
+        Ok(())
+    }
+    #[test]
+    fn series_resume_uses_all_scoped_positions_even_beyond_global_history_limit() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("old-series.sqlite");
+        let store = Store::open(&path)?;
+        store.upsert_provider(&provider("p"))?;
+        store.replace_catalog(&ImportSnapshot {
+            provider_id: "p".into(),
+            items: vec![CatalogItem {
+                id: "series".into(),
+                provider_id: "p".into(),
+                content_type: "series".into(),
+                title: "Series".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })?;
+        let episode = Episode {
+            id: "episode".into(),
+            provider_id: "p".into(),
+            series_id: "series".into(),
+            season_id: "1".into(),
+            season_number: 1,
+            episode_number: 1,
+            title: "Episode".into(),
+            stream_url: Some("https://fixture.invalid/e.ts".into()),
+            ..Default::default()
+        };
+        store.replace_series_details(&SeriesDetails {
+            series: Series {
+                id: "series".into(),
+                provider_id: "p".into(),
+                title: "Series".into(),
+                ..Default::default()
+            },
+            seasons: vec![Season {
+                provider_id: "p".into(),
+                series_id: "series".into(),
+                season_number: 1,
+                ..Default::default()
+            }],
+            episodes: vec![episode],
+        })?;
+        store.save_progress(&PlaybackProgress {
+            item_type: "episode".into(),
+            series_id: Some("series".into()),
+            season_id: Some("1".into()),
+            position_seconds: 37,
+            ..progress("episode", 1_700_000_000_000)
+        })?;
+        for i in 0..1005 {
+            store.save_progress(&PlaybackProgress {
+                item_type: "movie".into(),
+                position_seconds: 1,
+                ..progress(&format!("other-{i}"), 1_700_000_000_100 + i)
+            })?;
+        }
+        assert!(
+            !store
+                .recent_history(1000)?
+                .iter()
+                .any(|p| p.item_type == "episode")
+        );
+        let (target, resume, _) = series_playback(&store, "p", "series")?;
+        assert_eq!(target.item.id, "episode");
+        assert_eq!(resume.unwrap().position_seconds, 37);
+        Ok(())
     }
 }

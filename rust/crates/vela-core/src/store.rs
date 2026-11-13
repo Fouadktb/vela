@@ -71,6 +71,7 @@ impl Store {
         // Index-only maintenance also applies to adopted/existing schema-v4
         // catalogs; it does not require a table schema/version migration.
         connection.execute_batch(SERIES_EXTERNAL_INDEX)?;
+        connection.execute_batch("CREATE INDEX IF NOT EXISTS idx_playback_positions_series ON playback_positions(provider_id,item_type,series_id,updated_at DESC)")?;
         Ok(Self {
             connection,
             path: path.to_owned(),
@@ -437,6 +438,34 @@ impl Store {
 
     pub fn clear_history(&self) -> Result<()> {
         self.clear_provider_history(None)
+    }
+
+    /// Complete, authoritative detail-page progress, including positions older
+    /// than the bounded Home/Recent history lists and rows without history.
+    pub fn detail_positions(
+        &self,
+        provider: &str,
+        kind: &str,
+        id: &str,
+    ) -> Result<Vec<PlaybackProgress>> {
+        ensure!(
+            ["movie", "series", "live"].contains(&kind),
+            "Invalid detail content type"
+        );
+        let playable_kind = if kind == "series" { "episode" } else { kind };
+        let scope = if kind == "series" {
+            "p.series_id=?3"
+        } else {
+            "p.item_id=?3"
+        };
+        collect(
+            &self.connection,
+            &format!(
+                "SELECT p.provider_id,p.catalog_key,p.item_id,p.item_type,COALESCE(h.title,i.title,e.title,p.item_id) AS title,h.subtitle,COALESCE(h.artwork_url,i.artwork_url,e.artwork_url) AS artwork_url,p.series_id,p.season_id,p.position_seconds,p.duration_seconds,p.completion_percentage,p.completed,p.updated_at AS last_watched_at,COALESCE(h.watch_count,1) AS watch_count FROM playback_positions p LEFT JOIN watch_history h ON h.provider_id=p.provider_id AND h.item_type=p.item_type AND h.catalog_key=p.catalog_key LEFT JOIN catalog_items i ON i.provider_id=p.provider_id AND i.content_type=p.item_type AND i.id=p.item_id LEFT JOIN episodes e ON e.provider_id=p.provider_id AND e.series_id=p.series_id AND e.season_id=p.season_id AND e.id=p.item_id WHERE p.provider_id=?1 AND p.item_type=?2 AND {scope} ORDER BY p.updated_at DESC,p.catalog_key"
+            ),
+            params![provider, playable_kind, id],
+            progress_row,
+        )
     }
 
     pub fn replace_catalog(&self, snapshot: &CatalogSnapshot) -> Result<()> {

@@ -1,3 +1,4 @@
+mod navigation;
 mod player;
 mod views;
 use crate::worker::{Command, Event, PlaybackTarget, ViewData, Worker};
@@ -19,7 +20,7 @@ const ACCENT: Color32 = Color32::from_rgb(231, 184, 91);
 const MUTED: Color32 = Color32::from_rgb(169, 163, 154);
 const PAGE_SIZE: usize = 60;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Section {
     Home,
     Live,
@@ -67,6 +68,8 @@ pub struct VelaApp {
     ready: bool,
     initialized: bool,
     section: Section,
+    browsing_memory: navigation::BrowsingMemory,
+    restore_selection: bool,
     query: CatalogQuery,
     token: u64,
     loading: bool,
@@ -95,16 +98,26 @@ pub struct VelaApp {
     provider_password_visible: bool,
     delete_provider: Option<Provider>,
     details: Option<CatalogItem>,
+    detail_positions: Vec<PlaybackProgress>,
+    detail_loading: bool,
+    detail_error: Option<String>,
     episodes: Vec<Episode>,
     guide: Vec<EpgProgram>,
     guide_day: i64,
     playing: Option<PlaybackTarget>,
     volume: VolumePreferences,
     controls_last_activity: Instant,
+    controls_hidden: bool,
+    recent_live_expanded: bool,
+    recent_live_channels: Vec<CatalogItem>,
+    recent_live_loading: bool,
+    recent_live_error: Option<String>,
     seek_position: Option<f64>,
-    space_pressed_at: Option<Instant>,
-    speed_before_hold: Option<f64>,
+    space_hold: player::SpaceHold,
+    player_surface_focus: Option<egui::Id>,
     playback_episodes: Vec<Episode>,
+    playback_positions: Vec<PlaybackProgress>,
+    rail_scrolled_to: Option<String>,
     ended_handled: bool,
     seek_indicator: Option<(String, Instant)>,
     last_progress: Instant,
@@ -112,6 +125,7 @@ pub struct VelaApp {
     speed: f64,
     selected_track: BTreeMap<String, String>,
     confirm_clear_history: bool,
+    confirm_clear_provider_history: Option<String>,
     confirm_clear_cache: bool,
     confirm_reset_data: bool,
     sidebar_pinned: bool,
@@ -139,6 +153,8 @@ impl VelaApp {
             ready: false,
             initialized: false,
             section: Section::Home,
+            browsing_memory: navigation::BrowsingMemory::default(),
+            restore_selection: false,
             query: CatalogQuery {
                 limit: PAGE_SIZE,
                 ..Default::default()
@@ -170,16 +186,26 @@ impl VelaApp {
             provider_password_visible: false,
             delete_provider: None,
             details: None,
+            detail_positions: vec![],
+            detail_loading: false,
+            detail_error: None,
             episodes: vec![],
             guide: vec![],
             guide_day: 0,
             playing: None,
             volume: VolumePreferences::default(),
             controls_last_activity: Instant::now(),
+            controls_hidden: false,
+            recent_live_expanded: true,
+            recent_live_channels: vec![],
+            recent_live_loading: false,
+            recent_live_error: None,
             seek_position: None,
-            space_pressed_at: None,
-            speed_before_hold: None,
+            space_hold: player::SpaceHold::default(),
+            player_surface_focus: None,
             playback_episodes: vec![],
+            playback_positions: vec![],
+            rail_scrolled_to: None,
             ended_handled: false,
             seek_indicator: None,
             last_progress: Instant::now(),
@@ -187,6 +213,7 @@ impl VelaApp {
             speed: 1.0,
             selected_track: BTreeMap::new(),
             confirm_clear_history: false,
+            confirm_clear_provider_history: None,
             confirm_clear_cache: false,
             confirm_reset_data: false,
             sidebar_pinned: false,
@@ -203,16 +230,31 @@ impl VelaApp {
             .send(Command::Load(self.token, self.query.clone()));
     }
     fn navigate(&mut self, section: Section) {
+        if self.section == section {
+            return;
+        }
         self.worker.send(Command::CancelPlayback);
-        self.selected_catalog = None;
+        let state = self.browsing_memory.switch(
+            self.section,
+            section,
+            navigation::BrowsingState {
+                query: self.query.clone(),
+                category_search: self.category_search.clone(),
+                selection: self.selected_catalog.take(),
+            },
+        );
+        self.query = state.query;
+        self.category_search = state.category_search;
+        self.selected_catalog = state.selection;
+        self.episodes.clear();
+        self.detail_positions.clear();
+        self.detail_loading = false;
+        self.detail_error = None;
+        self.restore_selection = true;
+        self.search_changed = None;
         self.page = CatalogPage::default();
         self.categories.clear();
         self.section = section;
-        self.query.content_type = section.kind();
-        self.query.category_id = None;
-        self.query.favorites_only = section == Section::Favorites;
-        self.query.offset = 0;
-        self.query.search.clear();
         self.reload();
     }
     fn receive(&mut self, ctx: &egui::Context) {
@@ -252,6 +294,25 @@ impl VelaApp {
                     self.history = history;
                     self.settings = settings;
                     self.loading = false;
+                    if self.global_search.is_none() {
+                        self.selected_catalog =
+                            self.selected_catalog.as_ref().and_then(|selected| {
+                                self.page
+                                    .items
+                                    .iter()
+                                    .find(|item| {
+                                        item.provider_id == selected.provider_id
+                                            && item.content_type == selected.content_type
+                                            && item.id == selected.id
+                                    })
+                                    .cloned()
+                            });
+                    }
+                    if std::mem::take(&mut self.restore_selection)
+                        && let Some(item) = self.selected_catalog.clone()
+                    {
+                        self.select_catalog(item);
+                    }
                     if !self.initialized {
                         self.sidebar_pinned = self
                             .settings
@@ -301,7 +362,19 @@ impl VelaApp {
                     self.selected_catalog = None;
                     self.details = None;
                     self.providers.clear();
-                    self.navigate(Section::Home);
+                    self.browsing_memory = navigation::BrowsingMemory::default();
+                    self.section = Section::Home;
+                    self.query = CatalogQuery {
+                        limit: PAGE_SIZE,
+                        ..Default::default()
+                    };
+                    self.category_search.clear();
+                    self.categories.clear();
+                    self.page = CatalogPage::default();
+                    self.detail_positions.clear();
+                    self.search_changed = None;
+                    self.restore_selection = false;
+                    self.reload();
                     self.message = Some(format!(
                         "App data reset. A recovery backup was saved to {}",
                         backup.display()
@@ -311,25 +384,62 @@ impl VelaApp {
                     if self
                         .details
                         .as_ref()
-                        .is_some_and(|item| item.provider_id == provider && item.id == series)
-                        || self
-                            .selected_catalog
-                            .as_ref()
-                            .is_some_and(|item| item.provider_id == provider && item.id == series)
+                        .or(self.selected_catalog.as_ref())
+                        .is_some_and(|item| {
+                            item.content_type == "series"
+                                && item.provider_id == provider
+                                && item.id == series
+                        })
                     {
                         self.episodes = episodes;
                     }
                 }
                 Event::Metadata(item) => {
                     if self.details.as_ref().is_some_and(|current| {
-                        current.provider_id == item.provider_id && current.id == item.id
+                        current.provider_id == item.provider_id
+                            && current.content_type == item.content_type
+                            && current.id == item.id
                     }) {
                         self.details = Some(item.clone());
                     }
                     if self.selected_catalog.as_ref().is_some_and(|current| {
-                        current.provider_id == item.provider_id && current.id == item.id
+                        current.provider_id == item.provider_id
+                            && current.content_type == item.content_type
+                            && current.id == item.id
                     }) {
                         self.selected_catalog = Some(item);
+                    }
+                }
+                Event::DetailPositions(provider, kind, id, result) => {
+                    if self
+                        .details
+                        .as_ref()
+                        .or(self.selected_catalog.as_ref())
+                        .is_some_and(|item| {
+                            item.provider_id == provider
+                                && item.content_type == kind
+                                && item.id == id
+                        })
+                    {
+                        match result {
+                            Ok(positions) => self.detail_positions = positions,
+                            Err(error) => self.detail_error = Some(error.to_string()),
+                        }
+                    }
+                }
+                Event::DetailStatus(provider, kind, id, loading, error) => {
+                    if self
+                        .details
+                        .as_ref()
+                        .or(self.selected_catalog.as_ref())
+                        .is_some_and(|item| {
+                            item.provider_id == provider
+                                && item.content_type == kind
+                                && item.id == id
+                        })
+                    {
+                        self.detail_loading = loading;
+                        self.detail_error = error;
                     }
                 }
                 Event::Epg(programs) => self.guide = programs,
@@ -343,6 +453,32 @@ impl VelaApp {
                         Err(error) => self.update_error = Some(error.to_string()),
                     }
                 }
+                Event::RecentLiveChannels(generation, provider, current, result) => {
+                    if generation == self.worker.generation()
+                        && self.playing.as_ref().is_some_and(|target| {
+                            target.item.content_type == "live"
+                                && target.item.provider_id == provider
+                                && target.item.id == current
+                        })
+                    {
+                        self.recent_live_loading = false;
+                        match result {
+                            Ok(channels) => {
+                                self.recent_live_channels = channels;
+                                self.recent_live_error = None;
+                            }
+                            Err(error) => {
+                                self.recent_live_channels.clear();
+                                self.recent_live_error = Some(error.to_string());
+                            }
+                        }
+                    }
+                }
+                Event::PlaybackPositions(generation, positions) => {
+                    if generation == self.worker.generation() {
+                        self.playback_positions = positions;
+                    }
+                }
                 Event::PlaybackQueue(generation, episodes) => {
                     if generation == self.worker.generation() {
                         self.playback_episodes = episodes;
@@ -353,6 +489,7 @@ impl VelaApp {
                         continue;
                     }
                     let mut target = *target;
+                    self.restore_space_hold();
                     self.persist_progress();
                     let url = target.item.stream_url.clone().or_else(|| {
                         let provider = self
@@ -385,7 +522,9 @@ impl VelaApp {
                                     self.selected_track.clear();
                                     self.ended_handled = false;
                                     self.controls_last_activity = Instant::now();
+                                    self.controls_hidden = false;
                                     self.seek_position = None;
+                                    self.watch_recent_live();
                                 }
                                 Err(error) => self.error = Some(error.to_string()),
                             }
@@ -452,6 +591,14 @@ impl VelaApp {
     }
     fn open_detail(&mut self, item: CatalogItem) {
         self.episodes.clear();
+        self.detail_positions.clear();
+        self.detail_error = None;
+        self.detail_loading = false;
+        self.worker.send(Command::DetailPositions(
+            item.provider_id.clone(),
+            item.content_type.clone(),
+            item.id.clone(),
+        ));
         if item.content_type == "series"
             && let Some(provider) = self.providers.iter().find(|p| p.id == item.provider_id)
         {
@@ -469,6 +616,12 @@ impl VelaApp {
                 .send(Command::Movie(provider.clone(), item.clone()));
         }
         self.details = Some(item);
+    }
+    fn close_detail(&mut self) {
+        self.details = None;
+        if let Some(item) = self.selected_catalog.clone() {
+            self.select_catalog(item);
+        }
     }
     fn track_preferences_key(&self) -> Option<String> {
         let target = self.playing.as_ref()?;
@@ -592,30 +745,29 @@ impl VelaApp {
         self.worker.send(Command::Progress(progress));
     }
     fn close_player(&mut self, ctx: &egui::Context) {
+        self.restore_space_hold();
         self.worker.send(Command::CancelPlayback);
         self.persist_progress();
+        if let Some(item) = &self.details {
+            self.worker.send(Command::DetailPositions(
+                item.provider_id.clone(),
+                item.content_type.clone(),
+                item.id.clone(),
+            ));
+        }
         if let Some(player) = &self.player {
             let _ = player.stop();
         }
         self.playing = None;
+        self.recent_live_channels.clear();
+        self.recent_live_loading = false;
+        self.recent_live_expanded = true;
+        self.playback_positions.clear();
+        self.rail_scrolled_to = None;
+        self.controls_hidden = false;
         self.fullscreen = false;
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         self.reload();
-    }
-
-    fn resume_history(&mut self, progress: &PlaybackProgress) {
-        // Querying the migrated catalog resolves current URLs instead of storing URLs in history.
-        let item = self
-            .page
-            .items
-            .iter()
-            .find(|i| i.provider_id == progress.provider_id && i.id == progress.item_id)
-            .cloned();
-        if let Some(item) = item {
-            self.prepare(item);
-        } else {
-            self.worker.send(Command::ResumeHistory(progress.clone()));
-        }
     }
 }
 
@@ -650,7 +802,13 @@ impl eframe::App for VelaApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(BG).inner_margin(0.0))
             .show(ctx, |ui| {
-                if self.section == Section::Settings {
+                if !self.initialized {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(60.0);
+                        ui.spinner();
+                        ui.label("Loading library…");
+                    });
+                } else if self.section == Section::Settings {
                     self.settings_ui(ui);
                 } else if self.section == Section::Guide {
                     self.guide_ui(ui);
@@ -689,6 +847,25 @@ impl eframe::App for VelaApp {
                 self.confirm_clear_history = false;
             }
         }
+        if let Some(provider) = self.confirm_clear_provider_history.clone() {
+            let mut keep = true;
+            let name = self
+                .providers
+                .iter()
+                .find(|entry| entry.id == provider)
+                .map(|entry| entry.name.as_str())
+                .unwrap_or("this provider");
+            egui::Window::new("Clear this provider's recent history?").collapsible(false).open(&mut keep).show(ctx, |ui| {
+                ui.label(format!("Clear watch history and resume positions for {name}? Other providers and favorites are kept."));
+                if ui.button("Clear recent").clicked() {
+                    self.worker.send(Command::ClearProviderHistory(provider));
+                    self.confirm_clear_provider_history = None;
+                }
+            });
+            if !keep {
+                self.confirm_clear_provider_history = None;
+            }
+        }
         if self.confirm_clear_cache {
             let mut keep = true;
             egui::Window::new("Clear provider catalog cache?").collapsible(false).open(&mut keep).show(ctx,|ui|{ui.label("This clears downloaded catalogs and guide data. Providers, favorites and watch progress are kept.");if ui.button("Clear catalog cache").clicked(){self.worker.send(Command::ClearCache);self.confirm_clear_cache=false;}});
@@ -710,6 +887,7 @@ impl eframe::App for VelaApp {
         }
     }
     fn on_exit(&mut self, _gl: Option<&glow::Context>) {
+        self.restore_space_hold();
         self.persist_progress();
         self.worker.send(Command::Volume(self.volume));
         if let Some(player) = &mut self.player {

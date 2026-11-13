@@ -619,3 +619,81 @@ fn m3u_refresh_removes_missing_episodes_and_seasons() -> Result<()> {
     assert_eq!(remaining[0].season_number, 1);
     Ok(())
 }
+
+#[test]
+fn detail_positions_restore_all_scoped_episode_progress_beyond_recent_history() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("detail.sqlite");
+    let store = Store::open(&path)?;
+    for id in ["a", "b"] {
+        store.upsert_provider(&provider(id))?;
+    }
+    for (provider_id, series, season, position) in [
+        ("a", "show", "1", 11),
+        ("a", "show", "2", 22),
+        ("a", "other", "1", 33),
+        ("b", "show", "1", 44),
+    ] {
+        store.save_progress(&PlaybackProgress {
+            provider_id: provider_id.into(),
+            item_id: "shared".into(),
+            item_type: "episode".into(),
+            series_id: Some(series.into()),
+            season_id: Some(season.into()),
+            title: "Pilot".into(),
+            position_seconds: position,
+            last_watched_at: 1700000000000 + position,
+            ..Default::default()
+        })?;
+    }
+    for index in 0..230 {
+        store.save_progress(&PlaybackProgress {
+            provider_id: "a".into(),
+            item_id: format!("movie-{index}"),
+            item_type: "movie".into(),
+            title: "Newer history".into(),
+            position_seconds: 5,
+            last_watched_at: 1800000000000 + index,
+            ..Default::default()
+        })?;
+    }
+    assert!(
+        store
+            .recent_history(200)?
+            .iter()
+            .all(|p| p.item_type == "movie")
+    );
+    // Position rows are authoritative even when history is absent or older.
+    let raw = Connection::open(&path)?;
+    raw.execute(
+        "DELETE FROM watch_history WHERE provider_id='a' AND item_type='episode'",
+        [],
+    )?;
+    raw.execute("UPDATE playback_positions SET position_seconds=91,completion_percentage=.91,completed=0 WHERE provider_id='a' AND series_id='show' AND season_id='2'",[])?;
+    let positions = store.detail_positions("a", "series", "show")?;
+    assert_eq!(positions.len(), 2);
+    assert!(
+        positions
+            .iter()
+            .all(|p| p.provider_id == "a" && p.series_id.as_deref() == Some("show"))
+    );
+    assert!(
+        positions
+            .iter()
+            .any(|p| p.season_id.as_deref() == Some("1") && p.position_seconds == 11)
+    );
+    assert!(positions.iter().any(|p| p.season_id.as_deref() == Some("2")
+        && p.position_seconds == 91
+        && p.completion_percentage == 0.91));
+    assert_eq!(store.detail_positions("a", "movie", "movie-100")?.len(), 1);
+    assert!(store.detail_positions("a", "movie", "absent")?.is_empty());
+    drop(raw);
+    drop(store);
+    assert_eq!(
+        Store::open(&path)?
+            .detail_positions("a", "series", "show")?
+            .len(),
+        2
+    );
+    Ok(())
+}

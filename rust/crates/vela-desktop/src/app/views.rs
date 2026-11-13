@@ -290,7 +290,6 @@ impl VelaApp {
                                 ))
                         {
                             self.navigate(section);
-                            self.selected_catalog = None;
                         }
                         ui.add_space(4.0);
                         if section == Section::Recent {
@@ -737,7 +736,7 @@ impl VelaApp {
         let ordered = ordered_categories(&self.categories, &sort, favorites_only, &search);
         let reorder_disabled = !search.is_empty() || sort != "my_order";
         egui::ScrollArea::vertical()
-            .id_salt("category-list")
+            .id_salt(("category-list", self.section.label()))
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 if ordered.is_empty() {
@@ -997,7 +996,7 @@ impl VelaApp {
         );
         response
     }
-    fn select_catalog(&mut self, item: CatalogItem) {
+    pub(super) fn select_catalog(&mut self, item: CatalogItem) {
         self.open_detail(item.clone());
         self.details = None;
         self.selected_catalog = Some(item);
@@ -1318,7 +1317,14 @@ impl VelaApp {
                     ui.add_space(18.0);
                     ui.label(title("Episodes", 16.0));
                     ui.add_space(8.0);
-                    let episodes = self.episodes.clone();
+                    let episodes: Vec<_> = self
+                        .episodes
+                        .iter()
+                        .filter(|episode| {
+                            episode.provider_id == item.provider_id && episode.series_id == item.id
+                        })
+                        .cloned()
+                        .collect();
                     if episodes.is_empty() {
                         ui.label(RichText::new("Episode details will appear here.").color(MUTED));
                     }
@@ -1625,7 +1631,7 @@ impl VelaApp {
             return;
         }
         egui::ScrollArea::vertical()
-            .id_salt("global-search-results")
+            .id_salt(("global-search-results", self.section.label()))
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 egui::Frame::new()
@@ -2401,7 +2407,12 @@ impl VelaApp {
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             let adding = self.settings_adding_provider || self.providers.is_empty();
-                            if self.provider_form.is_none() {
+                            if self.provider_form.is_none()
+                                || (!adding
+                                    && self.provider_form.as_ref().is_some_and(|form| {
+                                        Some(&form.id) != self.settings_selected_provider.as_ref()
+                                    }))
+                            {
                                 self.provider_form = if adding {
                                     Some(new_provider())
                                 } else {
@@ -2598,6 +2609,7 @@ impl VelaApp {
         };
         let mut save = false;
         let mut refresh = false;
+        let mut save_and_refresh = false;
         let width = ui
             .available_width()
             .min(if embedded { 520.0 } else { 640.0 });
@@ -2725,9 +2737,12 @@ impl VelaApp {
                                 (15, "15 minutes"),
                                 (30, "30 minutes"),
                                 (60, "1 hour"),
+                                (180, "3 hours"),
                                 (360, "6 hours"),
                                 (720, "12 hours"),
                                 (1440, "24 hours"),
+                                (2880, "2 days"),
+                                (4320, "3 days"),
                                 (10080, "7 days"),
                             ] {
                                 ui.selectable_value(&mut interval, minutes, label);
@@ -2754,7 +2769,9 @@ impl VelaApp {
                                 .password
                                 .as_deref()
                                 .is_some_and(|s| !s.trim().is_empty())));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                // Match the existing provider action wrap so the additional
+                // actions remain usable in a narrow settings pane.
+                ui.horizontal_wrapped(|ui| {
                     if ui
                         .add_enabled(
                             valid && !self.importing,
@@ -2775,8 +2792,27 @@ impl VelaApp {
                         save = true;
                     }
                     if !adding {
+                        if ui
+                            .add_enabled_ui(valid && !self.importing, |ui| {
+                                action(ui, "refreshCw", "Save and refresh", false)
+                            })
+                            .inner
+                            .clicked()
+                        {
+                            save = true;
+                            save_and_refresh = true;
+                        }
                         if action(ui, "refreshCw", "Refresh", false).clicked() {
                             refresh = true;
+                        }
+                        if ui
+                            .add_enabled_ui(!self.importing, |ui| {
+                                action(ui, "history", "Clear recent", false)
+                            })
+                            .inner
+                            .clicked()
+                        {
+                            self.confirm_clear_provider_history = Some(form.id.clone());
                         }
                         if icon_button(ui, "trash2", "Remove provider").clicked() {
                             self.delete_provider = Some(form.clone());
@@ -2785,9 +2821,8 @@ impl VelaApp {
                 });
             });
         if save {
-            self.worker.send(Command::SaveProvider(form.clone()));
+            persist_provider_changes(&self.worker, &form, adding || save_and_refresh);
             if adding {
-                self.worker.send(Command::Refresh(form.clone()));
                 self.settings_selected_provider = Some(form.id.clone());
                 self.settings_adding_provider = false;
             }
@@ -3046,6 +3081,15 @@ impl VelaApp {
         let Some(item) = self.details.clone() else {
             return;
         };
+        let season_key = egui::Id::new(("detail-season", &item.provider_id, &item.id));
+        if ctx.input(|input| input.key_pressed(egui::Key::Escape))
+            && !ctx.wants_keyboard_input()
+            && !egui::Popup::is_any_open(ctx)
+        {
+            self.close_detail();
+            ctx.data_mut(|data| data.remove::<i64>(season_key));
+            return;
+        }
         let screen = ctx.content_rect();
         egui::Area::new(egui::Id::new("content-detail-screen"))
             .order(egui::Order::Foreground)
@@ -3053,44 +3097,45 @@ impl VelaApp {
             .show(ctx, |ui| {
                 egui::Frame::new()
                     .fill(BG)
-                    .inner_margin(24.0)
+                    .inner_margin(0.0)
                     .show(ui, |ui| {
-                        ui.set_min_size(screen.size() - vec2(48.0, 48.0));
-                        if action(ui, "arrowLeft", "Back", false).clicked() {
-                            self.details = None;
-                        }
-                        ui.add_space(24.0);
-                        ui.horizontal_top(|ui| {
-                            let (rect, _) =
-                                ui.allocate_exact_size(vec2(260.0, 360.0), Sense::hover());
-                            self.paint_artwork(ui, &item, rect);
-                            ui.add_space(24.0);
-                            ui.vertical(|ui| {
-                                ui.set_width((screen.width() - 380.0).max(300.0));
-                                ui.label(title(&item.title, 32.0));
-                                ui.add_space(12.0);
-                                ui.label(
-                                    RichText::new(item.content_type.to_uppercase()).color(ACCENT),
-                                );
-                                ui.add_space(20.0);
-                                ui.label(
-                                    RichText::new(theme::display_text(
-                                        item.description
-                                            .as_deref()
-                                            .unwrap_or("No description available."),
-                                    ))
-                                    .size(16.0)
-                                    .color(MUTED),
-                                );
-                                ui.add_space(24.0);
+                        ui.set_min_size(screen.size());
+                        ui.set_max_size(screen.size());
+                        egui::Frame::new()
+                            .inner_margin(egui::Margin {
+                                left: 26,
+                                right: 26,
+                                top: 20,
+                                bottom: 10,
+                            })
+                            .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    if item.content_type != "series"
-                                        && action(ui, "play", "Play", true).clicked()
-                                    {
-                                        self.prepare(item.clone());
-                                        self.details = None;
+                                    if icon_button(ui, "arrowLeft", "Back").clicked() {
+                                        self.close_detail();
+                                        ctx.data_mut(|data| data.remove::<i64>(season_key));
                                     }
-                                    if action(
+                                    ui.add_space(2.0);
+                                    ui.allocate_ui_with_layout(
+                                        vec2((ui.available_width() - 56.0).max(180.0), 48.0),
+                                        Layout::top_down(Align::LEFT),
+                                        |ui| {
+                                            ui.spacing_mut().item_spacing.y = 2.0;
+                                            ui.label(
+                                                RichText::new(detail_type_label(&item))
+                                                    .font(theme::black(11.0))
+                                                    .color(ACCENT),
+                                            );
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(theme::display_text(&item.title))
+                                                        .font(theme::black(22.0))
+                                                        .color(TEXT),
+                                                )
+                                                .truncate(),
+                                            );
+                                        },
+                                    );
+                                    let favorite_response = icon_button(
                                         ui,
                                         "star",
                                         if item.is_favorite {
@@ -3098,49 +3143,950 @@ impl VelaApp {
                                         } else {
                                             "Add favorite"
                                         },
-                                        false,
-                                    )
-                                    .clicked()
-                                    {
+                                    );
+                                    if item.is_favorite {
+                                        ui.painter().text(
+                                            favorite_response.rect.center(),
+                                            Align2::CENTER_CENTER,
+                                            glyph("star"),
+                                            FontId::new(
+                                                18.0,
+                                                egui::FontFamily::Name("Vela Lucide".into()),
+                                            ),
+                                            ACCENT,
+                                        );
+                                    }
+                                    if favorite_response.clicked() {
                                         self.worker.send(Command::Favorite(item.clone()));
+                                        if let Some(current) = &mut self.details {
+                                            current.is_favorite = !current.is_favorite;
+                                        }
+                                        if let Some(current) = &mut self.selected_catalog
+                                            && current.provider_id == item.provider_id
+                                            && current.content_type == item.content_type
+                                            && current.id == item.id
+                                        {
+                                            current.is_favorite = !current.is_favorite;
+                                        }
                                     }
                                 });
-                                if item.content_type == "series" {
-                                    ui.add_space(24.0);
-                                    ui.label(title("Episodes", 22.0));
-                                    ui.add_space(12.0);
-                                    let episodes = self.episodes.clone();
-                                    egui::ScrollArea::vertical()
-                                        .id_salt("detail-episodes")
-                                        .max_height((screen.height() - 300.0).max(150.0))
-                                        .show(ui, |ui| {
-                                            for episode in &episodes {
-                                                if ui
-                                                    .add_sized(
-                                                        [ui.available_width(), 44.0],
-                                                        egui::Button::new(theme::display_text(
-                                                            &format!(
-                                                                "S{:02} E{:02}  {}",
-                                                                episode.season_number,
-                                                                episode.episode_number,
-                                                                episode.title
-                                                            ),
-                                                        )),
-                                                    )
-                                                    .clicked()
-                                                {
-                                                    self.worker.send(Command::Prepare(
-                                                        PlaybackTarget::episode(episode),
-                                                    ));
-                                                    self.details = None;
-                                                }
-                                            }
-                                        });
-                                }
                             });
-                        });
+                        let wide = screen.width() >= 980.0;
+                        let padding = if wide {
+                            egui::Margin {
+                                left: 40,
+                                right: 42,
+                                top: 18,
+                                bottom: 42,
+                            }
+                        } else {
+                            egui::Margin {
+                                left: 28,
+                                right: 28,
+                                top: 10,
+                                bottom: 34,
+                            }
+                        };
+                        egui::ScrollArea::vertical()
+                            .id_salt(("detail-page", &item.provider_id, &item.id))
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                egui::Frame::new().inner_margin(padding).show(ui, |ui| {
+                                    if wide {
+                                        let width = ui.available_width();
+                                        ui.horizontal_top(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 34.0;
+                                            ui.allocate_ui_with_layout(
+                                                vec2(320.0, 1.0),
+                                                Layout::top_down(Align::LEFT),
+                                                |ui| self.detail_poster(ui, &item, season_key),
+                                            );
+                                            ui.allocate_ui_with_layout(
+                                                vec2((width - 354.0).max(280.0), 1.0),
+                                                Layout::top_down(Align::LEFT),
+                                                |ui| self.detail_metadata(ui, &item, season_key),
+                                            );
+                                        });
+                                    } else {
+                                        self.detail_poster(ui, &item, season_key);
+                                        ui.add_space(22.0);
+                                        self.detail_metadata(ui, &item, season_key);
+                                    }
+                                });
+                            });
                     });
             });
+    }
+    fn detail_poster(&mut self, ui: &mut Ui, item: &CatalogItem, _season_key: egui::Id) {
+        let scoped_episodes = self
+            .episodes
+            .iter()
+            .filter(|episode| {
+                episode.provider_id == item.provider_id && episode.series_id == item.id
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let series_action = detail_series_action(&scoped_episodes, &self.detail_positions);
+        let movie_resume = self
+            .detail_positions
+            .iter()
+            .filter(|p| {
+                p.provider_id == item.provider_id
+                    && p.item_type == item.content_type
+                    && p.item_id == item.id
+                    && !p.completed
+                    && p.position_seconds > 0
+            })
+            .max_by_key(|p| p.last_watched_at)
+            .cloned();
+        let playable = if item.content_type == "series" {
+            scoped_episodes.iter().any(detail_episode_playable)
+        } else {
+            item.stream_url
+                .as_deref()
+                .is_some_and(|s| !s.trim().is_empty())
+                || item
+                    .stream_json
+                    .as_deref()
+                    .is_some_and(|s| !s.trim().is_empty())
+        };
+        let label = if !playable {
+            "Unavailable".to_owned()
+        } else if item.content_type == "series" {
+            series_action
+                .as_ref()
+                .map(DetailSeriesAction::primary_label)
+                .unwrap_or_else(|| "Play First Episode".into())
+        } else if let Some(progress) = &movie_resume {
+            if progress.position_seconds < 60 {
+                "Resume".into()
+            } else {
+                format!("Resume {}", detail_duration(progress.position_seconds))
+            }
+        } else {
+            "Play".into()
+        };
+        let width = ui.available_width();
+        let height = if item.content_type == "movie" {
+            width / 0.68
+        } else {
+            width
+        };
+        let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+        self.detail_poster_image(ui, item, rect);
+        ui.add_space(16.0);
+        if ui
+            .add_enabled(
+                playable,
+                egui::Button::new(icon_label("play", &label, BG))
+                    .fill(ACCENT)
+                    .min_size(vec2(width, 40.0)),
+            )
+            .clicked()
+        {
+            self.detail_start(item, series_action.as_ref(), false);
+        }
+        if series_action.is_some() || movie_resume.is_some() {
+            ui.add_space(10.0);
+            if ui
+                .add(
+                    egui::Button::new(icon_label("rotateCcw", "Restart", TEXT))
+                        .fill(Color32::TRANSPARENT)
+                        .stroke(Stroke::new(1.0_f32, OUTLINE))
+                        .min_size(vec2(width, 40.0)),
+                )
+                .clicked()
+            {
+                self.detail_start(item, series_action.as_ref(), true);
+            }
+        }
+    }
+    fn detail_start(
+        &self,
+        item: &CatalogItem,
+        series_action: Option<&DetailSeriesAction>,
+        restart: bool,
+    ) {
+        let target = if item.content_type == "series" {
+            series_action
+                .map(|action| PlaybackTarget::episode(&action.episode))
+                .or_else(|| {
+                    self.episodes
+                        .iter()
+                        .filter(|episode| {
+                            episode.provider_id == item.provider_id
+                                && episode.series_id == item.id
+                                && detail_episode_playable(episode)
+                        })
+                        .min_by_key(|episode| {
+                            (
+                                episode.season_number,
+                                episode.episode_number,
+                                episode.id.clone(),
+                            )
+                        })
+                        .map(PlaybackTarget::episode)
+                })
+        } else {
+            Some(PlaybackTarget::catalog(item.clone()))
+        };
+        if let Some(target) = target {
+            if restart
+                || series_action.is_some_and(|action| action.kind == DetailSeriesActionKind::Replay)
+            {
+                self.worker.send(Command::Restart(target));
+            } else {
+                self.worker.send(Command::Prepare(target));
+            }
+        }
+    }
+    fn detail_poster_image(&mut self, ui: &Ui, item: &CatalogItem, rect: Rect) {
+        ui.painter().rect_filled(rect, 8.0, PANEL);
+        if let Some(texture) = item
+            .artwork_url
+            .as_deref()
+            .and_then(|url| self.artwork.texture(ui.ctx(), url))
+        {
+            let image = texture.size_vec2();
+            let aspect = image.x / image.y;
+            let target = rect.width() / rect.height();
+            if item.content_type == "movie" {
+                let uv = if aspect > target {
+                    let width = target / aspect;
+                    Rect::from_min_max(
+                        pos2((1.0 - width) / 2.0, 0.0),
+                        pos2((1.0 + width) / 2.0, 1.0),
+                    )
+                } else {
+                    let height = aspect / target;
+                    Rect::from_min_max(
+                        pos2(0.0, (1.0 - height) / 2.0),
+                        pos2(1.0, (1.0 + height) / 2.0),
+                    )
+                };
+                ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
+            } else {
+                let scale = (rect.width() / image.x).min(rect.height() / image.y);
+                let image_rect = Rect::from_center_size(rect.center(), image * scale);
+                ui.painter().image(
+                    texture.id(),
+                    image_rect,
+                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            }
+        } else {
+            ui.painter().text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                glyph(if item.content_type == "series" {
+                    "library"
+                } else {
+                    "film"
+                }),
+                FontId::new(54.0, egui::FontFamily::Name("Vela Lucide".into())),
+                Color32::from_rgb(113, 109, 102),
+            );
+        }
+    }
+    fn detail_metadata(&mut self, ui: &mut Ui, item: &CatalogItem, season_key: egui::Id) {
+        let scoped_episodes = self
+            .episodes
+            .iter()
+            .filter(|episode| {
+                episode.provider_id == item.provider_id && episode.series_id == item.id
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let series_action = detail_series_action(&scoped_episodes, &self.detail_positions);
+        let movie_resume = self
+            .detail_positions
+            .iter()
+            .filter(|p| {
+                p.item_type == item.content_type
+                    && p.provider_id == item.provider_id
+                    && p.item_id == item.id
+                    && !p.completed
+                    && p.position_seconds > 0
+            })
+            .max_by_key(|p| p.last_watched_at)
+            .cloned();
+        ui.label(
+            RichText::new(theme::display_text(&item.title))
+                .font(theme::black(36.0))
+                .color(TEXT),
+        );
+        ui.add_space(14.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+            if let Some(year) = item.year {
+                detail_chip(ui, &year.to_string());
+            }
+            if let Some(rating) = item
+                .rating
+                .as_deref()
+                .filter(|rating| !rating.trim().is_empty())
+            {
+                detail_chip(ui, &format!("Rating {rating}"));
+            }
+            if let Some(duration) = item.duration_seconds {
+                detail_chip(ui, &detail_duration(duration));
+            }
+            if item.is_favorite {
+                detail_chip(ui, "Favorite");
+            }
+            if let Some(action) = &series_action {
+                detail_chip(ui, &action.summary_label());
+            } else if movie_resume.is_some() {
+                detail_chip(ui, "Resume available");
+            }
+        });
+        ui.add_space(24.0);
+        ui.label(
+            RichText::new("Overview")
+                .font(theme::black(11.0))
+                .color(ACCENT),
+        );
+        ui.add_space(10.0);
+        ui.label(
+            RichText::new(theme::display_text(
+                item.description
+                    .as_deref()
+                    .filter(|text| !text.trim().is_empty())
+                    .unwrap_or(if self.detail_loading {
+                        "Loading description from the provider."
+                    } else {
+                        "No description available."
+                    }),
+            ))
+            .size(16.0)
+            .color(TEXT),
+        );
+        if series_action.is_some() || movie_resume.is_some() {
+            ui.add_space(22.0);
+            ui.label(
+                RichText::new("Progress")
+                    .font(theme::black(11.0))
+                    .color(ACCENT),
+            );
+            ui.add_space(8.0);
+            if let Some(action) = &series_action {
+                ui.label(RichText::new(action.summary_label()).color(MUTED));
+            } else if let Some(progress) = &movie_resume {
+                let fraction = detail_progress_fraction(progress);
+                ui.label(
+                    RichText::new(if fraction > 0.0 {
+                        format!(
+                            "{}% watched",
+                            (fraction * 100.0).round().clamp(1.0, 100.0) as i64
+                        )
+                    } else {
+                        format!("Resume from {}", detail_duration(progress.position_seconds))
+                    })
+                    .color(MUTED),
+                );
+            }
+            let position = series_action
+                .as_ref()
+                .and_then(|action| action.position.as_ref())
+                .or(movie_resume.as_ref());
+            if let Some(progress) = position
+                && detail_progress_fraction(progress) > 0.0
+            {
+                ui.add_space(10.0);
+                detail_progress_bar(ui, detail_progress_fraction(progress), 7.0);
+            }
+        }
+        if item.content_type == "series" {
+            ui.add_space(30.0);
+            self.detail_episode_section(ui, item, season_key, series_action.as_ref());
+        }
+        if item.content_type != "series"
+            && let Some(error) = &self.detail_error
+        {
+            ui.add_space(18.0);
+            detail_notice(ui, "circleAlert", "Details unavailable", error);
+        }
+    }
+    fn detail_episode_section(
+        &mut self,
+        ui: &mut Ui,
+        item: &CatalogItem,
+        season_key: egui::Id,
+        series_action: Option<&DetailSeriesAction>,
+    ) {
+        let mut episodes = self
+            .episodes
+            .iter()
+            .filter(|episode| {
+                episode.provider_id == item.provider_id
+                    && episode.series_id == item.id
+                    && detail_episode_playable(episode)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        episodes.sort_by_key(|episode| {
+            (
+                episode.season_number,
+                episode.episode_number,
+                episode.id.clone(),
+            )
+        });
+        if episodes.is_empty() {
+            if self.detail_loading {
+                detail_notice(
+                    ui,
+                    "listVideo",
+                    "Loading episodes",
+                    "Fetching seasons and episodes for this series.",
+                );
+            } else if let Some(error) = &self.detail_error {
+                detail_notice(ui, "listX", "Episodes unavailable", error);
+            } else {
+                detail_notice(
+                    ui,
+                    "listVideo",
+                    "Episodes unavailable",
+                    "The provider has not returned playable episode details yet.",
+                );
+            }
+            return;
+        }
+        let mut seasons = episodes
+            .iter()
+            .map(|episode| episode.season_number)
+            .collect::<Vec<_>>();
+        seasons.sort();
+        seasons.dedup();
+        let saved = ui.ctx().data_mut(|data| data.get_temp::<i64>(season_key));
+        let mut selected = detail_selected_season(
+            &seasons,
+            saved,
+            series_action.map(|action| action.episode.season_number),
+        );
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("Episodes")
+                    .font(theme::black(22.0))
+                    .color(TEXT),
+            );
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                egui::ComboBox::from_id_salt(("detail-season-menu", &item.provider_id, &item.id))
+                    .selected_text(format!("Season {selected}"))
+                    .show_ui(ui, |ui| {
+                        for season in &seasons {
+                            ui.selectable_value(&mut selected, *season, format!("Season {season}"));
+                        }
+                    });
+            });
+        });
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(season_key, selected));
+        ui.add_space(14.0);
+        if self.detail_loading {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(RichText::new("Refreshing episode details…").color(MUTED));
+            });
+        }
+        if let Some(error) = &self.detail_error {
+            detail_notice(ui, "circleAlert", "Episode refresh unavailable", error);
+            ui.add_space(10.0);
+        }
+        let positions = self.detail_positions.clone();
+        for episode in episodes
+            .iter()
+            .filter(|episode| episode.season_number == selected)
+        {
+            let position = positions
+                .iter()
+                .filter(|position| detail_position_matches(episode, position))
+                .max_by_key(|position| position.last_watched_at);
+            let current =
+                series_action.filter(|action| detail_same_episode(&action.episode, episode));
+            if self
+                .detail_episode_tile(ui, episode, position, current.map(|action| action.kind))
+                .clicked()
+            {
+                self.worker
+                    .send(Command::Prepare(PlaybackTarget::episode(episode)));
+            }
+            ui.add_space(10.0);
+        }
+    }
+    fn detail_episode_tile(
+        &self,
+        ui: &mut Ui,
+        episode: &Episode,
+        position: Option<&PlaybackProgress>,
+        action: Option<DetailSeriesActionKind>,
+    ) -> egui::Response {
+        let mut response = egui::Frame::new()
+            .fill(PANEL)
+            .stroke(Stroke::new(
+                1.0_f32,
+                if action.is_some() { ACCENT } else { BORDER },
+            ))
+            .corner_radius(8)
+            .inner_margin(14.0)
+            .show(ui, |ui| {
+                ui.horizontal_top(|ui| {
+                    ui.allocate_ui_with_layout(
+                        vec2(44.0, 24.0),
+                        Layout::top_down(Align::LEFT),
+                        |ui| {
+                            ui.label(
+                                RichText::new(format!("{:02}", episode.episode_number))
+                                    .font(theme::black(16.0))
+                                    .color(ACCENT),
+                            );
+                        },
+                    );
+                    ui.allocate_ui_with_layout(
+                        vec2((ui.available_width() - 42.0).max(140.0), 1.0),
+                        Layout::top_down(Align::LEFT),
+                        |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(theme::display_text(&episode.title))
+                                        .font(theme::black(16.0))
+                                        .color(TEXT),
+                                )
+                                .truncate(),
+                            );
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new(format!(
+                                    "S{} E{}{}",
+                                    episode.season_number,
+                                    episode.episode_number,
+                                    episode
+                                        .duration_seconds
+                                        .map(|duration| format!(" / {}", detail_duration(duration)))
+                                        .unwrap_or_default()
+                                ))
+                                .size(12.0)
+                                .color(MUTED),
+                            );
+                            if let Some(action) = action {
+                                ui.add_space(8.0);
+                                ui.label(
+                                    RichText::new(match action {
+                                        DetailSeriesActionKind::Resume => "Current episode",
+                                        DetailSeriesActionKind::Continue => "Next up",
+                                        DetailSeriesActionKind::Replay => "Replay episode",
+                                    })
+                                    .font(theme::black(11.0))
+                                    .color(ACCENT),
+                                );
+                            }
+                            if let Some(position) = position {
+                                ui.add_space(8.0);
+                                ui.label(
+                                    RichText::new(if position.completed {
+                                        "Watched".to_owned()
+                                    } else {
+                                        format!(
+                                            "Resume {}",
+                                            detail_duration(position.position_seconds)
+                                        )
+                                    })
+                                    .font(theme::black(11.0))
+                                    .color(ACCENT),
+                                );
+                                let fraction = detail_progress_fraction(position);
+                                if fraction > 0.0 {
+                                    ui.add_space(6.0);
+                                    detail_progress_bar(ui, fraction, 5.0);
+                                }
+                            }
+                            if let Some(description) = episode
+                                .description
+                                .as_deref()
+                                .filter(|text| !text.trim().is_empty())
+                            {
+                                ui.add_space(8.0);
+                                let mut job = egui::text::LayoutJob::simple(
+                                    theme::display_text(description),
+                                    FontId::proportional(14.0),
+                                    MUTED,
+                                    ui.available_width(),
+                                );
+                                job.wrap.max_rows = 3;
+                                ui.label(job);
+                            }
+                        },
+                    );
+                    ui.label(theme::icon("play").size(20.0).color(TEXT));
+                });
+            })
+            .response
+            .interact(Sense::click());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!(
+                    "Play Season {} Episode {}: {}",
+                    episode.season_number, episode.episode_number, episode.title
+                ),
+            )
+        });
+        if response.hovered() || response.has_focus() {
+            ui.painter().rect_stroke(
+                response.rect,
+                8.0,
+                Stroke::new(1.0_f32, ACCENT),
+                egui::StrokeKind::Inside,
+            );
+        }
+        response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        response
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DetailSeriesActionKind {
+    Resume,
+    Continue,
+    Replay,
+}
+#[derive(Clone, Debug)]
+struct DetailSeriesAction {
+    kind: DetailSeriesActionKind,
+    episode: Episode,
+    position: Option<PlaybackProgress>,
+}
+impl DetailSeriesAction {
+    fn primary_label(&self) -> String {
+        format!(
+            "{} S{} E{}",
+            match self.kind {
+                DetailSeriesActionKind::Resume => "Resume",
+                DetailSeriesActionKind::Continue => "Continue",
+                DetailSeriesActionKind::Replay => "Replay",
+            },
+            self.episode.season_number,
+            self.episode.episode_number
+        )
+    }
+    fn summary_label(&self) -> String {
+        let label = format!(
+            "S{} E{}",
+            self.episode.season_number, self.episode.episode_number
+        );
+        match self.kind {
+            DetailSeriesActionKind::Resume => self
+                .position
+                .as_ref()
+                .map(|position| {
+                    format!(
+                        "Resume {label} from {}",
+                        detail_duration(position.position_seconds)
+                    )
+                })
+                .unwrap_or_else(|| format!("Resume {label}")),
+            DetailSeriesActionKind::Continue => format!("Next up {label}"),
+            DetailSeriesActionKind::Replay => format!("Last watched {label}"),
+        }
+    }
+}
+fn detail_type_label(item: &CatalogItem) -> &'static str {
+    match item.content_type.as_str() {
+        "live" => "Live channel",
+        "series" => "Series",
+        _ => "Movie",
+    }
+}
+fn detail_duration(seconds: i64) -> String {
+    let seconds = seconds.max(0);
+    if seconds < 60 {
+        "1m".into()
+    } else if seconds < 3600 {
+        format!("{}m", seconds / 60)
+    } else {
+        format!("{}h {}m", seconds / 3600, (seconds / 60) % 60)
+    }
+}
+fn detail_episode_playable(episode: &Episode) -> bool {
+    episode
+        .stream_url
+        .as_deref()
+        .is_some_and(|text| !text.trim().is_empty())
+        || episode
+            .stream_json
+            .as_deref()
+            .is_some_and(|text| !text.trim().is_empty())
+}
+fn detail_same_episode(a: &Episode, b: &Episode) -> bool {
+    a.provider_id == b.provider_id
+        && a.series_id == b.series_id
+        && a.season_id == b.season_id
+        && a.id == b.id
+}
+fn detail_position_matches(episode: &Episode, position: &PlaybackProgress) -> bool {
+    episode.provider_id == position.provider_id
+        && position.item_type == "episode"
+        && Some(episode.series_id.as_str()) == position.series_id.as_deref()
+        && Some(episode.season_id.as_str()) == position.season_id.as_deref()
+        && episode.id == position.item_id
+}
+fn detail_series_action(
+    episodes: &[Episode],
+    positions: &[PlaybackProgress],
+) -> Option<DetailSeriesAction> {
+    let mut playable = episodes
+        .iter()
+        .filter(|episode| detail_episode_playable(episode))
+        .collect::<Vec<_>>();
+    playable.sort_by_key(|episode| {
+        (
+            episode.season_number,
+            episode.episode_number,
+            episode.id.clone(),
+        )
+    });
+    let index: std::collections::HashMap<_, _> = playable
+        .iter()
+        .enumerate()
+        .map(|(index, episode)| {
+            (
+                (
+                    episode.provider_id.as_str(),
+                    episode.series_id.as_str(),
+                    episode.season_id.as_str(),
+                    episode.id.as_str(),
+                ),
+                index,
+            )
+        })
+        .collect();
+    let position_index = |position: &PlaybackProgress| {
+        if position.item_type != "episode" {
+            return None;
+        }
+        index
+            .get(&(
+                position.provider_id.as_str(),
+                position.series_id.as_deref()?,
+                position.season_id.as_deref()?,
+                position.item_id.as_str(),
+            ))
+            .copied()
+    };
+    let latest_resume = positions
+        .iter()
+        .filter(|position| {
+            !position.completed
+                && position.position_seconds > 0
+                && position_index(position).is_some()
+        })
+        .max_by_key(|position| position.last_watched_at);
+    if let Some(position) = latest_resume {
+        return Some(DetailSeriesAction {
+            kind: DetailSeriesActionKind::Resume,
+            episode: playable[position_index(position)?].clone(),
+            position: Some(position.clone()),
+        });
+    }
+    let latest = positions
+        .iter()
+        .filter(|position| {
+            (position.completed || position.position_seconds > 0)
+                && position_index(position).is_some()
+        })
+        .max_by_key(|position| position.last_watched_at)?;
+    let current = position_index(latest)?;
+    if latest.completed {
+        if let Some(next) = playable.get(current + 1) {
+            return Some(DetailSeriesAction {
+                kind: DetailSeriesActionKind::Continue,
+                episode: (**next).clone(),
+                position: None,
+            });
+        }
+        return Some(DetailSeriesAction {
+            kind: DetailSeriesActionKind::Replay,
+            episode: playable[current].clone(),
+            position: None,
+        });
+    }
+    Some(DetailSeriesAction {
+        kind: DetailSeriesActionKind::Resume,
+        episode: playable[current].clone(),
+        position: Some(latest.clone()),
+    })
+}
+
+fn detail_selected_season(seasons: &[i64], selected: Option<i64>, active: Option<i64>) -> i64 {
+    selected
+        .filter(|season| seasons.contains(season))
+        .or_else(|| active.filter(|season| seasons.contains(season)))
+        .or_else(|| seasons.first().copied())
+        .unwrap_or(1)
+}
+fn detail_progress_fraction(position: &PlaybackProgress) -> f32 {
+    let value = if position.completed {
+        1.0
+    } else if position
+        .duration_seconds
+        .is_some_and(|duration| duration > 0)
+    {
+        position.position_seconds as f64 / position.duration_seconds.unwrap() as f64
+    } else {
+        position.completion_percentage
+    };
+    if value.is_finite() {
+        value.clamp(0.0, 1.0) as f32
+    } else {
+        0.0
+    }
+}
+fn detail_progress_bar(ui: &mut Ui, fraction: f32, height: f32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+    ui.painter().rect_filled(rect, 128u8, BORDER);
+    ui.painter().rect_filled(
+        Rect::from_min_size(
+            rect.min,
+            vec2(rect.width() * fraction.clamp(0.0, 1.0), height),
+        ),
+        128u8,
+        ACCENT,
+    );
+}
+fn detail_chip(ui: &mut Ui, label: &str) {
+    egui::Frame::new()
+        .fill(Color32::from_rgb(26, 29, 32))
+        .stroke(Stroke::new(1.0_f32, OUTLINE))
+        .corner_radius(128)
+        .inner_margin(egui::Margin {
+            left: 10,
+            right: 10,
+            top: 6,
+            bottom: 6,
+        })
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(theme::display_text(label))
+                    .font(theme::bold(11.0))
+                    .color(Color32::from_rgb(215, 208, 198)),
+            );
+        });
+}
+fn detail_notice(ui: &mut Ui, icon: &str, heading: &str, message: &str) {
+    egui::Frame::new()
+        .fill(PANEL)
+        .stroke(Stroke::new(1.0_f32, BORDER))
+        .corner_radius(8)
+        .inner_margin(16.0)
+        .show(ui, |ui| {
+            ui.horizontal_top(|ui| {
+                ui.label(theme::icon(icon).size(24.0).color(ACCENT));
+                ui.vertical(|ui| {
+                    ui.label(title(heading, 14.0));
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(theme::display_text(message)).color(MUTED));
+                });
+            });
+        });
+}
+
+#[cfg(test)]
+mod detail_parity_tests {
+    use super::*;
+
+    fn episode(provider: &str, series: &str, season: i64, number: i64) -> Episode {
+        Episode {
+            provider_id: provider.into(),
+            series_id: series.into(),
+            season_id: season.to_string(),
+            season_number: season,
+            episode_number: number,
+            id: format!("episode-{number}"),
+            title: format!("Episode {number}"),
+            stream_url: Some("https://fixture.invalid/episode.ts".into()),
+            ..Default::default()
+        }
+    }
+    fn position(
+        episode: &Episode,
+        seconds: i64,
+        completed: bool,
+        updated: i64,
+    ) -> PlaybackProgress {
+        PlaybackProgress {
+            provider_id: episode.provider_id.clone(),
+            item_type: "episode".into(),
+            item_id: episode.id.clone(),
+            series_id: Some(episode.series_id.clone()),
+            season_id: Some(episode.season_id.clone()),
+            position_seconds: seconds,
+            duration_seconds: Some(100),
+            completed,
+            last_watched_at: updated,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn detail_resume_matches_full_scope_and_defaults_to_its_season() {
+        let first = episode("a", "show", 1, 1);
+        let second = episode("a", "show", 2, 1);
+        let unrelated = episode("b", "show", 2, 1);
+        let action = detail_series_action(
+            &[first.clone(), second.clone()],
+            &[
+                position(&first, 12, false, 10),
+                position(&second, 71, false, 20),
+                position(&unrelated, 99, false, 100),
+            ],
+        )
+        .unwrap();
+        assert!(detail_same_episode(&action.episode, &second));
+        assert_eq!(action.kind, DetailSeriesActionKind::Resume);
+        assert_eq!(action.primary_label(), "Resume S2 E1");
+        assert_eq!(action.summary_label(), "Resume S2 E1 from 1m");
+        assert_eq!(action.position.unwrap().position_seconds, 71);
+        assert_eq!(detail_selected_season(&[1, 2], None, Some(2)), 2);
+        assert_eq!(detail_selected_season(&[1, 2], Some(1), Some(2)), 1);
+        assert_eq!(detail_selected_season(&[1, 2], Some(99), Some(2)), 2);
+    }
+
+    #[test]
+    fn detail_continue_skips_unplayable_and_replays_last_instead_of_wrapping() {
+        let first = episode("a", "show", 1, 1);
+        let mut unavailable = episode("a", "show", 1, 2);
+        unavailable.stream_url = None;
+        let last = episode("a", "show", 2, 1);
+        let episodes = [last.clone(), unavailable, first.clone()];
+        let next = detail_series_action(&episodes, &[position(&first, 100, true, 10)]).unwrap();
+        assert_eq!(next.kind, DetailSeriesActionKind::Continue);
+        assert!(detail_same_episode(&next.episode, &last));
+        assert_eq!(next.primary_label(), "Continue S2 E1");
+        let replay = detail_series_action(
+            &episodes,
+            &[
+                position(&first, 100, true, 10),
+                position(&last, 100, true, 20),
+            ],
+        )
+        .unwrap();
+        assert_eq!(replay.kind, DetailSeriesActionKind::Replay);
+        assert!(detail_same_episode(&replay.episode, &last));
+        assert_eq!(replay.primary_label(), "Replay S2 E1");
+        assert!(replay.position.is_none());
+        // Legacy detail prioritizes the latest still-resumable episode even
+        // when another episode was marked complete more recently.
+        let resume = detail_series_action(
+            &episodes,
+            &[
+                position(&first, 33, false, 10),
+                position(&last, 100, true, 20),
+            ],
+        )
+        .unwrap();
+        assert_eq!(resume.kind, DetailSeriesActionKind::Resume);
+        assert!(detail_same_episode(&resume.episode, &first));
     }
 }
 
@@ -3157,6 +4103,15 @@ fn recent_identity(progress: &PlaybackProgress) -> String {
         vela_core::store::encode_component(&progress.provider_id),
         progress.item_type
     )
+}
+
+fn persist_provider_changes(worker: &crate::worker::Worker, provider: &Provider, refresh: bool) {
+    // The worker resolves Refresh through the stored provider, so the edited
+    // credentials must reach its ordered queue before the refresh request.
+    worker.send(Command::SaveProvider(provider.clone()));
+    if refresh {
+        worker.send(Command::Refresh(provider.clone()));
+    }
 }
 
 fn provider_field(
@@ -3430,6 +4385,133 @@ mod category_control_tests {
             )),
             ["Alpha"]
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod provider_settings_tests {
+    use super::*;
+    use crate::worker::{Event, Worker};
+    use std::{
+        collections::HashMap,
+        io::{BufRead, BufReader, Write},
+        net::TcpListener,
+        time::Duration,
+    };
+    use vela_core::Store;
+
+    #[test]
+    fn save_and_refresh_uses_edited_credentials_in_the_real_worker() -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let address = listener.local_addr()?;
+        let server = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut credentials = Vec::new();
+            // Account validation plus three category/stream pairs.
+            for _ in 0..7 {
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(
+                                Instant::now() < deadline,
+                                "Expected provider request did not arrive"
+                            );
+                            std::thread::sleep(Duration::from_millis(2));
+                        }
+                        Err(error) => panic!("Synthetic provider failed: {error}"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let target = line.split_whitespace().nth(1).unwrap();
+                let url = url::Url::parse(&format!("http://localhost{target}")).unwrap();
+                let query: HashMap<_, _> = url.query_pairs().into_owned().collect();
+                credentials.push((query["username"].clone(), query["password"].clone()));
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                }
+                let body = match query.get("action").map(String::as_str) {
+                    None => r#"{"user_info":{"auth":1,"status":"Active"}}"#,
+                    Some("get_live_streams") => r#"[{"stream_id":42,"name":"New channel"}]"#,
+                    _ => "[]",
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+            credentials
+        });
+        let temporary = tempfile::tempdir()?;
+        let path = temporary.path().join("catalog.sqlite");
+        let mut provider = Provider {
+            id: "edited-provider".into(),
+            name: "Existing provider".into(),
+            kind: "xtream".into(),
+            source: format!("http://{address}"),
+            username: Some("old-user".into()),
+            password: Some("old-password".into()),
+            auto_refresh_enabled: false,
+            auto_refresh_interval_minutes: 1440,
+            is_enabled: true,
+            ..Default::default()
+        };
+        Store::open(&path)?.upsert_provider(&provider)?;
+        let mut worker = Worker::test_new(egui::Context::default(), path.clone());
+        assert!(matches!(
+            worker.rx.recv_timeout(Duration::from_secs(10))?,
+            Event::Ready(_)
+        ));
+        provider.name = "Edited provider".into();
+        provider.username = Some("edited-user".into());
+        provider.password = Some("edited&password".into());
+        persist_provider_changes(&worker, &provider, true);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match worker
+                .rx
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))?
+            {
+                Event::Message(message) if message.starts_with("Imported ") => break,
+                Event::Error(error) | Event::Fatal(error) => {
+                    panic!("Save and refresh failed: {error}")
+                }
+                _ => {}
+            }
+        }
+        worker.shutdown();
+        let requests = server.join().expect("Synthetic provider must finish");
+        assert_eq!(requests.len(), 7);
+        assert!(
+            requests
+                .iter()
+                .all(|(username, password)| username == "edited-user"
+                    && password == "edited&password")
+        );
+        let store = Store::open(&path)?;
+        let saved = store.provider(&provider.id)?.unwrap();
+        assert_eq!(saved.username, provider.username);
+        assert_eq!(saved.password, provider.password);
+        assert_eq!(saved.name, "Edited provider");
+        let page = store.catalog(&CatalogQuery {
+            provider_id: Some(provider.id),
+            ..Default::default()
+        })?;
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].title, "New channel");
         Ok(())
     }
 }

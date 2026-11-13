@@ -343,7 +343,7 @@ fn invalid_existing_database_reports_fatal_and_remains_untouched() -> Result<()>
 }
 
 #[test]
-fn play_series_resumes_scoped_season_then_advances_and_wraps_without_rewriting_history()
+fn play_series_resumes_scoped_season_then_advances_and_replays_without_rewriting_history()
 -> Result<()> {
     let temporary = tempfile::tempdir()?;
     let path = temporary.path().join("series-worker.sqlite");
@@ -441,6 +441,24 @@ fn play_series_resumes_scoped_season_then_advances_and_wraps_without_rewriting_h
     worker.send(Command::Progress(current));
     worker.send(Command::PlaySeries(show.clone()));
     match until(&worker, |event| matches!(event, Event::Prepared(..))) {
+        Event::Prepared(target, Some(progress)) => {
+            assert_eq!(target.season_id.as_deref(), Some("1"));
+            assert_eq!(progress.position_seconds, 12);
+        }
+        _ => panic!("an older valid resumable position takes priority over completed episodes"),
+    }
+    worker.send(Command::Progress(PlaybackProgress {
+        provider_id: "p".into(),
+        item_id: "shared:episode".into(),
+        item_type: "episode".into(),
+        series_id: Some(show.id.clone()),
+        season_id: Some("1".into()),
+        completed: true,
+        last_watched_at: 1700000000010,
+        ..Default::default()
+    }));
+    worker.send(Command::PlaySeries(show.clone()));
+    match until(&worker, |event| matches!(event, Event::Prepared(..))) {
         Event::Prepared(target, resume) => {
             assert_eq!(target.season_id.as_deref(), Some("2"));
             assert_eq!(target.item.id, "shared:next");
@@ -466,13 +484,16 @@ fn play_series_resumes_scoped_season_then_advances_and_wraps_without_rewriting_h
     worker.send(Command::PlaySeries(show));
     match until(&worker, |event| matches!(event, Event::Prepared(..))) {
         Event::Prepared(target, resume) => {
-            assert_eq!(target.season_id.as_deref(), Some("1"));
-            assert_eq!(target.item.id, "shared:episode");
+            assert_eq!(target.season_id.as_deref(), Some("2"));
+            assert_eq!(target.item.id, "shared:next");
             assert_eq!(
                 target.item.stream_url.as_deref(),
-                Some("https://fixture.invalid/s1e1.ts")
+                Some("https://fixture.invalid/s2e2.ts")
             );
-            assert_eq!(resume.unwrap().position_seconds, 12);
+            assert!(
+                resume.is_none(),
+                "last completed episode must replay without wrapping"
+            );
         }
         _ => unreachable!(),
     }
@@ -492,9 +513,7 @@ fn play_series_resumes_scoped_season_then_advances_and_wraps_without_rewriting_h
     assert!(
         history
             .iter()
-            .any(|p| p.catalog_key == "show%3Ascoped:1:shared%3Aepisode"
-                && !p.completed
-                && p.position_seconds == 12)
+            .any(|p| p.catalog_key == "show%3Ascoped:1:shared%3Aepisode" && p.completed)
     );
     assert!(
         history
@@ -735,6 +754,7 @@ fn stale_provider_results_are_discarded_even_after_source_changes_back() -> Resu
     ));
     worker.send(Command::MovieFetched(
         origin.clone(),
+        "old-movie".into(),
         Err(anyhow::anyhow!("old metadata failure")),
     ));
     worker.send(Command::EpgFetched(origin.clone(), Ok(vec![])));
@@ -963,5 +983,131 @@ fn global_search_round_trip_ignores_then_restores_section_filters_and_recent_sco
     query.search = "/ impossible phrase".into();
     let empty = load(&worker, 705, query).global_search.unwrap();
     assert!(empty.groups.is_empty());
+    Ok(())
+}
+
+#[test]
+fn departing_episode_progress_refreshes_only_the_current_generation_series_rail() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("rail-progress.sqlite");
+    let store = Store::open(&path)?;
+    store.upsert_provider(&provider("p"))?;
+    store.replace_catalog(&imports::m3u::parse("#EXTM3U\n#EXTINF:-1,A S01E01\nhttps://fixture.invalid/a1.mp4\n#EXTINF:-1,A S01E02\nhttps://fixture.invalid/a2.mp4\n#EXTINF:-1,B S01E01\nhttps://fixture.invalid/b1.mp4\n", "p")?)?;
+    let a = store.episodes("p", "p:series:a")?;
+    let b = store.episodes("p", "p:series:b")?;
+    assert_eq!(a.len(), 2);
+    assert_eq!(b.len(), 1);
+    drop(store);
+    let worker = start(&path);
+    for episode in [&a[0], &a[1]] {
+        worker.send(Command::Prepare(PlaybackTarget::episode(episode)));
+        until(&worker, |event| matches!(event, Event::Prepared(..)));
+    }
+    let progress = |episode: &Episode, seconds| PlaybackProgress {
+        provider_id: episode.provider_id.clone(),
+        item_id: episode.id.clone(),
+        item_type: "episode".into(),
+        series_id: Some(episode.series_id.clone()),
+        season_id: Some(episode.season_id.clone()),
+        title: episode.title.clone(),
+        position_seconds: seconds,
+        duration_seconds: Some(60),
+        last_watched_at: 1_700_000_000_000 + seconds,
+        ..Default::default()
+    };
+    // This is the UI's actual order: Prepare(new) completes, then the old
+    // player's final Progress write arrives from Event::Prepared handling.
+    worker.send(Command::Progress(progress(&a[0], 17)));
+    match until(&worker, |event| {
+        matches!(event, Event::PlaybackPositions(..))
+    }) {
+        Event::PlaybackPositions(generation, positions) => {
+            assert_eq!(generation, worker.generation());
+            assert_eq!(positions.len(), 1);
+            assert_eq!(positions[0].item_id, a[0].id);
+            assert_eq!(positions[0].position_seconds, 17);
+        }
+        _ => unreachable!(),
+    }
+    worker.send(Command::Prepare(PlaybackTarget::episode(&b[0])));
+    until(&worker, |event| matches!(event, Event::Prepared(..)));
+    worker.send(Command::Progress(progress(&a[1], 9)));
+    match until(&worker, |event| {
+        matches!(event, Event::PlaybackPositions(..))
+    }) {
+        Event::PlaybackPositions(generation, positions) => {
+            assert_eq!(generation, worker.generation());
+            assert!(
+                positions.is_empty(),
+                "departing series A must not overwrite series B's rail"
+            );
+        }
+        _ => unreachable!(),
+    }
+    worker.send(Command::CancelPlayback);
+    worker.send(Command::Progress(progress(&b[0], 5)));
+    worker.send(Command::Load(911, CatalogQuery::default()));
+    loop {
+        match worker.rx.recv_timeout(Duration::from_secs(10))? {
+            Event::View(911, _) => break,
+            Event::PlaybackPositions(..) => panic!("closed playback must not receive rail updates"),
+            Event::Error(error) | Event::Fatal(error) => panic!("worker failed: {error}"),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn live_channels_never_resume_old_positions_when_reopened_from_history() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("live-start.sqlite");
+    let store = Store::open(&path)?;
+    store.upsert_provider(&provider("p"))?;
+    let item = CatalogItem {
+        id: "channel".into(),
+        provider_id: "p".into(),
+        content_type: "live".into(),
+        title: "Channel".into(),
+        stream_url: Some("https://fixture.invalid/live.ts".into()),
+        ..Default::default()
+    };
+    store.replace_catalog(&ImportSnapshot {
+        provider_id: "p".into(),
+        items: vec![item.clone()],
+        ..Default::default()
+    })?;
+    let progress = PlaybackProgress {
+        provider_id: "p".into(),
+        item_id: item.id.clone(),
+        item_type: "live".into(),
+        title: item.title.clone(),
+        position_seconds: 35,
+        duration_seconds: Some(100),
+        ..Default::default()
+    };
+    store.save_progress(&progress)?;
+    drop(store);
+    let worker = start(&path);
+    for command in [
+        Command::Prepare(PlaybackTarget::catalog(item)),
+        Command::ResumeHistory(progress),
+    ] {
+        worker.send(command);
+        match until(&worker, |event| matches!(event, Event::Prepared(..))) {
+            Event::Prepared(target, resume) => {
+                assert_eq!(target.item.content_type, "live");
+                assert!(
+                    resume.is_none(),
+                    "live channel startup must not seek to an old timestamp"
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+    assert_eq!(
+        Store::open(path)?.recent_history(1)?[0].position_seconds,
+        35
+    );
     Ok(())
 }
