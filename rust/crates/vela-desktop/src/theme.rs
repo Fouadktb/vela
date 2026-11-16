@@ -229,6 +229,8 @@ fn icon_char(name: &str) -> Option<char> {
         "calendarX" => 0xe2be,
         "checkCircle2" => 0xe226,
         "chevronDown" => 0xe06d,
+        "chevronLeft" => 0xe06e,
+        "chevronRight" => 0xe06f,
         "chevronUp" => 0xe070,
         "chevronsRight" => 0xe073,
         "circle" => 0xe076,

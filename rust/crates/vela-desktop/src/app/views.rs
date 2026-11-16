@@ -11,13 +11,16 @@ fn title(text: impl Into<String>, size: f32) -> RichText {
         .color(TEXT)
 }
 fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str) -> egui::Response {
+    toolbar_icon(ui, icon, tooltip, false)
+}
+fn toolbar_icon(ui: &mut Ui, icon: &str, tooltip: &str, selected: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(vec2(38.0, 38.0), Sense::click());
     let pressed = response.is_pointer_button_down_on();
-    if response.hovered() || pressed || response.has_focus() {
+    if selected || response.hovered() || pressed || response.has_focus() {
         ui.painter().rect_filled(
             rect,
             8.0,
-            if pressed {
+            if pressed || selected {
                 theme::SELECTED_BG
             } else {
                 SURFACE_HIGH
@@ -39,7 +42,7 @@ fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str) -> egui::Response {
         FontId::new(18.0, egui::FontFamily::Name("Vela Lucide".into())),
         if !ui.is_enabled() {
             MUTED.gamma_multiply(0.45)
-        } else if pressed || response.hovered() {
+        } else if selected || pressed || response.hovered() {
             ACCENT
         } else {
             TEXT
@@ -487,52 +490,114 @@ impl VelaApp {
                         },
                     );
                     let extras = if self.section == Section::Live {
-                        136.0
+                        138.0
                     } else {
-                        44.0
+                        46.0
                     };
-                    egui::Frame::new()
-                        .fill(PANEL)
-                        .corner_radius(8)
-                        .stroke(Stroke::new(1.0_f32, OUTLINE))
-                        .inner_margin(10.0)
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    theme::icon(
-                                        if crate::worker::global_search_query(&self.query.search)
-                                            .is_some()
-                                        {
-                                            "globe2"
-                                        } else {
-                                            "search"
-                                        },
-                                    )
-                                    .size(20.0)
-                                    .color(MUTED),
-                                );
-                                let hint = if crate::worker::global_search_query(&self.query.search)
-                                    .is_some()
-                                {
-                                    "Global search".to_owned()
-                                } else {
-                                    format!(
-                                        "Search {} or / global",
-                                        self.section.label().to_lowercase()
-                                    )
-                                };
-                                let response = ui.add_sized(
-                                    [(ui.available_width() - extras).max(80.0), 28.0],
-                                    egui::TextEdit::singleline(&mut self.query.search)
-                                        .hint_text(hint)
-                                        .frame(false),
-                                );
-                                if response.changed() {
-                                    self.search_changed = Some(Instant::now());
-                                    self.loading = true;
-                                }
-                            });
-                        });
+                    let search_width = (ui.available_width() - extras).max(180.0);
+                    let search_id = egui::Id::new("library-search");
+                    let (search_rect, _) =
+                        ui.allocate_exact_size(vec2(search_width, 42.0), Sense::hover());
+                    let focused = ui.memory(|m| m.has_focus(search_id));
+                    let escape = focused
+                        && ui
+                            .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+                    let has_text = !self.query.search.is_empty();
+                    let shortcut_rect = Rect::from_min_max(
+                        pos2(search_rect.right() - 58.0, search_rect.top() + 6.0),
+                        search_rect.right_bottom() - vec2(8.0, 6.0),
+                    );
+                    let clear_rect = Rect::from_min_size(
+                        pos2(shortcut_rect.left() - 30.0, search_rect.top() + 6.0),
+                        vec2(26.0, 30.0),
+                    );
+                    let text_rect = Rect::from_min_max(
+                        search_rect.min + vec2(36.0, 9.0),
+                        pos2(
+                            if has_text {
+                                clear_rect.left()
+                            } else {
+                                shortcut_rect.left()
+                            } - 8.0,
+                            search_rect.bottom() - 9.0,
+                        ),
+                    );
+                    // Paint the field behind its children; every control has an
+                    // explicit rectangle so widget minimums cannot stretch it.
+                    let background = ui.painter().add(egui::Shape::Noop);
+                    ui.painter().text(
+                        pos2(search_rect.left() + 18.0, search_rect.center().y),
+                        Align2::CENTER_CENTER,
+                        glyph("search"),
+                        FontId::new(18.0, egui::FontFamily::Name("Vela Lucide".into())),
+                        MUTED,
+                    );
+                    let hint = if crate::worker::global_search_query(&self.query.search).is_some() {
+                        "Search the library…".to_owned()
+                    } else {
+                        format!("Search {}…", self.section.label().to_lowercase())
+                    };
+                    let response = ui.place(
+                        text_rect,
+                        egui::TextEdit::singleline(&mut self.query.search)
+                            .id(search_id)
+                            .hint_text(hint)
+                            .frame(false)
+                            .vertical_align(Align::Center)
+                            .margin(0.0),
+                    );
+                    let shortcut = ui
+                        .interact(shortcut_rect, search_id.with("shortcut"), Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text("Focus search");
+                    ui.painter().text(
+                        shortcut_rect.center(),
+                        Align2::CENTER_CENTER,
+                        if cfg!(target_os = "macos") {
+                            "⌘ K"
+                        } else {
+                            "Ctrl K"
+                        },
+                        FontId::proportional(11.0),
+                        if shortcut.hovered() { TEXT } else { MUTED },
+                    );
+                    if shortcut.clicked() {
+                        response.request_focus();
+                    }
+                    let clear = if has_text {
+                        let clear = ui
+                            .interact(clear_rect, search_id.with("clear"), Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text("Clear search (Esc)");
+                        ui.painter().text(
+                            clear_rect.center(),
+                            Align2::CENTER_CENTER,
+                            glyph("x"),
+                            FontId::new(14.0, egui::FontFamily::Name("Vela Lucide".into())),
+                            if clear.hovered() { TEXT } else { MUTED },
+                        );
+                        clear.clicked()
+                    } else {
+                        false
+                    };
+                    if clear || escape {
+                        self.query.search.clear();
+                    }
+                    if response.changed() || clear || escape {
+                        self.search_changed = Some(Instant::now());
+                        self.loading = true;
+                    }
+                    let focused = response.has_focus() || shortcut.clicked();
+                    ui.painter().set(
+                        background,
+                        egui::epaint::RectShape::new(
+                            search_rect,
+                            8.0,
+                            PANEL,
+                            Stroke::new(1.0_f32, if focused { ACCENT } else { OUTLINE }),
+                            egui::StrokeKind::Inside,
+                        ),
+                    );
                     let global = crate::worker::global_search_query(&self.query.search).is_some();
                     if icon_button(
                         ui,
@@ -551,22 +616,12 @@ impl VelaApp {
                     }
                     if self.section == Section::Live {
                         ui.horizontal(|ui| {
-                            if ui
-                                .add(egui::Button::selectable(
-                                    !self.live_guide_mode,
-                                    theme::icon("list").size(18.0),
-                                ))
-                                .on_hover_text("List view")
+                            if toolbar_icon(ui, "list", "List view", !self.live_guide_mode)
                                 .clicked()
                             {
                                 self.live_guide_mode = false;
                             }
-                            if ui
-                                .add(egui::Button::selectable(
-                                    self.live_guide_mode,
-                                    theme::icon("calendarDays").size(18.0),
-                                ))
-                                .on_hover_text("Guide view")
+                            if toolbar_icon(ui, "calendarDays", "Guide view", self.live_guide_mode)
                                 .clicked()
                             {
                                 self.live_guide_mode = true;
@@ -653,7 +708,10 @@ impl VelaApp {
         if has_categories {
             ui.scope_builder(
                 UiBuilder::new().max_rect(category_rect.shrink2(vec2(14.0, 18.0))),
-                |ui| self.categories(ui),
+                |ui| {
+                    ui.set_clip_rect(ui.clip_rect().intersect(category_rect));
+                    self.categories(ui);
+                },
             );
         }
         let drag = ui.interact(drag_rect, ui.id().with("category-resize"), Sense::drag());
@@ -684,6 +742,7 @@ impl VelaApp {
             );
         }
         ui.scope_builder(UiBuilder::new().max_rect(center.shrink(14.0)), |ui| {
+            ui.set_clip_rect(ui.clip_rect().intersect(center));
             if self.live_guide_mode && self.section == Section::Live {
                 self.guide_ui(ui);
             } else {
@@ -698,7 +757,10 @@ impl VelaApp {
         }
         ui.scope_builder(
             UiBuilder::new().max_rect(detail_rect.shrink2(vec2(17.0, 18.0))),
-            |ui| self.detail_panel(ui),
+            |ui| {
+                ui.set_clip_rect(ui.clip_rect().intersect(detail_rect));
+                self.detail_panel(ui);
+            },
         );
         ui.advance_cursor_after_rect(body);
     }
@@ -1082,6 +1144,9 @@ impl VelaApp {
             });
         }
         if items.is_empty() {
+            if self.loading {
+                return;
+            }
             ui.add_space(60.0);
             ui.vertical_centered(|ui| {
                 ui.label(theme::icon("search").size(34.0).color(ACCENT));
@@ -1094,6 +1159,7 @@ impl VelaApp {
         let live = self.section == Section::Live;
         egui::ScrollArea::vertical()
             .id_salt(("catalog-items", self.section.label()))
+            .max_width(ui.available_width())
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 if live {
@@ -1113,19 +1179,26 @@ impl VelaApp {
                             .corner_radius(8)
                             .inner_margin(8.0)
                             .show(ui, |ui| {
-                                ui.set_min_size(vec2(width - 16.0, 56.0));
+                                ui.set_width((width - 18.0).max(0.0));
+                                ui.set_min_height(56.0);
                                 ui.horizontal(|ui| {
                                     let (rect, _) =
                                         ui.allocate_exact_size(vec2(72.0, 48.0), Sense::hover());
                                     self.paint_artwork(ui, item, rect);
                                     ui.vertical(|ui| {
-                                        ui.label(title(&item.title, 14.0));
-                                        ui.label(
-                                            RichText::new(theme::display_text(
-                                                item.subtitle.as_deref().unwrap_or("Live TV"),
-                                            ))
-                                            .size(12.0)
-                                            .color(MUTED),
+                                        ui.set_max_width(ui.available_width());
+                                        ui.add(
+                                            egui::Label::new(title(&item.title, 14.0)).truncate(),
+                                        );
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(theme::display_text(
+                                                    item.subtitle.as_deref().unwrap_or("Live TV"),
+                                                ))
+                                                .size(12.0)
+                                                .color(MUTED),
+                                            )
+                                            .truncate(),
                                         );
                                     });
                                 });
@@ -1189,6 +1262,9 @@ impl VelaApp {
             });
     }
     fn paint_artwork(&mut self, ui: &Ui, item: &CatalogItem, rect: Rect) {
+        if !ui.is_rect_visible(rect) {
+            return;
+        }
         ui.painter().rect_filled(rect, 8.0, PANEL);
         ui.painter().rect_stroke(
             rect,
@@ -1202,6 +1278,19 @@ impl VelaApp {
             .and_then(|url| self.artwork.texture(ui.ctx(), url))
         {
             let aspect = texture.size_vec2().x / texture.size_vec2().y;
+            if item.content_type == "live" {
+                let available = rect.shrink(4.0);
+                let scale = (available.width() / texture.size_vec2().x)
+                    .min(available.height() / texture.size_vec2().y);
+                let fitted = Rect::from_center_size(rect.center(), texture.size_vec2() * scale);
+                ui.painter().image(
+                    texture.id(),
+                    fitted,
+                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+                return;
+            }
             let target = rect.width() / rect.height();
             let uv = if aspect > target {
                 let w = target / aspect;
@@ -1449,10 +1538,10 @@ impl VelaApp {
                 }
             });
         ui.add_space(12.0);
-        if item.content_type != "series" && action(ui, "play", "Play", true).clicked() {
-            self.prepare(item.clone());
-        }
-        ui.horizontal(|ui| {
+        ui.with_layout(Layout::top_down_justified(Align::LEFT), |ui| {
+            if item.content_type != "series" && action(ui, "play", "Play", true).clicked() {
+                self.prepare(item.clone());
+            }
             if action(
                 ui,
                 if item.is_favorite { "starOff" } else { "star" },
@@ -2261,69 +2350,166 @@ impl VelaApp {
         ui.add_space(12.0);
         let items = self.page.items.clone();
         let programs = self.guide.clone();
-        egui::ScrollArea::both()
+        let channel_width = (ui.available_width() * 0.30).clamp(130.0, 220.0);
+        ui.horizontal(|ui| {
+            ui.add_sized(
+                [channel_width, 22.0],
+                egui::Label::new(RichText::new("CHANNEL").size(10.0).color(MUTED)),
+            );
+            ui.label(RichText::new("PROGRAMME SCHEDULE").size(10.0).color(MUTED));
+        });
+        ui.add_space(6.0);
+        let now = chrono::Utc::now().timestamp_millis();
+        egui::ScrollArea::vertical()
             .id_salt("live-guide")
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 for item in &items {
-                    egui::Frame::new()
-                        .fill(PANEL)
-                        .stroke(Stroke::new(1.0_f32, BORDER))
-                        .inner_margin(10.0)
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .add_sized(
-                                        [150.0, 50.0],
-                                        egui::Button::new(theme::display_text(&item.title))
-                                            .frame(false),
-                                    )
-                                    .clicked()
-                                {
-                                    self.select_catalog(item.clone());
-                                }
-                                let channel = item.epg_channel_id.as_deref().unwrap_or(&item.title);
-                                let matching = programs
-                                    .iter()
-                                    .filter(|p| {
-                                        p.provider_id == item.provider_id && p.channel_id == channel
-                                    })
-                                    .collect::<Vec<_>>();
-                                if matching.is_empty() {
-                                    ui.label(
-                                        RichText::new("No programme information available")
-                                            .color(MUTED),
-                                    );
-                                }
-                                for program in matching {
-                                    egui::Frame::new()
-                                        .fill(SURFACE_HIGH)
-                                        .corner_radius(6)
-                                        .inner_margin(8.0)
-                                        .show(ui, |ui| {
-                                            ui.set_width(165.0);
-                                            ui.label(
-                                                RichText::new(
-                                                    chrono::DateTime::from_timestamp_millis(
-                                                        program.start_at,
-                                                    )
+                    let (row, response) =
+                        ui.allocate_exact_size(vec2(ui.available_width(), 96.0), Sense::click());
+                    if !ui.is_rect_visible(row) {
+                        continue;
+                    }
+                    let selected = self.selected_catalog.as_ref().is_some_and(|selected| {
+                        selected.provider_id == item.provider_id && selected.id == item.id
+                    });
+                    ui.painter().rect_filled(
+                        row,
+                        8.0,
+                        if selected { theme::SELECTED_BG } else { PANEL },
+                    );
+                    ui.painter().rect_stroke(
+                        row,
+                        8.0,
+                        Stroke::new(1.0_f32, if selected { ACCENT } else { BORDER }),
+                        egui::StrokeKind::Inside,
+                    );
+                    let channel_rect =
+                        Rect::from_min_size(row.min, vec2(channel_width, row.height()))
+                            .shrink(10.0);
+                    ui.scope_builder(UiBuilder::new().max_rect(channel_rect), |ui| {
+                        ui.set_clip_rect(ui.clip_rect().intersect(channel_rect));
+                        ui.horizontal(|ui| {
+                            let (logo, _) =
+                                ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
+                            self.paint_artwork(ui, item, logo);
+                            ui.add(egui::Label::new(title(&item.title, 12.0)).truncate())
+                                .on_hover_text(theme::display_text(&item.title));
+                        });
+                        ui.label(RichText::new("Live TV").size(10.0).color(MUTED));
+                    });
+                    let schedule_rect = Rect::from_min_max(
+                        pos2(row.left() + channel_width, row.top() + 8.0),
+                        row.right_bottom() - vec2(8.0, 8.0),
+                    );
+                    let channel = item.epg_channel_id.as_deref().unwrap_or(&item.title);
+                    let mut matching: Vec<_> = programs
+                        .iter()
+                        .filter(|p| p.provider_id == item.provider_id && p.channel_id == channel)
+                        .collect();
+                    matching.sort_by_key(|p| p.start_at);
+                    ui.scope_builder(UiBuilder::new().max_rect(schedule_rect), |ui| {
+                        ui.set_clip_rect(ui.clip_rect().intersect(schedule_rect));
+                        if matching.is_empty() {
+                            ui.allocate_ui_with_layout(
+                                schedule_rect.size(),
+                                Layout::left_to_right(Align::Center),
+                                |ui| {
+                                    ui.label(theme::icon("calendarDays").size(18.0).color(MUTED));
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            RichText::new("Schedule unavailable")
+                                                .size(12.0)
+                                                .color(MUTED),
+                                        );
+                                        ui.label(
+                                            RichText::new("No guide data for this channel")
+                                                .size(10.0)
+                                                .color(MUTED),
+                                        );
+                                    });
+                                },
+                            );
+                        } else {
+                            egui::ScrollArea::horizontal()
+                                .id_salt(("channel-programmes", &item.provider_id, &item.id))
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        for program in matching {
+                                            let (card, hover) = ui.allocate_exact_size(
+                                                vec2(180.0, 64.0),
+                                                Sense::hover(),
+                                            );
+                                            let current =
+                                                program.start_at <= now && now < program.end_at;
+                                            ui.painter().rect_filled(
+                                                card,
+                                                6.0,
+                                                if current {
+                                                    theme::SELECTED_BG
+                                                } else {
+                                                    SURFACE_HIGH
+                                                },
+                                            );
+                                            if current {
+                                                ui.painter().rect_stroke(
+                                                    card,
+                                                    6.0,
+                                                    Stroke::new(1.0_f32, ACCENT),
+                                                    egui::StrokeKind::Inside,
+                                                );
+                                            }
+                                            let time = |at| {
+                                                chrono::DateTime::from_timestamp_millis(at)
                                                     .unwrap_or_default()
                                                     .with_timezone(&chrono::Local)
                                                     .format("%H:%M")
-                                                    .to_string(),
+                                                    .to_string()
+                                            };
+                                            ui.put(
+                                                Rect::from_min_size(
+                                                    card.min + vec2(8.0, 6.0),
+                                                    vec2(164.0, 18.0),
+                                                ),
+                                                egui::Label::new(
+                                                    RichText::new(format!(
+                                                        "{} – {}{}",
+                                                        time(program.start_at),
+                                                        time(program.end_at),
+                                                        if current { " · LIVE" } else { "" }
+                                                    ))
+                                                    .size(10.0)
+                                                    .color(if current { ACCENT } else { MUTED }),
                                                 )
-                                                .size(11.0)
-                                                .color(ACCENT),
+                                                .truncate(),
                                             );
-                                            ui.label(theme::display_text(&program.title));
-                                        });
-                                }
-                            });
-                        });
-                    ui.add_space(4.0);
+                                            ui.put(
+                                                Rect::from_min_size(
+                                                    card.min + vec2(8.0, 28.0),
+                                                    vec2(164.0, 26.0),
+                                                ),
+                                                egui::Label::new(title(&program.title, 12.0))
+                                                    .truncate(),
+                                            );
+                                            hover
+                                                .on_hover_text(theme::display_text(&program.title));
+                                        }
+                                    });
+                                });
+                        }
+                    });
+                    if response.clicked() {
+                        self.select_catalog(item.clone());
+                    }
+                    if response.double_clicked() {
+                        self.prepare(item.clone());
+                    }
+                    ui.add_space(8.0);
                 }
             });
     }
+
     pub(super) fn settings_ui(&mut self, ui: &mut Ui) {
         egui::Frame::new()
             .inner_margin(egui::Margin {

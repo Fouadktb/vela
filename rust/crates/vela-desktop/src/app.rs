@@ -72,6 +72,7 @@ pub struct VelaApp {
     restore_selection: bool,
     query: CatalogQuery,
     token: u64,
+    full_reload_pending: bool,
     loading: bool,
     providers: Vec<Provider>,
     categories: Vec<Category>,
@@ -160,6 +161,7 @@ impl VelaApp {
                 ..Default::default()
             },
             token: 0,
+            full_reload_pending: false,
             loading: true,
             providers: vec![],
             categories: vec![],
@@ -226,8 +228,19 @@ impl VelaApp {
         }
         self.token += 1;
         self.loading = true;
+        self.full_reload_pending = true;
         self.worker
             .send(Command::Load(self.token, self.query.clone()));
+    }
+    fn reload_search(&mut self) {
+        if !self.initialized || self.full_reload_pending {
+            self.reload();
+            return;
+        }
+        self.token += 1;
+        self.loading = true;
+        self.worker
+            .send(Command::Search(self.token, self.query.clone()));
     }
     fn navigate(&mut self, section: Section) {
         if self.section == section {
@@ -270,7 +283,32 @@ impl VelaApp {
                     self.loading = false;
                     self.fatal = Some(error);
                 }
+                Event::Search(token, page, global_search) if token == self.token => {
+                    self.page = page;
+                    self.global_search = global_search;
+                    self.loading = false;
+                    if self.global_search.is_none() {
+                        self.selected_catalog =
+                            self.selected_catalog.as_ref().and_then(|selected| {
+                                self.page
+                                    .items
+                                    .iter()
+                                    .find(|item| {
+                                        item.provider_id == selected.provider_id
+                                            && item.content_type == selected.content_type
+                                            && item.id == selected.id
+                                    })
+                                    .cloned()
+                            });
+                    }
+                    if self.section == Section::Guide
+                        || (self.section == Section::Live && self.live_guide_mode)
+                    {
+                        self.request_guide();
+                    }
+                }
                 Event::View(token, data) if token == self.token => {
+                    self.full_reload_pending = false;
                     let ViewData {
                         providers,
                         categories,
@@ -344,7 +382,7 @@ impl VelaApp {
                         self.request_guide();
                     }
                 }
-                Event::View(_, _) => {}
+                Event::View(_, _) | Event::Search(..) => {}
                 Event::Message(message) => {
                     // Success events refresh the library without an inline banner.
                     drop(message);
@@ -352,6 +390,7 @@ impl VelaApp {
                     self.reload();
                 }
                 Event::Error(error) => {
+                    self.full_reload_pending = false;
                     self.error = Some(error);
                     self.loading = false;
                 }
@@ -574,7 +613,7 @@ impl VelaApp {
             if changed.elapsed() > Duration::from_millis(250) {
                 self.search_changed = None;
                 self.query.offset = 0;
-                self.reload();
+                self.reload_search();
             } else {
                 ctx.request_repaint_after(Duration::from_millis(100));
             }
@@ -828,6 +867,17 @@ impl eframe::App for VelaApp {
         if self.playing.is_some() {
             self.player_ui(ctx);
             return;
+        }
+        if !egui::Popup::is_any_open(ctx)
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::K))
+        {
+            if matches!(
+                self.section,
+                Section::Home | Section::Guide | Section::Settings
+            ) {
+                self.navigate(Section::Movies);
+            }
+            ctx.memory_mut(|m| m.request_focus(egui::Id::new("library-search")));
         }
         self.sidebar(ctx);
         egui::CentralPanel::default()

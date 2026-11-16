@@ -1438,3 +1438,71 @@ fn import_progress_is_run_scoped_and_finishes_after_saved_catalog_is_visible() -
     }
     Ok(())
 }
+
+#[test]
+fn lightweight_search_matches_full_load_for_scoped_and_global_queries() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let path = temp.path().join("search.sqlite");
+    let store = Store::open(&path)?;
+    store.upsert_provider(&provider("p"))?;
+    store.replace_catalog(&ImportSnapshot {
+        provider_id: "p".into(),
+        items: vec![CatalogItem {
+            id: "film".into(),
+            provider_id: "p".into(),
+            content_type: "movie".into(),
+            title: "A lovely film".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    })?;
+    drop(store);
+    let mut worker = start(&path);
+    for (token, search) in [(10, "lovely"), (20, "/ lovely"), (30, "missing"), (40, "")] {
+        let query = CatalogQuery {
+            search: search.into(),
+            content_type: Some("movie".into()),
+            ..Default::default()
+        };
+        let full = load(&worker, token, query.clone());
+        worker.send(Command::Search(token + 1, query));
+        match until(
+            &worker,
+            |event| matches!(event, Event::Search(actual, ..) if *actual == token + 1),
+        ) {
+            Event::Search(_, page, global) => {
+                assert_eq!(page.total, full.page.total);
+                assert_eq!(
+                    page.items.iter().map(|item| &item.id).collect::<Vec<_>>(),
+                    full.page
+                        .items
+                        .iter()
+                        .map(|item| &item.id)
+                        .collect::<Vec<_>>()
+                );
+                let ids = |results: Option<crate::worker::GlobalSearchResults>| {
+                    results.map(|results| {
+                        results
+                            .groups
+                            .into_iter()
+                            .map(|group| {
+                                (
+                                    group.title,
+                                    group
+                                        .results
+                                        .into_iter()
+                                        .map(|result| result.item.id)
+                                        .collect::<Vec<_>>(),
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                };
+                assert_eq!(ids(global), ids(full.global_search));
+            }
+            _ => unreachable!(),
+        }
+    }
+    worker.shutdown();
+    Ok(())
+}

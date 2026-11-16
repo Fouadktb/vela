@@ -103,7 +103,14 @@ build profile, storage, and other running work.
 
 Imports and database work run outside the UI paint loop; catalog queries return
 bounded pages. Volume is stored globally with the last audible level, and
-pending preference/progress writes are flushed when the app closes.
+pending preference/progress writes are flushed when the app closes. Search typing
+updates results without reloading home rows and settings. Cmd+K (macOS) or Ctrl+K
+(Windows) focuses library search; Escape or the clear button clears it.
+
+Catalog artwork is requested for visible cards. Failed downloads retry after
+30 seconds while visible. Downloaded thumbnails are cached beside the native
+catalog in `artwork-cache`, with at most 256 entries retained for up to seven
+days. Cache reads, writes, and cleanup run on artwork workers.
 
 ## Native packages
 

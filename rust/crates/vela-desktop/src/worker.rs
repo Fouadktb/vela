@@ -185,6 +185,7 @@ impl Drop for LatestNetworkLane {
 
 pub enum Command {
     Load(u64, CatalogQuery),
+    Search(u64, CatalogQuery),
     SaveProvider(Provider),
     DeleteProvider(String),
     Refresh(Provider),
@@ -223,6 +224,7 @@ pub enum Command {
 pub enum Event {
     Ready(PathBuf),
     View(u64, ViewData),
+    Search(u64, CatalogPage, Option<GlobalSearchResults>),
     Message(String),
     Error(String),
     Fatal(String),
@@ -356,6 +358,17 @@ impl Worker {
                                 recent_live =
                                     current.map(|(provider, id)| (generation, provider, id));
                             }
+                        }
+                        Command::Search(token, query) => {
+                            let global = global_search_query(&query.search)
+                                .map(|search| search_library(&store, search))
+                                .transpose()?;
+                            let page = if global.is_some() {
+                                CatalogPage::default()
+                            } else {
+                                store.catalog(&query)?
+                            };
+                            emit(Event::Search(token, page, global));
                         }
                         Command::Load(token, query) => {
                             let history = store.recent_history(200)?;
