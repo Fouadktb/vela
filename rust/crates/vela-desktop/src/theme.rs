@@ -17,6 +17,7 @@ pub const SIDEBAR: Color32 = Color32::from_rgb(0x0f, 0x10, 0x12);
 pub const SELECTED_BG: Color32 = Color32::from_rgb(0x25, 0x21, 0x1a);
 pub const RADIUS: u8 = 8;
 const LUCIDE: &str = "Vela Lucide";
+const LATIN_EXTENDED: &str = "Vela Noto Sans";
 const ARABIC: &str = "Vela Noto Naskh Arabic";
 const SYMBOLS: &str = "Vela Noto Sans Symbols";
 const SYMBOLS_EXTRA: &str = "Vela Noto Sans Symbols 2";
@@ -60,6 +61,10 @@ pub fn install(ctx: &egui::Context) {
             include_bytes!("../../../assets/fonts/Lucide.ttf").as_slice(),
         ),
         (
+            LATIN_EXTENDED,
+            include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf").as_slice(),
+        ),
+        (
             ARABIC,
             include_bytes!("../../../assets/fonts/NotoNaskhArabic.ttf").as_slice(),
         ),
@@ -77,7 +82,7 @@ pub fn install(ctx: &egui::Context) {
             .insert(name.into(), FontData::from_static(bytes).into());
         let mut family = vec![name.into()];
         if name != LUCIDE {
-            for fallback in [ARABIC, SYMBOLS, SYMBOLS_EXTRA] {
+            for fallback in [LATIN_EXTENDED, ARABIC, SYMBOLS, SYMBOLS_EXTRA] {
                 if name != fallback {
                     family.push(fallback.into());
                 }
@@ -90,8 +95,10 @@ pub fn install(ctx: &egui::Context) {
     proportional.insert(0, SYMBOLS_EXTRA.into());
     proportional.insert(0, SYMBOLS.into());
     proportional.insert(0, ARABIC.into());
+    proportional.insert(0, LATIN_EXTENDED.into());
     proportional.insert(0, "Vela Roboto".into());
     let monospace = fonts.families.entry(FontFamily::Monospace).or_default();
+    monospace.push(LATIN_EXTENDED.into());
     monospace.push(ARABIC.into());
     monospace.push(SYMBOLS.into());
     monospace.push(SYMBOLS_EXTRA.into());
@@ -415,14 +422,18 @@ mod tests {
         assert!(marked.contains('ُ') && marked.contains('ِ') && marked.contains('َ'));
     }
     #[test]
-    fn all_text_weights_have_arabic_presentation_and_symbol_fallbacks() {
+    fn all_text_weights_have_arabic_symbols_and_raised_quality_labels() {
         let ctx = egui::Context::default();
         install(&ctx);
-        let text = format!("Vela → سوريا {}", display_text("سوريا"));
+        let text = format!(
+            "Vela → سوريا {} ᴴᴰ ᵁᴴᴰ ᶠᵘˡˡ ʰᵈ ᶠʰᵈ ꜰʜᴅ",
+            display_text("سوريا")
+        );
         let _ = ctx.run(Default::default(), |ctx| {
             ctx.fonts_mut(|fonts| {
                 for font in [
                     FontId::proportional(14.0),
+                    FontId::monospace(14.0),
                     medium(16.0),
                     bold(22.0),
                     black(36.0),
