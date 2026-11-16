@@ -62,3 +62,17 @@ SHA256: `f7e7e04b4a24b6c78893d50cbfd2b2f6cae49617ab047bfef668d252adb128f7`
 Official source revision: notofonts/symbols
 `b61fa7f86fb7d4163ee11d46d0977393f98d4f7a` (Google Fonts metadata).
 See `NotoSansSymbols-LICENSE.txt` for the original SIL Open Font License 1.1.
+
+## Extended Latin fallback
+
+`NotoSans-Regular.ttf` covers modifier, superscript, and small capital Latin
+letters used in provider quality labels such as ᴴᴰ and ᵁᴴᴰ. It is a fallback
+after Roboto in every text weight, preserving the original provider text.
+
+Official download source:
+https://raw.githubusercontent.com/notofonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf
+
+SHA256: `b85c38ecea8a7cfb39c24e395a4007474fa5a4fc864f6ee33309eb4948d232d5`
+
+The upstream SIL Open Font License and copyright notice are preserved in
+`NotoSans-LICENSE.txt`.
